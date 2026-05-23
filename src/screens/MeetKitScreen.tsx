@@ -1,0 +1,77 @@
+import { Feather } from "@expo/vector-icons";
+import { RefObject, useEffect, useRef } from "react";
+import { Animated, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StatusBar, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { TypingDots } from "../components/TypingDots";
+import { B } from "../constants/brand";
+import { useReduceMotion } from "../hooks/useReduceMotion";
+import { s } from "../styles";
+import { quickReplies } from "../utils/quote";
+
+export function MeetKitScreen({ primaryColor, messages, input, loading, progress, onInputChange, onSend, onQuickReply, scrollRef }: {
+  primaryColor: string;
+  messages: { role: "user" | "assistant"; content: string }[];
+  input: string; loading: boolean; progress: number;
+  onInputChange: (v: string) => void; onSend: () => void; onQuickReply: (text: string) => void;
+  scrollRef: RefObject<ScrollView | null>;
+}) {
+  const reduceMotion = useReduceMotion();
+  const fill = useRef(new Animated.Value(progress)).current;
+  useEffect(() => {
+    if (reduceMotion) { fill.setValue(progress); return; }
+    Animated.timing(fill, { toValue: progress, duration: 400, useNativeDriver: false }).start();
+  }, [progress, reduceMotion]);
+
+  const last = messages[messages.length - 1];
+  const chips = !loading && last?.role === "assistant" ? quickReplies(last.content) : [];
+
+  return (
+    <SafeAreaView style={s.container}>
+      <StatusBar barStyle="light-content" />
+      {/* Onboarding progress bar */}
+      <View style={{ height: 3, backgroundColor: B.border }}>
+        <Animated.View style={{ height: 3, backgroundColor: primaryColor, width: fill.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) }} />
+      </View>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={s.kitIntroBar}>
+          <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={s.kitAvatarText}>K</Text></View>
+          <View>
+            <Text style={{ fontSize: 17, fontWeight: "700", color: B.white, fontFamily: "Syne_700Bold" }}>Meet Kit</Text>
+            <Text style={{ fontSize: 13, color: B.gray3, fontFamily: "DMSans_400Regular" }}>Your Pricr assistant</Text>
+          </View>
+        </View>
+        <View style={s.kitIntroBanner}>
+          <Text style={{ fontSize: 14, color: B.gray2, lineHeight: 22, fontFamily: "DMSans_400Regular" }}>
+            Kit builds your quote tool and keeps it updated. Once you are set up, find Kit in the bottom right corner of your quote screen anytime you want to make a change.
+          </Text>
+        </View>
+        <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }} keyboardShouldPersistTaps="handled">
+          {messages.map((msg, i) => (
+            <View key={i} style={[s.bubble, msg.role === "user" ? [s.bubbleUser, { backgroundColor: primaryColor }] : s.bubbleKit]}>
+              <Text style={[s.bubbleText, msg.role === "user" && { color: B.white }]}>{msg.content}</Text>
+            </View>
+          ))}
+          {loading && (
+            <View style={[s.bubbleKit, { alignSelf: "flex-start" }]}>
+              <TypingDots color={B.gray2} />
+            </View>
+          )}
+          {chips.length > 0 && (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
+              {chips.map(c => (
+                <TouchableOpacity key={c} style={[s.chip, { borderColor: primaryColor + "60" }]} onPress={() => onQuickReply(c)}>
+                  <Text style={[s.chipText, { color: primaryColor }]}>{c}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+        <View style={s.kitInputRow}>
+          <TextInput style={s.kitInput} placeholder="Reply to Kit..." placeholderTextColor={B.gray3} value={input} onChangeText={onInputChange} onSubmitEditing={onSend} returnKeyType="send" />
+          <TouchableOpacity style={[s.kitSend, { backgroundColor: primaryColor }]} onPress={onSend} disabled={loading}>
+            <Feather name="arrow-up" size={20} color={B.white} />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
