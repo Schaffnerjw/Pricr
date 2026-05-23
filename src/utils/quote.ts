@@ -154,6 +154,7 @@ export function computeTotals(schema: any, fieldValues: Record<string, any>, add
 export function monthlyQuoteTotal(quotes: SavedQuote[]): number {
   const now = new Date();
   return (quotes || [])
+    .filter(q => !q.isSample)
     .filter(q => { const d = new Date(q.timestamp); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
     .reduce((sum, q) => sum + (q.total || 0), 0);
 }
