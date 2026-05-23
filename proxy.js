@@ -40,4 +40,5 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(3001, () => console.log('Pricr proxy running on port 3001'));
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => console.log(`Pricr proxy running on port ${PORT}`));
