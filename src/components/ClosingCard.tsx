@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Dimensions, Image, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import SignatureScreen from "react-native-signature-canvas";
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import SignaturePad from "./SignaturePad";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s, wl } from "../styles";
@@ -238,12 +238,10 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                     <Text style={{ color: primaryColor, fontWeight: "800", fontSize: 14, fontFamily: "Syne_700Bold" }}>Quote Accepted — Signed {formatLongDate(signedAt ?? Date.now())}</Text>
                   </View>
                 </View>
-              ) : Platform.OS === "web" ? (
-                <Text style={{ color: theme.lineColor, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Finger signing is available in the Pricr app. Use Share Quote to send a signing link the customer can sign in any browser.</Text>
               ) : (
                 <View style={{ gap: 10 }}>
                   <View style={{ height: 170, borderRadius: 10, overflow: "hidden", backgroundColor: B.white, opacity: canSign ? 1 : 0.5 }} pointerEvents={canSign ? "auto" : "none"}>
-                    <SignatureScreen
+                    <SignaturePad
                       ref={sigRef}
                       onOK={handleSignatureOK}
                       onEmpty={() => Alert.alert("Add a signature", "Please sign in the box first.")}

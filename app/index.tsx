@@ -1,6 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, SafeAreaView, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Platform, SafeAreaView, ScrollView, Text, View } from "react-native";
 import { BrandHeader } from "../src/components/BrandHeader";
 import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
@@ -29,6 +29,25 @@ import { BrandConfig, Business, DemoBusiness, Screen, User } from "../src/types"
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse } from "../src/utils/helpers";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
+
+// Web image picker: a hidden <input type="file"> read as a data URL (expo-image-picker's
+// native gallery flow isn't used on web). Resolves null if the user cancels.
+function pickImageWeb(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (!file) { resolve(null); return; }
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  });
+}
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function Index() {
@@ -110,6 +129,7 @@ export default function Index() {
   };
 
   const pickImage = async (): Promise<string | null> => {
+    if (Platform.OS === "web") return pickImageWeb();
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,

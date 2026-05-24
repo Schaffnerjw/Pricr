@@ -23,7 +23,14 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "Pricr",
+      "shortName": "Pricr",
+      "description": "AI-powered quote tool for service businesses",
+      "themeColor": "#2979FF",
+      "backgroundColor": "#0A0E1A",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "plugins": [
       "expo-router",

@@ -9,6 +9,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "pwa:icons": "node scripts/generate-pwa-icons.js",
     "lint": "expo lint"
   },
   "dependencies": {
@@ -52,6 +53,7 @@
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "jimp": "^1.6.1",
     "typescript": "~5.9.2"
   },
   "private": true

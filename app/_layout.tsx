@@ -13,6 +13,7 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
+import { InstallPrompt } from "../src/components/InstallPrompt";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -33,5 +34,10 @@ export default function RootLayout() {
 
   if (!fontsLoaded) return null;
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <>
+      <Stack screenOptions={{ headerShown: false }} />
+      <InstallPrompt />
+    </>
+  );
 }

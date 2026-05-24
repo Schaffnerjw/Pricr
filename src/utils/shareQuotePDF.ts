@@ -1,8 +1,42 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import { Alert, Share } from "react-native";
+import { Alert, Platform, Share } from "react-native";
 import { generateQuotePDF, QuotePDFData } from "./generateQuotePDF";
+
+// Web: open the quote in a new window and trigger the browser print dialog (Save as PDF), then
+// share the signing link via the Web Share API (falling back to clipboard). expo-print's
+// printToFileAsync and expo-sharing aren't available on web, so this path replaces them.
+async function shareQuotePDFWeb(html: string, opts?: { message?: string }): Promise<void> {
+  try {
+    const w = window.open("", "_blank");
+    if (w) {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      w.focus();
+      setTimeout(() => { try { w.print(); } catch { /* user can print manually */ } }, 400);
+    } else {
+      // Popup blocked → download the proposal as an HTML file instead.
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "Pricr-Quote.html"; a.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch { /* ignore window/print failures */ }
+
+  if (opts?.message) {
+    try {
+      if (typeof navigator !== "undefined" && (navigator as any).share) {
+        await (navigator as any).share({ text: opts.message });
+      } else if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(opts.message);
+        Alert.alert("Link copied", "The signing link was copied to your clipboard.");
+      }
+    } catch { /* share cancelled or unavailable */ }
+  }
+}
 
 // Renders the quote to a PDF and opens the native share sheet. Errors surface as an alert.
 // When `opts.message` is given (e.g. the remote signing link), we use the OS share sheet with
@@ -10,6 +44,7 @@ import { generateQuotePDF, QuotePDFData } from "./generateQuotePDF";
 export async function shareQuotePDF(data: QuotePDFData, opts?: { message?: string }): Promise<void> {
   try {
     const html = generateQuotePDF(data);
+    if (Platform.OS === "web") { await shareQuotePDFWeb(html, opts); return; }
     const { uri } = await Print.printToFileAsync({ html, base64: false });
 
     // Rename the temp file to something human-readable for the share sheet (best-effort).

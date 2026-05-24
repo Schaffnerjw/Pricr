@@ -1,0 +1,18 @@
+<!--
+  Pricr "Get the App" button — embed snippet for the marketing site (pricr.veraa.io, GHL).
+
+  In GoHighLevel: edit the page → add a "Custom Code" / HTML element where you want the button,
+  and paste EXACTLY the two lines below. Nothing else is needed — the script is self-contained
+  (pure vanilla JS, no dependencies) and renders into the <div>.
+
+  It auto-detects the visitor's device:
+    • iPhone/iPad → instructions overlay (open in Safari → Share → Add to Home Screen)
+    • Android     → opens https://app.pricr.veraa.io (the PWA then offers native install)
+    • Desktop     → overlay with a QR code pointing at the app
+
+  NOTE: this only works once the app is live at https://app.pricr.veraa.io (Vercel) so the
+  script URL resolves. Until then, the button won't load.
+-->
+
+<div id="pricr-install"></div>
+<script src="https://app.pricr.veraa.io/install-button.js"></script>

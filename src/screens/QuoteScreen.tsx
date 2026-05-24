@@ -99,7 +99,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       await addQuote(business.code, quote);
       setHistory(h => [...h, quote]);
       setLastSavedId(quote.id);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       if (isFirstReal) { setShowCelebration(true); setTimeout(() => setShowCelebration(false), 2000); }
