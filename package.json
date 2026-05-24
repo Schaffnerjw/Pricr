@@ -10,6 +10,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "pwa:icons": "node scripts/generate-pwa-icons.js",
+    "logo": "node scripts/generate-logo.js",
     "lint": "expo lint"
   },
   "dependencies": {
@@ -50,6 +51,7 @@
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.0",
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",

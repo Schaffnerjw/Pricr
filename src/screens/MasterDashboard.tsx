@@ -1,9 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import { useState } from "react";
-import { SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Image, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { DemoPickerModal } from "../components/DemoPickerModal";
 import { MasterAnalytics } from "../components/MasterAnalytics";
-import PricrLogo from "../components/PricrLogo";
 import { B } from "../constants/brand";
 import { getBusiness, getQuotes, getUsers, saveBusiness } from "../storage";
 import { s } from "../styles";
@@ -128,8 +127,8 @@ export function MasterDashboard({ onSignOut, onStartDemo }: { onSignOut: () => v
     <SafeAreaView style={s.container}>
       <View style={s.navBar}>
         <View style={{ width: 60 }} />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <PricrLogo size={18} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Image source={require("../../assets/images/logo-horizontal.png")} style={{ width: 73, height: 22 }} resizeMode="contain" />
           <Text style={s.navTitle}>Support</Text>
         </View>
         <TouchableOpacity onPress={onSignOut} style={{ width: 60, alignItems: "flex-end" }}>

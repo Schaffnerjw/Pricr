@@ -1,10 +1,9 @@
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, SafeAreaView, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Image, Platform, SafeAreaView, ScrollView, Text, View } from "react-native";
 import { BrandHeader } from "../src/components/BrandHeader";
 import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
-import PricrLogo from "../src/components/PricrLogo";
 import { GetStartedScreen } from "../src/screens/GetStartedScreen";
 import { API_URL, B, DEFAULT_BRAND, MASTER_CODE } from "../src/constants/brand";
 import { DEMO_BUSINESSES } from "../src/constants/demos";
@@ -364,7 +363,7 @@ export default function Index() {
     return (
       <SafeAreaView style={s.container}>
         <View style={s.centered}>
-          <PricrLogo />
+          <Image source={require("../assets/images/icon.png")} style={{ width: 200, height: 200 }} resizeMode="contain" />
           <ActivityIndicator color={B.blue} style={{ marginTop: 24 }} />
         </View>
       </SafeAreaView>
