@@ -1,10 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Dimensions, Image, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Platform, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import SignatureScreen from "react-native-signature-canvas";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s, wl } from "../styles";
-import { Business } from "../types";
+import { Business, QuotePresentation } from "../types";
 import { getCardTheme } from "../utils/color";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { formatLongDate, formatMoney } from "../utils/helpers";
@@ -15,16 +16,28 @@ const SCREEN_H = Dimensions.get("window").height;
 type Totals = { ctx: Record<string, any>; taxRate: number; tax: number; total: number; depositPct: number; deposit: number };
 
 // The slide-up "proposal" sheet shown when reviewing a quote. Owns its own entrance animation.
-export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, saved, onSave, onShared, onClose }: {
+export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, saved, onSave, prepareShare, onSign, termsAndConditions, onClose }: {
   schema: any; business: Business; primaryColor: string; customerName: string;
-  totals: Totals; selectedAddOns: string[]; saved: boolean; onSave: () => void; onShared?: () => void | Promise<void>; onClose: () => void;
+  totals: Totals; selectedAddOns: string[]; saved: boolean; onSave: () => void;
+  prepareShare?: (presentation: QuotePresentation) => Promise<{ signingLink: string | null }>;
+  onSign?: (signatureData: string, presentation: QuotePresentation) => Promise<void>;
+  termsAndConditions?: string;
+  onClose: () => void;
 }) {
   const reduceMotion = useReduceMotion();
   const theme = getCardTheme(primaryColor);
   const slide = useRef(new Animated.Value(0)).current;
   const depositScale = useRef(new Animated.Value(1)).current;
+  const sigRef = useRef<any>(null);
   const [sharing, setSharing] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [signature, setSignature] = useState<string | null>(null);
+  const [signedAt, setSignedAt] = useState<number | null>(null);
+  const [signingBusy, setSigningBusy] = useState(false);
+  const [scrollEnabled, setScrollEnabled] = useState(true);
   const t = totals;
+  const hasTerms = !!(termsAndConditions && termsAndConditions.trim());
+  const canSign = (!hasTerms || agreed) && !signingBusy;
 
   useEffect(() => {
     if (reduceMotion) { slide.setValue(1); return; }
@@ -56,32 +69,57 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
     return items;
   };
 
+  // The renderable snapshot shared by the share-sheet, the PDF, and the remote signing page.
+  const buildPresentation = (): QuotePresentation => ({
+    businessName: business.name,
+    brandColor: primaryColor,
+    logoUri: business.brand.logoUri,
+    phone: business.brand.phone,
+    email: business.brand.email,
+    address: business.brand.address,
+    customerName,
+    trade: schema?.trade,
+    date: Date.now(),
+    validThrough: validTs,
+    lineItems: buildLineItems(),
+    taxRate: t.taxRate,
+    tax: t.tax,
+    total: t.total,
+    depositPct: t.depositPct,
+    deposit: t.deposit,
+    balanceDue,
+  });
+
   const onShare = async () => {
     if (sharing) return;
     setSharing(true);
     try {
-      await shareQuotePDF({
-        businessName: business.name,
-        brandColor: primaryColor,
-        logoUri: business.brand.logoUri,
-        phone: business.brand.phone,
-        email: business.brand.email,
-        address: business.brand.address,
-        customerName,
-        trade: schema?.trade,
-        date: Date.now(),
-        validThrough: validTs,
-        lineItems: buildLineItems(),
-        taxRate: t.taxRate,
-        tax: t.tax,
-        total: t.total,
-        depositPct: t.depositPct,
-        deposit: t.deposit,
-        balanceDue,
-      });
-      await onShared?.();
+      const presentation = buildPresentation();
+      const { signingLink } = (await prepareShare?.(presentation)) ?? { signingLink: null };
+      await shareQuotePDF(
+        { ...presentation, signatureData: signature ?? undefined, signedAt: signedAt ?? undefined, signingLink: signingLink ?? undefined, termsAndConditions },
+        signingLink ? { message: `Here is your quote from ${business.name}. Review and sign here: ${signingLink}` } : undefined,
+      );
     } finally {
       setSharing(false);
+    }
+  };
+
+  // ── In-person signature capture ──
+  const handleConfirmSign = () => {
+    if (!canSign) return;
+    sigRef.current?.readSignature(); // → onOK (has ink) or onEmpty
+  };
+  const handleSignatureOK = async (sig: string) => {
+    setSigningBusy(true);
+    try {
+      await onSign?.(sig, buildPresentation());
+      setSignature(sig);
+      setSignedAt(Date.now());
+    } catch {
+      Alert.alert("Couldn't save signature", "Please try again.");
+    } finally {
+      setSigningBusy(false);
     }
   };
 
@@ -92,7 +130,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
       </Animated.View>
       <Animated.View style={{ position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "90%", transform: [{ translateY: slide.interpolate({ inputRange: [0, 1], outputRange: [SCREEN_H, 0] }) }] }}>
         <View style={[s.closingCard, { backgroundColor: theme.cardBg, borderColor: theme.cardBorder, borderTopLeftRadius: 24, borderTopRightRadius: 24 }]}>
-          <ScrollView contentContainerStyle={{ gap: 16 }} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={{ gap: 16 }} showsVerticalScrollIndicator={false} scrollEnabled={scrollEnabled}>
             <View style={s.closingCardHeader}>
               {business.brand.logoUri ? (
                 <Image source={{ uri: business.brand.logoUri }} style={wl.quoteLogo} resizeMode="contain" />
@@ -166,6 +204,73 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                 <Text style={[s.ccValid, { color: theme.lineColor }]}>Valid through {validThrough}</Text>
               </View>
             )}
+
+            {/* ── Terms & conditions (only if the business has set them) ── */}
+            {hasTerms && (
+              <View style={{ gap: 8 }}>
+                <View style={[s.closingDivider, { backgroundColor: theme.dividerColor }]} />
+                <Text style={[s.ccTerms, { color: theme.lineColor, fontWeight: "700" }]}>Please review the terms and conditions below</Text>
+                <ScrollView nestedScrollEnabled style={{ maxHeight: 150, borderWidth: 1, borderColor: theme.dividerColor, borderRadius: 10, padding: 10 }}>
+                  <Text style={{ color: theme.valueColor, fontSize: 12, lineHeight: 19, fontFamily: "DMSans_400Regular" }}>{termsAndConditions}</Text>
+                </ScrollView>
+                {!signature && (
+                  <TouchableOpacity style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }} onPress={() => setAgreed(a => !a)}>
+                    <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: agreed ? primaryColor : theme.lineColor, backgroundColor: agreed ? primaryColor : "transparent", alignItems: "center", justifyContent: "center" }}>
+                      {agreed && <Feather name="check" size={14} color={B.white} />}
+                    </View>
+                    <Text style={{ flex: 1, color: theme.valueColor, fontSize: 13, fontFamily: "DMSans_400Regular" }}>I have read and agree to the terms and conditions</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            {/* ── In-person signature ── */}
+            <View style={{ gap: 8 }}>
+              <View style={[s.closingDivider, { backgroundColor: theme.dividerColor }]} />
+              <Text style={[s.ccTerms, { color: theme.lineColor, fontWeight: "700" }]}>Customer Signature</Text>
+              {signature ? (
+                <View style={{ gap: 8 }}>
+                  <View style={{ backgroundColor: B.white, borderRadius: 10, padding: 8, alignItems: "center" }}>
+                    <Image source={{ uri: signature }} style={{ width: "100%", height: 120 }} resizeMode="contain" />
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Feather name="check-circle" size={16} color={primaryColor} />
+                    <Text style={{ color: primaryColor, fontWeight: "800", fontSize: 14, fontFamily: "Syne_700Bold" }}>Quote Accepted — Signed {formatLongDate(signedAt ?? Date.now())}</Text>
+                  </View>
+                </View>
+              ) : Platform.OS === "web" ? (
+                <Text style={{ color: theme.lineColor, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Finger signing is available in the Pricr app. Use Share Quote to send a signing link the customer can sign in any browser.</Text>
+              ) : (
+                <View style={{ gap: 10 }}>
+                  <View style={{ height: 170, borderRadius: 10, overflow: "hidden", backgroundColor: B.white, opacity: canSign ? 1 : 0.5 }} pointerEvents={canSign ? "auto" : "none"}>
+                    <SignatureScreen
+                      ref={sigRef}
+                      onOK={handleSignatureOK}
+                      onEmpty={() => Alert.alert("Add a signature", "Please sign in the box first.")}
+                      onBegin={() => setScrollEnabled(false)}
+                      onEnd={() => setScrollEnabled(true)}
+                      autoClear={false}
+                      descriptionText=""
+                      penColor="#0A0E1A"
+                      backgroundColor="#FFFFFF"
+                      webStyle={`.m-signature-pad--footer{display:none;margin:0;}.m-signature-pad{box-shadow:none;border:none;}.m-signature-pad--body{border:none;}body,html{width:100%;height:100%;}`}
+                    />
+                  </View>
+                  {hasTerms && !agreed && (
+                    <Text style={{ color: theme.lineColor, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Agree to the terms above to enable signing.</Text>
+                  )}
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: theme.dividerColor }]} onPress={() => sigRef.current?.clearSignature()} disabled={signingBusy}>
+                      <Text style={[s.btnSecondaryText, { color: theme.lineColor }]}>Clear</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[s.btn, { flex: 2, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: primaryColor, opacity: canSign ? 1 : 0.5 }]} onPress={handleConfirmSign} disabled={!canSign}>
+                      {signingBusy ? <ActivityIndicator color={B.white} size="small" /> : <Feather name="edit-3" size={16} color={B.white} />}
+                      <Text style={s.btnText}>{signingBusy ? "Saving…" : "Confirm & Sign"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
 
             {(business.brand.phone || business.brand.email || business.brand.address) && (
               <View style={[s.contactFooter, { borderTopColor: theme.dividerColor }]}>

@@ -9,12 +9,12 @@ import { ConfettiOverlay } from "../components/ConfettiOverlay";
 import { KitAgentSheet } from "../components/KitAgentSheet";
 import { PressableScale } from "../components/PressableScale";
 import { SkeletonCard } from "../components/SkeletonCard";
-import { API_URL, B } from "../constants/brand";
+import { API_URL, B, SIGN_BASE } from "../constants/brand";
 import { AGENT_PROMPT } from "../constants/prompts";
 import { useReduceMotion } from "../hooks/useReduceMotion";
-import { addQuote, getQuotes, markQuoteSent, saveBusiness } from "../storage";
+import { addQuote, attachQuotePresentation, getQuoteSigningToken, getQuotes, markQuoteSent, saveBusiness, saveSignature } from "../storage";
 import { s } from "../styles";
-import { Business, SavedQuote, User } from "../types";
+import { Business, QuotePresentation, SavedQuote, User } from "../types";
 import { formatMoney } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 
@@ -107,12 +107,26 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     } catch { return null; }
   };
 
-  // Sharing the proposal advances it in the pipeline. Persist first if it wasn't saved yet,
-  // then flip the cloud status to "sent" (no-op in demo / when Supabase isn't configured).
-  const handleShared = async () => {
+  // Sharing the proposal: persist it (if not already), stash the rendered presentation so the
+  // remote page / signed PDF can render it, flip status to "sent", and return the signing link.
+  const prepareShare = async (presentation: QuotePresentation): Promise<{ signingLink: string | null }> => {
     let id = lastSavedId;
     if (!id) id = await saveQuote();
-    if (id) await markQuoteSent(business.code, id);
+    if (!id) return { signingLink: null };
+    await attachQuotePresentation(business.code, id, presentation);
+    await markQuoteSent(business.code, id);
+    const token = await getQuoteSigningToken(business.code, id);
+    return { signingLink: token ? `${SIGN_BASE}/sign/${token}` : null };
+  };
+
+  // In-person signature: persist the quote (if needed) + its presentation, then record the
+  // signature (status -> accepted in cloud, won locally). Works offline too.
+  const handleSign = async (signatureData: string, presentation: QuotePresentation) => {
+    let id = lastSavedId;
+    if (!id) id = await saveQuote();
+    if (!id) return;
+    await attachQuotePresentation(business.code, id, presentation);
+    await saveSignature(business.code, id, signatureData, customerName || undefined);
   };
 
   const sendAgentMessage = async () => {
@@ -326,7 +340,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </View>
 
       {showTotal && (
-        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} saved={saved} onSave={saveQuote} onShared={handleShared} onClose={() => setShowTotal(false)} />
+        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} saved={saved} onSave={saveQuote} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} />
       )}
 
       {isAdmin && !showTotal && (

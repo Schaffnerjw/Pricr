@@ -92,10 +92,13 @@ export async function saveBusiness(b: Business): Promise<void> {
   // We can't use upsert here: ON CONFLICT DO UPDATE makes Postgres evaluate the members-only
   // UPDATE policy, which a not-yet-member fails on the initial create. So: UPDATE if the row
   // exists and we're a member (config edits / kit updates), else plain INSERT (first create).
+  // T&C is mirrored to its own column so the proxy / remote signing page can read it
+  // directly, while the full Business (incl. termsAndConditions) also lives in config.
+  const row = { id, code: b.code, name: b.name, config: b, terms_and_conditions: b.termsAndConditions ?? null };
   const { data: updated } = await supabase!.from("businesses")
-    .update({ code: b.code, name: b.name, config: b }).eq("id", id).select("id");
+    .update({ code: b.code, name: b.name, config: b, terms_and_conditions: b.termsAndConditions ?? null }).eq("id", id).select("id");
   if (!updated || updated.length === 0) {
-    const { error } = await supabase!.from("businesses").insert({ id, code: b.code, name: b.name, config: b });
+    const { error } = await supabase!.from("businesses").insert(row);
     if (error) throw error;
   }
   if (uid) await supabase!.from("users").upsert({ id: uid, business_id: id, role: "admin", name: b.ownerName }, { onConflict: "id" });
@@ -193,6 +196,51 @@ export async function markQuoteSent(code: string, id: string): Promise<void> {
     await ensureSession(code);
     await supabase!.from("quotes").update({ status: "sent", updated_at: new Date().toISOString() })
       .eq("business_id", codeToUuid(code)).eq("quote_data->>id", id);
+  } catch { }
+}
+
+// The unique signing token for a saved quote, used to build the remote signing link.
+// Null locally / in demo (no remote signing without a backend).
+export async function getQuoteSigningToken(code: string, appId: string): Promise<string | null> {
+  if (!useCloud(code)) return null;
+  try {
+    await ensureSession(code);
+    const { data } = await supabase!.from("quotes").select("signing_token")
+      .eq("business_id", codeToUuid(code)).eq("quote_data->>id", appId).maybeSingle();
+    return (data?.signing_token as string) ?? null;
+  } catch { return null; }
+}
+
+// Persist the rendered presentation snapshot (line items + totals + branding) onto a quote,
+// so the remote signing page and the signed PDF can render it without the schema/formula engine.
+export async function attachQuotePresentation(code: string, appId: string, presentation: import("../types").QuotePresentation): Promise<void> {
+  await updateQuote(code, appId, { presentation });
+}
+
+// Record a customer signature against a quote. Cloud: writes the signature_data/signed_at
+// columns + status→accepted (and mirrors into quote_data). Local/demo: stored in quote_data
+// (status→won) so in-person signing still works with no backend.
+export async function saveSignature(code: string, appId: string, signatureData: string, customerName?: string): Promise<void> {
+  const signedAt = Date.now();
+  if (!useCloud(code)) {
+    await updateQuote(code, appId, { signatureData, signedAt, status: "won", ...(customerName ? { customerName } : {}) });
+    return;
+  }
+  try {
+    await ensureSession(code);
+    const bizId = codeToUuid(code);
+    const { data } = await supabase!.from("quotes").select("id,quote_data")
+      .eq("business_id", bizId).eq("quote_data->>id", appId).maybeSingle();
+    if (!data) return;
+    const merged: SavedQuote = { ...(data.quote_data as SavedQuote), signatureData, signedAt, status: "won", ...(customerName ? { customerName } : {}) };
+    await supabase!.from("quotes").update({
+      signature_data: signatureData,
+      signed_at: new Date(signedAt).toISOString(),
+      status: "accepted",
+      customer_name: customerName ?? merged.customerName ?? null,
+      quote_data: merged,
+      updated_at: new Date().toISOString(),
+    }).eq("id", data.id);
   } catch { }
 }
 

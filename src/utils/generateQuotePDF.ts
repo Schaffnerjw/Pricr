@@ -1,25 +1,14 @@
+import { QuotePresentation } from "../types";
 import { formatLongDate, formatMoney } from "./helpers";
 
 export interface QuotePDFLine { label: string; amount: number; }
 
-export interface QuotePDFData {
-  businessName: string;
-  brandColor: string;
-  logoUri?: string | null;
-  phone?: string;
-  email?: string;
-  address?: string;
-  customerName: string;
-  trade?: string;
-  date: number;          // quote date (timestamp)
-  validThrough: number;  // expiry date (timestamp)
-  lineItems: QuotePDFLine[];
-  taxRate: number;       // whole-number percent (e.g. 7)
-  tax: number;
-  total: number;
-  depositPct: number;
-  deposit: number;
-  balanceDue: number;
+// The renderable quote snapshot, plus optional signature / signing link / terms.
+export interface QuotePDFData extends QuotePresentation {
+  signatureData?: string;       // base64 PNG of the customer signature, if signed
+  signedAt?: number;            // timestamp the signature was captured
+  signingLink?: string;         // remote signing URL, shown as a clickable link on page 1
+  termsAndConditions?: string;  // business T&C — rendered as a full page 2 if present
 }
 
 const esc = (s: unknown) =>
@@ -41,6 +30,26 @@ export function generateQuotePDF(d: QuotePDFData): string {
            <div class="dep-sub">Balance of ${formatMoney(d.balanceDue)} due upon completion</div>
          </div>
          <div class="dep-amt">${formatMoney(d.deposit)}</div>
+       </div>`
+    : "";
+  // Signature block — only when the quote has been signed.
+  const signatureBlock = d.signatureData
+    ? `<div class="sig-wrap">
+         <img class="sig-img" src="${esc(d.signatureData)}" />
+         <div class="sig-line"></div>
+         <div class="sig-meta"><span>${esc(d.customerName || "Customer")}</span><span>${esc(formatLongDate(d.signedAt ?? d.date))}</span></div>
+         <div class="sig-cap">Accepted &amp; signed</div>
+       </div>`
+    : "";
+  // Clickable remote-signing link at the bottom of page 1.
+  const signLinkBlock = d.signingLink
+    ? `<div class="sign-link">Review &amp; sign online: <a href="${esc(d.signingLink)}">${esc(d.signingLink)}</a></div>`
+    : "";
+  // Terms &amp; conditions as a full page 2.
+  const termsPage = d.termsAndConditions && d.termsAndConditions.trim()
+    ? `<div class="terms-page">
+         <div class="terms-title">Terms &amp; Conditions</div>
+         <div class="terms-body">${esc(d.termsAndConditions).replace(/\n/g, "<br/>")}</div>
        </div>`
     : "";
   const contactBits = [d.phone, d.email, d.address].filter(Boolean).map(esc).join("&nbsp;&nbsp;·&nbsp;&nbsp;");
@@ -78,6 +87,16 @@ export function generateQuotePDF(d: QuotePDFData): string {
   .dep-amt { font-size: 22px; font-weight: 800; color: ${accent}; }
   .valid { color: #64748B; font-size: 12px; margin-top: 18px; }
   .footer { margin-top: 36px; padding-top: 16px; border-top: 1px solid #E2E8F0; color: #475569; font-size: 12px; }
+  .sig-wrap { margin-top: 32px; padding-top: 8px; max-width: 320px; }
+  .sig-img { max-height: 90px; max-width: 300px; display: block; }
+  .sig-line { border-bottom: 1.5px solid #0A0E1A; margin-top: 4px; }
+  .sig-meta { display: flex; justify-content: space-between; font-size: 12px; color: #475569; margin-top: 6px; }
+  .sig-cap { color: ${accent}; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-top: 8px; }
+  .sign-link { margin-top: 28px; padding: 12px 14px; background: #F8FAFC; border: 1px solid ${accent}40; border-radius: 10px; font-size: 12px; color: #475569; }
+  .sign-link a { color: ${accent}; font-weight: 600; word-break: break-all; }
+  .terms-page { page-break-before: always; padding: 40px; }
+  .terms-title { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; border-bottom: 3px solid ${accent}; padding-bottom: 10px; margin-bottom: 18px; }
+  .terms-body { font-size: 12px; line-height: 1.7; color: #1E2640; white-space: normal; }
 </style></head>
 <body>
   <div class="header">
@@ -97,8 +116,11 @@ export function generateQuotePDF(d: QuotePDFData): string {
       <tr class="total-row"><td class="li">Total</td><td class="amt">${formatMoney(d.total)}</td></tr>
     </table>
     ${depositBlock}
+    ${signatureBlock}
     <div class="valid">This estimate is valid for 30 days · through ${esc(formatLongDate(d.validThrough))}</div>
+    ${signLinkBlock}
     ${contactBits ? `<div class="footer">${contactBits}</div>` : ""}
   </div>
+  ${termsPage}
 </body></html>`;
 }

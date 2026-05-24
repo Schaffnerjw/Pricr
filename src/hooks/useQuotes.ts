@@ -11,6 +11,9 @@ export interface QuoteRow {
   quote_data: any;
   total: number | null;
   status: QuoteStatus;
+  signature_data?: string | null;
+  signed_at?: string | null;
+  signing_token?: string | null;
   created_at: string;
   updated_at?: string;
 }

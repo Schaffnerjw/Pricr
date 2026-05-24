@@ -2,16 +2,17 @@ import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { BrandHeader } from "../components/BrandHeader";
+import { KitIntroBubble } from "../components/KitIntroBubble";
 import { B } from "../constants/brand";
 import { getQuotes } from "../storage";
 import { s } from "../styles";
 import { Business, User } from "../types";
 import { monthlyQuoteTotal } from "../utils/quote";
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean;
   onSignOut: () => void; onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
-  onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void;
+  onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const bg = business.brand.backgroundColor || B.midnight;
@@ -128,6 +129,8 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
           </>
         )}
       </ScrollView>
+
+      {isAdmin && <KitIntroBubble business={business} onSetupTerms={onSetupTerms ?? onOpenSettings} />}
     </SafeAreaView>
   );
 }

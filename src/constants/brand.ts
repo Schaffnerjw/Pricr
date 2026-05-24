@@ -4,3 +4,5 @@ export const B = { midnight:"#0A0E1A", navy:"#0D1225", card:"#111827", border:"#
 export const MASTER_CODE = "CB101919";
 export const DEFAULT_BRAND = { primaryColor:"#2979FF", secondaryColor:"#00E5FF", backgroundColor:"#0A0E1A", logoUri:null, tagline:"", phone:"", email:"", address:"" };
 export const API_URL = `${PROXY_URL}/v1/messages`;
+// Base for remote signing links (served by proxy.js): `${SIGN_BASE}/sign/<token>`.
+export const SIGN_BASE = PROXY_URL;

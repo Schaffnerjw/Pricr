@@ -40,6 +40,7 @@ export default function Index() {
   const [masterInput, setMasterInput] = useState("");
   const [masterError, setMasterError] = useState("");
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [settingsFocusTerms, setSettingsFocusTerms] = useState(false);
 
   const [setupServices, setSetupServices] = useState("");
   const [setupProducts, setSetupProducts] = useState("");
@@ -316,7 +317,7 @@ export default function Index() {
   // ── SCREEN ROUTING ────────────────────────────────────────────────────────────
   if (screen === "users" && business && currentUser) return <UsersScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} />;
   if (screen === "history" && business && currentUser) return <HistoryScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} onNewQuote={() => setScreen("quote")} />;
-  if (screen === "pipeline" && business && currentUser) return <QuotesHistoryScreen businessId={codeToUuid(business.code)} isAdmin={isAdmin} onBack={() => setScreen("done")} />;
+  if (screen === "pipeline" && business && currentUser) return <QuotesHistoryScreen businessId={codeToUuid(business.code)} isAdmin={isAdmin} accentColor={primaryColor} termsAndConditions={business.termsAndConditions} onBack={() => setScreen("done")} />;
   if (screen === "quote" && business && currentUser) return <QuoteScreen schema={business.schema} setSchema={(ns) => setBusiness(b => b ? { ...b, schema: ns } : b)} business={business} currentUser={currentUser} onBack={() => setScreen("done")} isDemoMode={isDemoMode} initialValues={quoteInitialValues} />;
 
   // Admin-only Settings (reps are redirected by the guard above).
@@ -324,9 +325,10 @@ export default function Index() {
     <SettingsScreen
       business={business}
       onPickLogo={pickImage}
-      onBack={() => setScreen("done")}
-      onSave={async ({ name, brand }) => {
-        const updated = { ...business!, name, brand, brandConfigured: true };
+      scrollToTerms={settingsFocusTerms}
+      onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
+      onSave={async ({ name, brand, termsAndConditions }) => {
+        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions };
         setBusiness(updated);
         await saveBusiness(updated);
       }}
@@ -363,7 +365,8 @@ export default function Index() {
       onReconfigure={() => { setJustBuilt(false); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
       onTestQuote={() => { setJustBuilt(false); setQuoteInitialValues(sampleFieldValues(business.schema)); setScreen("quote"); }}
       onDismissTestPrompt={() => setJustBuilt(false)}
-      onOpenSettings={() => { setJustBuilt(false); setScreen("settings"); }}
+      onOpenSettings={() => { setJustBuilt(false); setSettingsFocusTerms(false); setScreen("settings"); }}
+      onSetupTerms={() => { setJustBuilt(false); setSettingsFocusTerms(true); setScreen("settings"); }}
     />
   );
 

@@ -1,6 +1,7 @@
 import { Feather } from "@expo/vector-icons";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Image, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { KitChatModal } from "../components/KitChatModal";
 import { B, DEFAULT_BRAND } from "../constants/brand";
 import { s } from "../styles";
 import { BrandConfig, Business } from "../types";
@@ -13,18 +14,31 @@ const BG_PRESETS = [
 ];
 
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
-export function SettingsScreen({ business, onSave, onBack, onPickLogo }: {
+export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToTerms }: {
   business: Business;
-  onSave: (update: { name: string; brand: BrandConfig }) => void;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string }) => void;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
+  scrollToTerms?: boolean;
 }) {
   const [name, setName] = useState(business.name);
   const [logoUri, setLogoUri] = useState<string | null>(business.brand.logoUri);
   const [primary, setPrimary] = useState(business.brand.primaryColor || DEFAULT_BRAND.primaryColor);
   const [secondary, setSecondary] = useState(business.brand.secondaryColor || DEFAULT_BRAND.secondaryColor);
   const [background, setBackground] = useState(business.brand.backgroundColor || DEFAULT_BRAND.backgroundColor);
+  const [terms, setTerms] = useState(business.termsAndConditions ?? "");
+  const [editingTerms, setEditingTerms] = useState(false);
+  const [kitOpen, setKitOpen] = useState(false);
   const [toast, setToast] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const termsY = useRef(0);
+
+  const trade = business.schema?.trade || "contracting";
+  const TC_SYSTEM = `You are Kit, helping the owner of "${business.name}" (a ${trade} business) write professional terms and conditions for their customer quotes. Ask these questions ONE at a time, conversationally: (1) what trade/service they provide, (2) whether they carry liability insurance and what it covers, (3) what items or situations they are NOT responsible for, (4) their cancellation policy, (5) any deposit or payment terms. After you have enough, output the finished terms as plain text prefixed EXACTLY with "TERMS_READY:" on its own, then the full terms as short numbered clauses (no markdown headers). Keep it professional, fair, and concise.`;
+
+  useEffect(() => {
+    if (scrollToTerms) setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, termsY.current - 12), animated: true }), 350);
+  }, [scrollToTerms]);
 
   const pc = isValidHex(primary) ? primary : DEFAULT_BRAND.primaryColor;
   const sc = isValidHex(secondary) ? secondary : DEFAULT_BRAND.secondaryColor;
@@ -34,7 +48,8 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo }: {
   const pickLogo = async () => { const uri = await onPickLogo(); if (uri) setLogoUri(uri); };
   const resetDefaults = () => { setPrimary(DEFAULT_BRAND.primaryColor); setSecondary(DEFAULT_BRAND.secondaryColor); setBackground(DEFAULT_BRAND.backgroundColor); };
   const save = () => {
-    onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg } });
+    onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined });
+    setEditingTerms(false);
     setToast(true);
     setTimeout(() => setToast(false), 1600);
   };
@@ -60,7 +75,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo }: {
         <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
         {/* Live preview */}
         <View style={{ gap: 8 }}>
           <Text style={s.sectionTitle}>LIVE PREVIEW</Text>
@@ -128,15 +143,56 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo }: {
           </TouchableOpacity>
         </View>
 
+        {/* Terms & Conditions */}
+        <View style={{ gap: 12 }} onLayout={e => { termsY.current = e.nativeEvent.layout.y; }}>
+          <Text style={s.sectionTitle}>TERMS & CONDITIONS</Text>
+          {editingTerms ? (
+            <TextInput
+              style={[s.input, { minHeight: 180, textAlignVertical: "top", paddingTop: 12 }]}
+              value={terms} onChangeText={setTerms} multiline
+              placeholder="Type or paste your terms and conditions…" placeholderTextColor={B.gray3}
+            />
+          ) : (
+            <View style={{ borderWidth: 1, borderColor: B.border, borderRadius: 12, padding: 14, maxHeight: 220 }}>
+              <ScrollView nestedScrollEnabled>
+                <Text style={{ color: terms.trim() ? B.gray1 : B.gray3, fontSize: 13, lineHeight: 20, fontFamily: "DMSans_400Regular" }}>
+                  {terms.trim() || "No terms set yet. Add them so customers agree before signing."}
+                </Text>
+              </ScrollView>
+            </View>
+          )}
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: pc }]} onPress={() => setEditingTerms(e => !e)}>
+              <Text style={[s.btnSecondaryText, { color: pc }]}>{editingTerms ? "Preview" : "Edit Terms"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: pc, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={() => setKitOpen(true)}>
+              <Feather name="message-circle" size={15} color={pc} />
+              <Text style={[s.btnSecondaryText, { color: pc }]}>Have Kit write them</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={save}>
           <Text style={s.btnText}>Save</Text>
         </TouchableOpacity>
       </ScrollView>
 
+      <KitChatModal
+        visible={kitOpen}
+        onClose={() => setKitOpen(false)}
+        primaryColor={pc}
+        title="Kit"
+        subtitle="Let's write your terms & conditions"
+        systemPrompt={TC_SYSTEM}
+        opener={`Hi! I'll help you write clear terms & conditions for ${name || business.name}. First — what trade or service do you provide?`}
+        resultMarker="TERMS_READY:"
+        onResult={(text) => { setTerms(text); setEditingTerms(true); setKitOpen(false); }}
+      />
+
       {toast && (
         <View style={s.toast}>
           <Feather name="check" size={16} color={B.white} />
-          <Text style={s.toastText}>Brand updated</Text>
+          <Text style={s.toastText}>Saved</Text>
         </View>
       )}
     </SafeAreaView>
