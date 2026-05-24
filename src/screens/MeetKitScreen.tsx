@@ -1,14 +1,14 @@
 import { Feather } from "@expo/vector-icons";
 import { RefObject, useEffect, useRef } from "react";
-import { Animated, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StatusBar, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Animated, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StatusBar, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { TypingDots } from "../components/TypingDots";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s } from "../styles";
 import { quickReplies } from "../utils/quote";
 
-export function MeetKitScreen({ primaryColor, messages, input, loading, progress, onInputChange, onSend, onQuickReply, scrollRef }: {
-  primaryColor: string;
+export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, onInputChange, onSend, onQuickReply, scrollRef }: {
+  primaryColor: string; backgroundColor?: string;
   messages: { role: "user" | "assistant"; content: string }[];
   input: string; loading: boolean; progress: number;
   onInputChange: (v: string) => void; onSend: () => void; onQuickReply: (text: string) => void;
@@ -21,17 +21,23 @@ export function MeetKitScreen({ primaryColor, messages, input, loading, progress
     Animated.timing(fill, { toValue: progress, duration: 400, useNativeDriver: false }).start();
   }, [progress, reduceMotion]);
 
+  // Keep the latest message visible above the keyboard when it opens.
+  useEffect(() => {
+    const sub = Keyboard.addListener("keyboardDidShow", () => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50));
+    return () => sub.remove();
+  }, [scrollRef]);
+
   const last = messages[messages.length - 1];
   const chips = !loading && last?.role === "assistant" ? quickReplies(last.content) : [];
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={[s.container, backgroundColor ? { backgroundColor } : null]}>
       <StatusBar barStyle="light-content" />
       {/* Onboarding progress bar */}
       <View style={{ height: 3, backgroundColor: B.border }}>
         <Animated.View style={{ height: 3, backgroundColor: primaryColor, width: fill.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) }} />
       </View>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}>
         <View style={s.kitIntroBar}>
           <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={s.kitAvatarText}>K</Text></View>
           <View>

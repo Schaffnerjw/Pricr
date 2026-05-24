@@ -225,7 +225,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   };
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={[s.container, { backgroundColor: business.brand.backgroundColor || B.midnight }]}>
       <BrandHeader business={business} right={
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <View style={[s.roleBadge, isAdmin && { borderColor: primaryColor + "60", backgroundColor: primaryColor + "15" }]}>

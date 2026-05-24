@@ -15,6 +15,7 @@ import { MasterDashboard } from "../src/screens/MasterDashboard";
 import { MeetKitScreen } from "../src/screens/MeetKitScreen";
 import { QuoteScreen } from "../src/screens/QuoteScreen";
 import { RepJoinScreen } from "../src/screens/RepJoinScreen";
+import { SettingsScreen } from "../src/screens/SettingsScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
 import { SignupBrandScreen } from "../src/screens/SignupBrandScreen";
 import { SignupScreen } from "../src/screens/SignupScreen";
@@ -105,19 +106,18 @@ export default function Index() {
     }
   };
 
-  const pickLogo = async () => {
+  const pickImage = async (): Promise<string | null> => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [10, 3],
       quality: 0.8,
     });
-    if (!result.canceled && result.assets[0]) {
-      setSignupBrand(b => ({ ...b, logoUri: result.assets[0].uri }));
-    }
+    return !result.canceled && result.assets[0] ? result.assets[0].uri : null;
   };
+  const pickLogo = async () => { const uri = await pickImage(); if (uri) setSignupBrand(b => ({ ...b, logoUri: uri })); };
 
-  const handleSignUp = async () => {
+  const handleSignUp = async (brandConfigured: boolean = true) => {
     if (!signupBizName.trim() || !authName.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
     if (authPin.length < 4) { setAuthError("PIN must be at least 4 digits."); return; }
     const finalColor = isValidHex(signupBrand.primaryColor) ? signupBrand.primaryColor : "#2979FF";
@@ -127,7 +127,7 @@ export default function Index() {
       const biz: Business = {
         code, name: signupBizName, ownerName: authName, adminPin: authPin,
         brand: { ...signupBrand, primaryColor: finalColor },
-        schema: null, createdAt: Date.now(),
+        schema: null, createdAt: Date.now(), brandConfigured,
       };
       await saveBusiness(biz);
       await saveUsers(code, [user]);
@@ -303,11 +303,32 @@ export default function Index() {
   };
 
   const primaryColor = business?.brand?.primaryColor || B.blue;
+  const secondaryColor = business?.brand?.secondaryColor || B.cyan;
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "superadmin";
+
+  // Reps must never reach Settings — bounce them to the dashboard if they somehow land there.
+  useEffect(() => {
+    if (screen === "settings" && currentUser && !isAdmin) setScreen("done");
+  }, [screen, isAdmin, currentUser]);
 
   // ── SCREEN ROUTING ────────────────────────────────────────────────────────────
   if (screen === "users" && business && currentUser) return <UsersScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} />;
   if (screen === "history" && business && currentUser) return <HistoryScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} onNewQuote={() => setScreen("quote")} />;
   if (screen === "quote" && business && currentUser) return <QuoteScreen schema={business.schema} setSchema={(ns) => setBusiness(b => b ? { ...b, schema: ns } : b)} business={business} currentUser={currentUser} onBack={() => setScreen("done")} isDemoMode={isDemoMode} initialValues={quoteInitialValues} />;
+
+  // Admin-only Settings (reps are redirected by the guard above).
+  if (screen === "settings" && business && currentUser && isAdmin) return (
+    <SettingsScreen
+      business={business}
+      onPickLogo={pickImage}
+      onBack={() => setScreen("done")}
+      onSave={async ({ name, brand }) => {
+        const updated = { ...business!, name, brand, brandConfigured: true };
+        setBusiness(updated);
+        await saveBusiness(updated);
+      }}
+    />
+  );
 
   // ── MASTER DASHBOARD ──────────────────────────────────────────────────────────
   if (screen === "master") {
@@ -329,7 +350,7 @@ export default function Index() {
 
   if (screen === "done" && business && currentUser) return (
     <DoneScreen
-      business={business} currentUser={currentUser} primaryColor={primaryColor}
+      business={business} currentUser={currentUser} primaryColor={primaryColor} secondaryColor={secondaryColor}
       showTestPrompt={justBuilt}
       onSignOut={handleSignOut}
       onOpenQuoteTool={() => { setJustBuilt(false); setQuoteInitialValues(undefined); setScreen("quote"); }}
@@ -338,12 +359,13 @@ export default function Index() {
       onReconfigure={() => { setJustBuilt(false); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
       onTestQuote={() => { setJustBuilt(false); setQuoteInitialValues(sampleFieldValues(business.schema)); setScreen("quote"); }}
       onDismissTestPrompt={() => setJustBuilt(false)}
+      onOpenSettings={() => { setJustBuilt(false); setScreen("settings"); }}
     />
   );
 
   if (screen === "meet_kit") return (
     <MeetKitScreen
-      primaryColor={primaryColor} messages={kitMessages} input={kitInput} loading={kitLoading}
+      primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor} messages={kitMessages} input={kitInput} loading={kitLoading}
       progress={kitReady ? 1 : Math.min(0.9, kitMessages.length * 0.12)}
       onInputChange={setKitInput} onSend={() => sendKitMessage()} onQuickReply={(t) => sendKitMessage(t)} scrollRef={scrollRef}
     />
@@ -361,7 +383,7 @@ export default function Index() {
   if (screen === "signup_brand") return (
     <SignupBrandScreen
       brand={signupBrand} bizName={signupBizName} onBrandChange={setSignupBrand}
-      onPickLogo={pickLogo} onCreateAccount={handleSignUp} onBack={() => setScreen("signup")}
+      onPickLogo={pickLogo} onCreateAccount={(bc) => handleSignUp(bc)} onBack={() => setScreen("signup")}
     />
   );
 

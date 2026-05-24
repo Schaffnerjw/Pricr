@@ -8,12 +8,13 @@ import { s } from "../styles";
 import { Business, User } from "../types";
 import { monthlyQuoteTotal } from "../utils/quote";
 
-export function DoneScreen({ business, currentUser, primaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt }: {
-  business: Business; currentUser: User; primaryColor: string; showTestPrompt: boolean;
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings }: {
+  business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean;
   onSignOut: () => void; onOpenQuoteTool: () => void; onQuoteHistory: () => void; onManageTeam: () => void; onReconfigure: () => void;
-  onTestQuote: () => void; onDismissTestPrompt: () => void;
+  onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
+  const bg = business.brand.backgroundColor || B.midnight;
   const [monthTotal, setMonthTotal] = useState<number | null>(null);
   const [allTimeCount, setAllTimeCount] = useState<number | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -25,7 +26,7 @@ export function DoneScreen({ business, currentUser, primaryColor, showTestPrompt
   }, [business.code]);
 
   return (
-    <SafeAreaView style={s.container}>
+    <SafeAreaView style={[s.container, { backgroundColor: bg }]}>
       <BrandHeader business={business} right={
         <TouchableOpacity onPress={onSignOut}>
           <Text style={{ color: B.gray3, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Sign out</Text>
@@ -36,6 +37,14 @@ export function DoneScreen({ business, currentUser, primaryColor, showTestPrompt
           <Text style={s.h1}>Hey, {currentUser.name}.</Text>
           <Text style={[s.body, { marginTop: 4 }]}>{business.name} is configured and ready to quote.</Text>
         </View>
+
+        {isAdmin && business.brandConfigured === false && (
+          <TouchableOpacity style={[s.brandBanner, { borderColor: primaryColor + "60" }]} onPress={onOpenSettings}>
+            <Feather name="alert-circle" size={18} color={primaryColor} />
+            <Text style={s.brandBannerText}>Brand setup incomplete — finish in Settings</Text>
+            <Feather name="chevron-right" size={18} color={B.gray3} />
+          </TouchableOpacity>
+        )}
 
         {showTestPrompt && !dismissed && (
           <View style={[s.configCard, { borderColor: primaryColor + "60", gap: 10 }]}>
@@ -98,15 +107,18 @@ export function DoneScreen({ business, currentUser, primaryColor, showTestPrompt
           <Text style={s.btnText}>Open My Quote Tool</Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.btnSecondary} onPress={onQuoteHistory}>
-          <Text style={s.btnSecondaryText}>Quote History</Text>
+          <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Quote History</Text>
         </TouchableOpacity>
         {isAdmin && (
           <>
             <TouchableOpacity style={s.btnSecondary} onPress={onManageTeam}>
-              <Text style={s.btnSecondaryText}>Manage Team</Text>
+              <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Manage Team</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.btnSecondary} onPress={onReconfigure}>
-              <Text style={s.btnSecondaryText}>Reconfigure with Kit</Text>
+              <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Reconfigure with Kit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.btnSecondary} onPress={onOpenSettings}>
+              <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Settings</Text>
             </TouchableOpacity>
           </>
         )}

@@ -195,4 +195,18 @@ export const s = StyleSheet.create({
   histDot: { width: 10, height: 10, borderRadius: 5 },
   histRowTop: { flexDirection: "row", alignItems: "center", gap: 8 },
   emptyArt: { width: 96, height: 96, borderRadius: 28, marginBottom: 20 },
+
+  // Settings — brand customization
+  setColorRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  setSwatch: { width: 44, height: 44, borderRadius: 10, borderWidth: 1, borderColor: B.border },
+  setHexInput: { flex: 1, backgroundColor: B.card, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: B.white, fontSize: 15, borderWidth: 1, borderColor: B.border, fontFamily: "DMSans_400Regular" },
+  setPreset: { borderRadius: 20, paddingVertical: 9, paddingHorizontal: 14, borderWidth: 1, borderColor: B.border, backgroundColor: B.card },
+  setPresetText: { fontSize: 13, fontWeight: "600", color: B.gray2, fontFamily: "DMSans_600SemiBold" },
+  setPreviewCard: { borderRadius: 16, padding: 16, borderWidth: 1, gap: 10 },
+  toast: { position: "absolute", bottom: 40, alignSelf: "center", backgroundColor: B.green, borderRadius: 24, paddingVertical: 12, paddingHorizontal: 24, flexDirection: "row", alignItems: "center", gap: 8 },
+  toastText: { color: B.white, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" },
+
+  // "Brand setup incomplete" banner
+  brandBanner: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: B.card, borderRadius: 14, padding: 14, borderWidth: 1 },
+  brandBannerText: { flex: 1, fontSize: 14, color: B.gray1, fontFamily: "DMSans_600SemiBold" },
 });

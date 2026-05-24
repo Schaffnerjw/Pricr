@@ -1,7 +1,7 @@
-import { Dispatch, SetStateAction } from "react";
+import { Dispatch, SetStateAction, useState } from "react";
 import { Image, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
-import { B } from "../constants/brand";
+import { B, DEFAULT_BRAND } from "../constants/brand";
 import { s } from "../styles";
 import { BrandConfig } from "../types";
 import { isValidHex } from "../utils/color";
@@ -9,9 +9,14 @@ import { isValidHex } from "../utils/color";
 export function SignupBrandScreen({ brand, bizName, onBrandChange, onPickLogo, onCreateAccount, onBack }: {
   brand: BrandConfig; bizName: string;
   onBrandChange: Dispatch<SetStateAction<BrandConfig>>;
-  onPickLogo: () => void; onCreateAccount: () => void; onBack: () => void;
+  onPickLogo: () => void; onCreateAccount: (brandConfigured: boolean) => void; onBack: () => void;
 }) {
+  const [logoSkipped, setLogoSkipped] = useState(false);
+  const [colorsSkipped, setColorsSkipped] = useState(false);
   const previewColor = isValidHex(brand.primaryColor) ? brand.primaryColor : "#2979FF";
+  const secondaryColor = isValidHex(brand.secondaryColor) ? brand.secondaryColor : "#00E5FF";
+  // Branding counts as configured only if they added a logo and didn't skip colors.
+  const brandConfigured = !!brand.logoUri && !colorsSkipped;
   return (
     <SafeAreaView style={s.container}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -23,35 +28,46 @@ export function SignupBrandScreen({ brand, bizName, onBrandChange, onPickLogo, o
           <View style={{ gap: 6, marginBottom: 20 }}>
             <Text style={s.formLabel}>Logo</Text>
             <Text style={s.formHint}>Recommended: 400 x 120px PNG with transparent background. Wide format works best.</Text>
-            <TouchableOpacity style={s.logoUploadBtn} onPress={onPickLogo}>
+            <TouchableOpacity style={s.logoUploadBtn} onPress={() => { setLogoSkipped(false); onPickLogo(); }}>
               {brand.logoUri ? (
                 <Image source={{ uri: brand.logoUri }} style={{ height: 48, width: "100%" }} resizeMode="contain" />
               ) : (
                 <Text style={s.logoUploadText}>Tap to upload logo</Text>
               )}
             </TouchableOpacity>
-            {brand.logoUri && (
+            {brand.logoUri ? (
               <TouchableOpacity onPress={() => onBrandChange(b => ({ ...b, logoUri: null }))}>
                 <Text style={{ color: B.red, fontSize: 13, marginTop: 4 }}>Remove logo</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={() => setLogoSkipped(true)}>
+                <Text style={{ color: logoSkipped ? B.gray3 : B.blue, fontSize: 13, marginTop: 4, fontFamily: "DMSans_600SemiBold" }}>
+                  {logoSkipped ? "Skipped — add your logo later in Settings" : "Skip for now"}
+                </Text>
               </TouchableOpacity>
             )}
           </View>
 
-          <View style={{ gap: 6, marginBottom: 16 }}>
-            <Text style={s.formLabel}>Brand Color</Text>
-            <Text style={s.formHint}>This appears on your customer-facing quotes. Enter a hex code.</Text>
-            <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
-              <TextInput
-                style={[s.input, { flex: 1 }]}
-                placeholder="#2979FF"
-                placeholderTextColor={B.gray3}
-                value={brand.primaryColor}
-                onChangeText={v => onBrandChange(b => ({ ...b, primaryColor: v.startsWith("#") ? v : "#" + v }))}
-                autoCapitalize="characters"
-                maxLength={7}
-              />
-              <View style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: previewColor, borderWidth: 1, borderColor: B.border }} />
+          <View style={{ gap: 10, marginBottom: 16 }}>
+            <Text style={s.formLabel}>Brand Colors</Text>
+            <Text style={s.formHint}>Primary drives buttons & headers; secondary is a supporting accent. Enter hex codes.</Text>
+            <View style={s.setColorRow}>
+              <View style={[s.setSwatch, { backgroundColor: previewColor }]} />
+              <TextInput style={s.setHexInput} placeholder="#2979FF · Primary" placeholderTextColor={B.gray3} value={brand.primaryColor}
+                onChangeText={v => { setColorsSkipped(false); onBrandChange(b => ({ ...b, primaryColor: v.startsWith("#") ? v : "#" + v })); }}
+                autoCapitalize="characters" maxLength={7} />
             </View>
+            <View style={s.setColorRow}>
+              <View style={[s.setSwatch, { backgroundColor: secondaryColor }]} />
+              <TextInput style={s.setHexInput} placeholder="#00E5FF · Secondary" placeholderTextColor={B.gray3} value={brand.secondaryColor}
+                onChangeText={v => { setColorsSkipped(false); onBrandChange(b => ({ ...b, secondaryColor: v.startsWith("#") ? v : "#" + v })); }}
+                autoCapitalize="characters" maxLength={7} />
+            </View>
+            <TouchableOpacity onPress={() => { setColorsSkipped(true); onBrandChange(b => ({ ...b, primaryColor: DEFAULT_BRAND.primaryColor, secondaryColor: DEFAULT_BRAND.secondaryColor, backgroundColor: DEFAULT_BRAND.backgroundColor })); }}>
+              <Text style={{ color: colorsSkipped ? B.gray3 : B.blue, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>
+                {colorsSkipped ? "Using Pricr colors — customize later in Settings" : "Skip for now (use Pricr colors)"}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           <View style={{ gap: 6, marginBottom: 16 }}>
@@ -89,7 +105,7 @@ export function SignupBrandScreen({ brand, bizName, onBrandChange, onPickLogo, o
             ) : null}
           </View>
 
-          <TouchableOpacity style={[s.btn, { backgroundColor: previewColor, marginTop: 16 }]} onPress={onCreateAccount}>
+          <TouchableOpacity style={[s.btn, { backgroundColor: previewColor, marginTop: 16 }]} onPress={() => onCreateAccount(brandConfigured)}>
             <Text style={s.btnText}>Create Account</Text>
           </TouchableOpacity>
           <TouchableOpacity style={s.btnSecondary} onPress={onBack}>
