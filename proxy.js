@@ -42,9 +42,14 @@ function supabaseRequest(method, pathAndQuery, bodyObj) {
   });
 }
 
-// Fetch the quote (and its business) for a signing token. Returns null if not found.
+// Fetch the quote (and its business) for a signing token. Returns null if genuinely not found.
+// Throws on a Supabase auth/permission failure so callers report a server error (not "not found").
 async function loadSigningContext(token) {
   const q = await supabaseRequest('GET', `/rest/v1/quotes?signing_token=eq.${encodeURIComponent(token)}&select=*&limit=1`);
+  if (q.status === 401 || q.status === 403) {
+    console.error(`[sign] Supabase read denied (HTTP ${q.status}). The proxy must use the SERVICE ROLE key — check SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY. Response: ${q.text}`);
+    throw new Error('supabase-auth-failed');
+  }
   const quote = Array.isArray(q.json) && q.json[0] ? q.json[0] : null;
   if (!quote) return null;
   const b = await supabaseRequest('GET', `/rest/v1/businesses?id=eq.${encodeURIComponent(quote.business_id)}&select=name,config,terms_and_conditions&limit=1`);
@@ -298,6 +303,9 @@ const server = http.createServer((req, res) => {
 // exposes the pure render helpers below without starting the server.
 if (require.main === module) {
   const PORT = process.env.PORT || 3001;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn('[sign] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — the remote signing routes (/sign/:token) will be disabled until they are.');
+  }
   server.listen(PORT, () => console.log(`Pricr proxy running on port ${PORT}`));
 }
 
