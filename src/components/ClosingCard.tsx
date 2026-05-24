@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { useEffect, useRef } from "react";
-import { Animated, Dimensions, Image, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Animated, Dimensions, Image, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s, wl } from "../styles";
@@ -8,6 +8,7 @@ import { Business } from "../types";
 import { getCardTheme } from "../utils/color";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { formatLongDate, formatMoney } from "../utils/helpers";
+import { shareQuotePDF } from "../utils/shareQuotePDF";
 
 const SCREEN_H = Dimensions.get("window").height;
 
@@ -22,6 +23,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
   const theme = getCardTheme(primaryColor);
   const slide = useRef(new Animated.Value(0)).current;
   const depositScale = useRef(new Animated.Value(1)).current;
+  const [sharing, setSharing] = useState(false);
   const t = totals;
 
   useEffect(() => {
@@ -35,7 +37,52 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
   }, [reduceMotion]);
 
   const balanceDue = Math.max(0, t.total - t.deposit);
-  const validThrough = formatLongDate(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const validTs = Date.now() + 30 * 24 * 60 * 60 * 1000;
+  const validThrough = formatLongDate(validTs);
+
+  // Build the same line items the card renders, for the PDF.
+  const buildLineItems = () => {
+    const items: { label: string; amount: number }[] = [];
+    for (const line of schema?.summaryLines || []) {
+      if (line.showIf && !evaluateCondition(line.showIf, t.ctx, schema.pricing || {})) continue;
+      const label = line.label.replace(/\{(\w+)\}/g, (_: string, k: string) => t.ctx[k] ?? schema.pricing?.[k] ?? k);
+      const value = evaluateFormula(line.value, t.ctx, schema.pricing || {});
+      if (value) items.push({ label, amount: value });
+    }
+    for (const id of selectedAddOns) {
+      const ao = schema?.addOns?.find((a: any) => a.id === id);
+      if (ao) items.push({ label: ao.label, amount: ao.price || 0 });
+    }
+    return items;
+  };
+
+  const onShare = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      await shareQuotePDF({
+        businessName: business.name,
+        brandColor: primaryColor,
+        logoUri: business.brand.logoUri,
+        phone: business.brand.phone,
+        email: business.brand.email,
+        address: business.brand.address,
+        customerName,
+        trade: schema?.trade,
+        date: Date.now(),
+        validThrough: validTs,
+        lineItems: buildLineItems(),
+        taxRate: t.taxRate,
+        tax: t.tax,
+        total: t.total,
+        depositPct: t.depositPct,
+        deposit: t.deposit,
+        balanceDue,
+      });
+    } finally {
+      setSharing(false);
+    }
+  };
 
   return (
     <View style={s.qFill}>
@@ -126,6 +173,15 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                 {business.brand.address ? <ContactRow icon="map-pin" text={business.brand.address} color={theme.lineColor} /> : null}
               </View>
             )}
+
+            <TouchableOpacity
+              style={[s.btn, { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: primaryColor, marginTop: 8 }]}
+              onPress={onShare}
+              disabled={sharing}
+            >
+              {sharing ? <ActivityIndicator color={B.white} size="small" /> : <Feather name="share" size={18} color={B.white} />}
+              <Text style={s.btnText}>{sharing ? "Preparing PDF…" : "Share Quote"}</Text>
+            </TouchableOpacity>
           </ScrollView>
         </View>
       </Animated.View>
