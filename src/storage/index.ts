@@ -1,21 +1,205 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Business, User, SavedQuote } from "../types";
+import supabase, { isSupabaseConfigured } from "../lib/supabase";
+import { Business, SavedQuote, User } from "../types";
+
 export const KEYS = { currentUser:"pricr_current_user", business:(c:string)=>`pricr_business_${c}`, users:(c:string)=>`pricr_users_${c}`, quotes:(c:string)=>`pricr_quotes_${c}` };
+
+// ── code → deterministic business UUID ────────────────────────────────────────
+// cyrb128 128-bit hash of the (uppercased) business code, formatted as a UUID.
+// The same code always maps to the same business_id, so a business resolves across
+// devices and RLS can key on it directly without a lookup round-trip.
+function cyrb128(str: string): [number, number, number, number] {
+  let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+  for (let i = 0, k; i < str.length; i++) {
+    k = str.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067); h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213); h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067); h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213); h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  return [(h1 ^ h2 ^ h3 ^ h4) >>> 0, (h2 ^ h1) >>> 0, (h3 ^ h1) >>> 0, (h4 ^ h1) >>> 0];
+}
+const hex8 = (n: number) => (n >>> 0).toString(16).padStart(8, "0");
+export function codeToUuid(code: string): string {
+  const [a, b, c, d] = cyrb128("pricr:" + code.toUpperCase());
+  const h = hex8(a) + hex8(b) + hex8(c) + hex8(d);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+// DEMO data and the unconfigured case stay entirely local — demo mode must work with
+// no backend, and the deterministic "DEMO" id would otherwise be shared/clobbered by
+// every demo user. Everything else persists to Supabase when it's configured.
+const useCloud = (code: string) => isSupabaseConfigured && !!supabase && code !== "DEMO";
+
+// ── transparent anonymous auth ────────────────────────────────────────────────
+// The contractor never sees a login screen. We create an anonymous Supabase session
+// behind the scenes so auth.uid() exists for RLS, then upsert a membership row tying
+// this session to the business (business_id derived from the code). The membership
+// FK requires the business to already exist — during signup it doesn't yet, so the
+// upsert fails harmlessly and saveBusiness() provisions business-first (see 0003).
+let sessionPromise: Promise<string | null> | null = null;
+async function getOrCreateUid(): Promise<string | null> {
+  if (!supabase) return null;
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) return session.user.id;
+  if (!sessionPromise) {
+    sessionPromise = supabase.auth.signInAnonymously().then(({ data, error }) => {
+      sessionPromise = null;
+      return error || !data.session ? null : data.session.user.id;
+    });
+  }
+  return sessionPromise;
+}
+
+let activeCode: string | null = null;
+async function ensureSession(code: string, role: "admin" | "rep" = "rep"): Promise<string | null> {
+  if (!supabase) return null;
+  const uid = await getOrCreateUid();
+  if (!uid) return null;
+  const norm = code.toUpperCase();
+  if (activeCode === norm) return uid;
+  // Best-effort: become a member of this business. Fails (FK) if the business doesn't
+  // exist yet — that's the signup path, where getBusiness returns null → caller provisions.
+  const { error } = await supabase.from("users").upsert(
+    { id: uid, business_id: codeToUuid(norm), role }, { onConflict: "id" });
+  if (!error) activeCode = norm;
+  return uid;
+}
+
+// ── current user (per-device session; always local) ───────────────────────────
 export async function getCurrentUser(): Promise<User|null> { try { const r=await AsyncStorage.getItem(KEYS.currentUser); return r?JSON.parse(r):null; } catch { return null; } }
 export async function saveCurrentUser(u: User): Promise<void> { await AsyncStorage.setItem(KEYS.currentUser,JSON.stringify(u)); }
 export async function clearCurrentUser(): Promise<void> { await AsyncStorage.removeItem(KEYS.currentUser); }
-export async function getBusiness(code: string): Promise<Business|null> { try { const r=await AsyncStorage.getItem(KEYS.business(code)); return r?JSON.parse(r):null; } catch { return null; } }
-export async function saveBusiness(b: Business): Promise<void> { await AsyncStorage.setItem(KEYS.business(b.code),JSON.stringify(b)); }
-export async function deleteBusiness(code: string): Promise<void> { await Promise.all([AsyncStorage.removeItem(KEYS.business(code)),AsyncStorage.removeItem(KEYS.users(code)),AsyncStorage.removeItem(KEYS.quotes(code))]); }
-export async function getUsers(code: string): Promise<User[]> { try { const r=await AsyncStorage.getItem(KEYS.users(code)); return r?JSON.parse(r):[]; } catch { return []; } }
-export async function saveUsers(code: string, users: User[]): Promise<void> { await AsyncStorage.setItem(KEYS.users(code),JSON.stringify(users)); }
-export async function getQuotes(code: string): Promise<SavedQuote[]> { try { const r=await AsyncStorage.getItem(KEYS.quotes(code)); return r?JSON.parse(r):[]; } catch { return []; } }
-export async function addQuote(code: string, q: SavedQuote): Promise<void> { const e=await getQuotes(code); e.push(q); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e)); }
-export async function deleteQuote(code: string, id: string): Promise<void> { const e=await getQuotes(code); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e.filter(q=>q.id!==id))); }
-export async function updateQuote(code: string, id: string, patch: Partial<SavedQuote>): Promise<void> { const e=await getQuotes(code); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e.map(q=>q.id===id?{...q,...patch}:q))); }
+
+// ── businesses ────────────────────────────────────────────────────────────────
+export async function getBusiness(code: string): Promise<Business|null> {
+  if (!useCloud(code)) { try { const r=await AsyncStorage.getItem(KEYS.business(code)); return r?JSON.parse(r):null; } catch { return null; } }
+  try {
+    await ensureSession(code);
+    const { data, error } = await supabase!.from("businesses").select("config").eq("id", codeToUuid(code)).maybeSingle();
+    if (error || !data?.config) return null;
+    return data.config as Business;
+  } catch { return null; }
+}
+
+export async function saveBusiness(b: Business): Promise<void> {
+  if (!useCloud(b.code)) { await AsyncStorage.setItem(KEYS.business(b.code),JSON.stringify(b)); return; }
+  const uid = await ensureSession(b.code, "admin");
+  const id = codeToUuid(b.code);
+  // Provision business-FIRST (the bootstrap INSERT policy allows it — see 0003), then the
+  // membership row, by which point the FK is satisfied and members-only access opens up.
+  //
+  // We can't use upsert here: ON CONFLICT DO UPDATE makes Postgres evaluate the members-only
+  // UPDATE policy, which a not-yet-member fails on the initial create. So: UPDATE if the row
+  // exists and we're a member (config edits / kit updates), else plain INSERT (first create).
+  const { data: updated } = await supabase!.from("businesses")
+    .update({ code: b.code, name: b.name, config: b }).eq("id", id).select("id");
+  if (!updated || updated.length === 0) {
+    const { error } = await supabase!.from("businesses").insert({ id, code: b.code, name: b.name, config: b });
+    if (error) throw error;
+  }
+  if (uid) await supabase!.from("users").upsert({ id: uid, business_id: id, role: "admin", name: b.ownerName }, { onConflict: "id" });
+  activeCode = b.code.toUpperCase();
+}
+
+export async function deleteBusiness(code: string): Promise<void> {
+  if (!useCloud(code)) { await Promise.all([AsyncStorage.removeItem(KEYS.business(code)),AsyncStorage.removeItem(KEYS.users(code)),AsyncStorage.removeItem(KEYS.quotes(code))]); return; }
+  try {
+    await ensureSession(code);
+    const id = codeToUuid(code);
+    await supabase!.from("quotes").delete().eq("business_id", id);
+    await supabase!.from("businesses").delete().eq("id", id);
+  } catch { }
+}
+
+// ── users roster (stored in businesses.config.members) ─────────────────────────
+export async function getUsers(code: string): Promise<User[]> {
+  if (!useCloud(code)) { try { const r=await AsyncStorage.getItem(KEYS.users(code)); return r?JSON.parse(r):[]; } catch { return []; } }
+  const biz = await getBusiness(code);
+  return ((biz as any)?.members as User[]) ?? [];
+}
+
+export async function saveUsers(code: string, users: User[]): Promise<void> {
+  if (!useCloud(code)) { await AsyncStorage.setItem(KEYS.users(code),JSON.stringify(users)); return; }
+  try {
+    await ensureSession(code);
+    const id = codeToUuid(code);
+    // Merge into the existing config jsonb so we don't clobber the business fields.
+    const { data } = await supabase!.from("businesses").select("config").eq("id", id).maybeSingle();
+    const config = { ...((data?.config as any) ?? {}), members: users };
+    await supabase!.from("businesses").update({ config }).eq("id", id);
+  } catch { }
+}
+
+// ── quotes ─────────────────────────────────────────────────────────────────────
+// The full app SavedQuote (incl. its open/won/lost status) lives in quote_data jsonb.
+// The relational `status` column carries the separate draft/sent/accepted/declined
+// pipeline used by QuotesHistoryScreen; we map the two at this boundary.
+type ColStatus = "draft" | "sent" | "accepted" | "declined";
+const appToColStatus = (s?: SavedQuote["status"]): ColStatus => s === "won" ? "accepted" : s === "lost" ? "declined" : "draft";
+
+export async function getQuotes(code: string): Promise<SavedQuote[]> {
+  if (!useCloud(code)) { try { const r=await AsyncStorage.getItem(KEYS.quotes(code)); return r?JSON.parse(r):[]; } catch { return []; } }
+  try {
+    await ensureSession(code);
+    const { data, error } = await supabase!.from("quotes").select("quote_data,created_at").eq("business_id", codeToUuid(code)).order("created_at", { ascending: true });
+    if (error || !data) return [];
+    return data.map(r => r.quote_data as SavedQuote).filter(Boolean);
+  } catch { return []; }
+}
+
+export async function addQuote(code: string, q: SavedQuote): Promise<void> {
+  if (!useCloud(code)) { const e=await getQuotes(code); e.push(q); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e)); return; }
+  try {
+    const uid = await ensureSession(code);
+    await supabase!.from("quotes").insert({
+      business_id: codeToUuid(code), created_by: uid,
+      customer_name: q.customerName || null, total: q.total ?? null,
+      status: appToColStatus(q.status), quote_data: q,
+    });
+  } catch { }
+}
+
+export async function deleteQuote(code: string, id: string): Promise<void> {
+  if (!useCloud(code)) { const e=await getQuotes(code); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e.filter(q=>q.id!==id))); return; }
+  try {
+    await ensureSession(code);
+    await supabase!.from("quotes").delete().eq("business_id", codeToUuid(code)).eq("quote_data->>id", id);
+  } catch { }
+}
+
+export async function updateQuote(code: string, id: string, patch: Partial<SavedQuote>): Promise<void> {
+  if (!useCloud(code)) { const e=await getQuotes(code); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e.map(q=>q.id===id?{...q,...patch}:q))); return; }
+  try {
+    await ensureSession(code);
+    const bizId = codeToUuid(code);
+    const { data } = await supabase!.from("quotes").select("id,quote_data").eq("business_id", bizId).eq("quote_data->>id", id).maybeSingle();
+    if (!data) return;
+    const merged = { ...(data.quote_data as SavedQuote), ...patch };
+    await supabase!.from("quotes").update({
+      quote_data: merged, customer_name: merged.customerName || null,
+      total: merged.total ?? null, status: appToColStatus(merged.status),
+      updated_at: new Date().toISOString(),
+    }).eq("id", data.id);
+  } catch { }
+}
+
+// Mark a saved quote "sent" (the column-level pipeline) when the rep taps Share Quote.
+// The app-side SavedQuote.status (open/won/lost) is untouched — "sent" lives only on the
+// relational column for QuotesHistoryScreen. No-op locally/in demo (no "sent" concept there).
+export async function markQuoteSent(code: string, id: string): Promise<void> {
+  if (!useCloud(code)) return;
+  try {
+    await ensureSession(code);
+    await supabase!.from("quotes").update({ status: "sent", updated_at: new Date().toISOString() })
+      .eq("business_id", codeToUuid(code)).eq("quote_data->>id", id);
+  } catch { }
+}
 
 // Scan every stored business/quote/user for the master analytics dashboard.
-// NOTE: this reads all of local AsyncStorage — fine at demo scale; moves to Supabase later.
+// NOTE: this reads local AsyncStorage only. Under RLS an anonymous session can read
+// just the businesses it belongs to, so a true cross-tenant aggregate would need the
+// service-role key via an Edge Function — out of scope for the DB-only model.
 export async function scanAllData(): Promise<{ businesses: Business[]; quotes: SavedQuote[]; quotesByCode: Record<string, SavedQuote[]>; usersByCode: Record<string, User[]> }> {
   try {
     const keys = await AsyncStorage.getAllKeys();

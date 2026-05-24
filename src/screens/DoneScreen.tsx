@@ -8,9 +8,9 @@ import { s } from "../styles";
 import { Business, User } from "../types";
 import { monthlyQuoteTotal } from "../utils/quote";
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean;
-  onSignOut: () => void; onOpenQuoteTool: () => void; onQuoteHistory: () => void; onManageTeam: () => void; onReconfigure: () => void;
+  onSignOut: () => void; onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
@@ -111,6 +111,11 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         </TouchableOpacity>
         {isAdmin && (
           <>
+            {onQuotePipeline && (
+              <TouchableOpacity style={s.btnSecondary} onPress={onQuotePipeline}>
+                <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Quote Pipeline</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={s.btnSecondary} onPress={onManageTeam}>
               <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Manage Team</Text>
             </TouchableOpacity>

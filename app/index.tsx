@@ -14,6 +14,7 @@ import { LoginScreen } from "../src/screens/LoginScreen";
 import { MasterDashboard } from "../src/screens/MasterDashboard";
 import { MeetKitScreen } from "../src/screens/MeetKitScreen";
 import { QuoteScreen } from "../src/screens/QuoteScreen";
+import { QuotesHistoryScreen } from "../src/screens/QuotesHistoryScreen";
 import { RepJoinScreen } from "../src/screens/RepJoinScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
@@ -22,7 +23,8 @@ import { SignupScreen } from "../src/screens/SignupScreen";
 import { UsersScreen } from "../src/screens/UsersScreen";
 import { WelcomeScreen } from "../src/screens/WelcomeScreen";
 import { s } from "../src/styles";
-import { addQuote, clearCurrentUser, deleteBusiness, getBusiness, getCurrentUser, getUsers, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers } from "../src/storage";
+import { isSupabaseConfigured } from "../src/lib/supabase";
+import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getUsers, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers } from "../src/storage";
 import { BrandConfig, Business, DemoBusiness, Screen, User } from "../src/types";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse } from "../src/utils/helpers";
@@ -314,6 +316,7 @@ export default function Index() {
   // ── SCREEN ROUTING ────────────────────────────────────────────────────────────
   if (screen === "users" && business && currentUser) return <UsersScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} />;
   if (screen === "history" && business && currentUser) return <HistoryScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} onNewQuote={() => setScreen("quote")} />;
+  if (screen === "pipeline" && business && currentUser) return <QuotesHistoryScreen businessId={codeToUuid(business.code)} isAdmin={isAdmin} onBack={() => setScreen("done")} />;
   if (screen === "quote" && business && currentUser) return <QuoteScreen schema={business.schema} setSchema={(ns) => setBusiness(b => b ? { ...b, schema: ns } : b)} business={business} currentUser={currentUser} onBack={() => setScreen("done")} isDemoMode={isDemoMode} initialValues={quoteInitialValues} />;
 
   // Admin-only Settings (reps are redirected by the guard above).
@@ -355,6 +358,7 @@ export default function Index() {
       onSignOut={handleSignOut}
       onOpenQuoteTool={() => { setJustBuilt(false); setQuoteInitialValues(undefined); setScreen("quote"); }}
       onQuoteHistory={() => { setJustBuilt(false); setScreen("history"); }}
+      onQuotePipeline={isSupabaseConfigured && !isDemoMode ? () => { setJustBuilt(false); setScreen("pipeline"); } : undefined}
       onManageTeam={() => { setJustBuilt(false); setScreen("users"); }}
       onReconfigure={() => { setJustBuilt(false); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
       onTestQuote={() => { setJustBuilt(false); setQuoteInitialValues(sampleFieldValues(business.schema)); setScreen("quote"); }}

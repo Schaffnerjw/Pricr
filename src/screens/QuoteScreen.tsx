@@ -12,7 +12,7 @@ import { SkeletonCard } from "../components/SkeletonCard";
 import { API_URL, B } from "../constants/brand";
 import { AGENT_PROMPT } from "../constants/prompts";
 import { useReduceMotion } from "../hooks/useReduceMotion";
-import { addQuote, getQuotes, saveBusiness } from "../storage";
+import { addQuote, getQuotes, markQuoteSent, saveBusiness } from "../storage";
 import { s } from "../styles";
 import { Business, SavedQuote, User } from "../types";
 import { formatMoney } from "../utils/helpers";
@@ -32,6 +32,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const [ready, setReady] = useState(false);
   const [showTotal, setShowTotal] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [lastSavedId, setLastSavedId] = useState<string | null>(null);
   const [history, setHistory] = useState<SavedQuote[]>([]);
   const [showCelebration, setShowCelebration] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
@@ -87,7 +88,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setExpanded(p => ({ ...p, [key]: !p[key] }));
   };
 
-  const saveQuote = async () => {
+  const saveQuote = async (): Promise<string | null> => {
     try {
       const quote: SavedQuote = {
         id: Date.now().toString(), timestamp: Date.now(), customerName,
@@ -97,11 +98,21 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       const isFirstReal = history.filter(q => !q.isSample).length === 0;
       await addQuote(business.code, quote);
       setHistory(h => [...h, quote]);
+      setLastSavedId(quote.id);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       if (isFirstReal) { setShowCelebration(true); setTimeout(() => setShowCelebration(false), 2000); }
-    } catch { }
+      return quote.id;
+    } catch { return null; }
+  };
+
+  // Sharing the proposal advances it in the pipeline. Persist first if it wasn't saved yet,
+  // then flip the cloud status to "sent" (no-op in demo / when Supabase isn't configured).
+  const handleShared = async () => {
+    let id = lastSavedId;
+    if (!id) id = await saveQuote();
+    if (id) await markQuoteSent(business.code, id);
   };
 
   const sendAgentMessage = async () => {
@@ -315,7 +326,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </View>
 
       {showTotal && (
-        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} saved={saved} onSave={saveQuote} onClose={() => setShowTotal(false)} />
+        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} saved={saved} onSave={saveQuote} onShared={handleShared} onClose={() => setShowTotal(false)} />
       )}
 
       {isAdmin && !showTotal && (

@@ -15,9 +15,9 @@ const SCREEN_H = Dimensions.get("window").height;
 type Totals = { ctx: Record<string, any>; taxRate: number; tax: number; total: number; depositPct: number; deposit: number };
 
 // The slide-up "proposal" sheet shown when reviewing a quote. Owns its own entrance animation.
-export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, saved, onSave, onClose }: {
+export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, saved, onSave, onShared, onClose }: {
   schema: any; business: Business; primaryColor: string; customerName: string;
-  totals: Totals; selectedAddOns: string[]; saved: boolean; onSave: () => void; onClose: () => void;
+  totals: Totals; selectedAddOns: string[]; saved: boolean; onSave: () => void; onShared?: () => void | Promise<void>; onClose: () => void;
 }) {
   const reduceMotion = useReduceMotion();
   const theme = getCardTheme(primaryColor);
@@ -79,6 +79,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
         deposit: t.deposit,
         balanceDue,
       });
+      await onShared?.();
     } finally {
       setSharing(false);
     }

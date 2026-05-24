@@ -37,14 +37,35 @@ Then restart Metro with cache cleared so `EXPO_PUBLIC_*` values are inlined: `np
 
 **Railway / EAS:** the proxy on Railway does **not** need these (it only talks to Anthropic). For device/production app builds, set the same two `EXPO_PUBLIC_SUPABASE_*` vars in your EAS project env.
 
-## 5. How the app uses it
+## 5. Run the migrations
 
-- `src/lib/supabase.ts` — the client. Exports `default` (the client, or `null` when env is unset) and `isSupabaseConfigured`. **When the keys are absent the app runs entirely on the existing local/demo flows** — nothing breaks.
-- `src/hooks/useAuth.ts` — `signIn`, `signUp`, `signOut`, plus `user`/`session`/`loading`.
-- `src/hooks/useBusiness.ts` — loads the signed-in user's business + brand config; `save()` writes locally and to Supabase.
-- `src/hooks/useQuotes.ts` — `quotes`, `saveQuote`, `updateQuoteStatus`.
-- `src/screens/QuotesHistoryScreen.tsx` — Supabase-backed history with status badges and an admin-only status update.
+After `schema.sql`, run these in order in the SQL editor (they fix the initial schema and prepare RLS for the transparent-auth cutover):
 
-## Status / not yet wired
+1. `migrations/0001_fix_rls_and_app_storage.sql` — fixes RLS recursion (SECURITY DEFINER `user_business_ids()`), adds `businesses.code` + `businesses.config` jsonb.
+2. `migrations/0002_grant_authenticated.sql` — table grants for the `authenticated` role (the `anon` role stays ungranted, so nothing is public).
+3. `migrations/0003_business_insert_bootstrap.sql` — splits the businesses policy so INSERT is open while select/update/delete stay members-only. Without this, creating the first business deadlocks. **Idempotent — safe to re-run; it prints the resulting 4 policies.**
 
-The client, hooks, schema, and history screen are in place, but the app is **not yet cut over** to Supabase for auth/persistence (it still uses the local code/PIN flow). Finishing the cutover (Steps 6–7) requires a live Supabase project (the keys above) and a decision on the auth model — see the notes in the PR / chat.
+Also enable **anonymous sign-ins** (Auth → Providers/Settings). The app authenticates every device with an anonymous Supabase session so `auth.uid()` exists for RLS — the contractor never sees a login screen.
+
+## 6. How the app uses it
+
+- `src/lib/supabase.ts` — the client. Exports `default` (the client, or `null` when env is unset) and `isSupabaseConfigured`. **When the keys are absent the app runs entirely on the existing local/demo flows** — nothing breaks. During web static prerender (no `window`) it skips persisted-session storage.
+- `src/storage/index.ts` — **the single persistence layer; every screen goes through it.** Now Supabase-backed:
+  - `codeToUuid(code)` — deterministic business UUID (cyrb128) so the same code resolves across devices.
+  - `ensureSession(code)` — transparent anonymous sign-in + a `users` membership row tying the session to the business (for RLS).
+  - businesses → `businesses.config` jsonb (provisioned business-first, then membership); roster → `config.members`; quotes → the `quotes` table (full `SavedQuote` in `quote_data`, app `open/won/lost` mapped to the column `draft/sent/accepted/declined`).
+  - `getCurrentUser`/`scanAllData`/`runStartupMigrations` stay local. **`DEMO` and the no-backend case fall back to AsyncStorage**, so demo mode works with no connection.
+  - `markQuoteSent(code, id)` — flips a quote to `sent` when the rep taps **Share Quote**.
+- `src/screens/QuotesHistoryScreen.tsx` — Supabase-backed pipeline view, wired into the admin dashboard ("Quote Pipeline", admin-only, shown only when Supabase is configured).
+
+## Status
+
+Cut over to Supabase and verified live (provision → read-back → quote draft/sent/accepted/delete → RLS isolation). The local/PIN code flow is unchanged on the surface; persistence now lives in Postgres.
+
+### Known limitations (follow-ups, not blockers)
+
+Both stem from storing the whole business in one members-writable `config` jsonb under DB-only RLS:
+
+- **Any member can read `config.adminPin`.** The admin PIN must be verifiable cross-device, so it lives in the readable config. Hardening needs a SECURITY DEFINER verify function (or a separate column with a role check) so reps can't read it.
+- **Any member can overwrite `config`** (e.g. the schema). Per-field/per-role write protection would need column-level policies or an Edge Function.
+- **Master cross-tenant analytics** (`scanAllData`) reads only local AsyncStorage — an anonymous session can read just its own business under RLS, so a true cross-tenant aggregate needs the service-role key via an Edge Function.

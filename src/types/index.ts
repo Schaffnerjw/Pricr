@@ -1,5 +1,5 @@
 export type Role = "admin" | "rep" | "superadmin";
-export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"setup"|"meet_kit"|"building"|"done"|"quote"|"history"|"users"|"settings"|"master";
+export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"setup"|"meet_kit"|"building"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"master";
 export interface User { id: string; name: string; role: Role; businessCode: string; }
 export interface BrandConfig { primaryColor: string; secondaryColor: string; logoUri: string|null; tagline: string; phone: string; email: string; address: string; backgroundColor?: string; }
 export interface Business { code: string; name: string; ownerName: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; }
