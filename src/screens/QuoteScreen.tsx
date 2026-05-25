@@ -129,17 +129,25 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     await saveSignature(business.code, id, signatureData, customerName || undefined);
   };
 
-  const sendAgentMessage = async () => {
-    if (!agentInput.trim() || agentLoading) return;
-    const newMessages = [...agentMessages, { role: "user" as const, content: agentInput }];
+  const sendAgentMessage = async (textArg?: string) => {
+    const text = (typeof textArg === "string" ? textArg : agentInput).trim();
+    if (!text || agentLoading) return;
+    const newMessages = [...agentMessages, { role: "user" as const, content: text }];
     setAgentMessages(newMessages);
     setAgentInput("");
     setAgentLoading(true);
     try {
+      // Send the conversation for context (so the layout-pill follow-up remembers what to build),
+      // grounding the latest turn with the current schema.
+      const apiMessages = newMessages.map((m, i) =>
+        i === newMessages.length - 1
+          ? { role: "user" as const, content: `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nRequest: ${m.content}` }
+          : m,
+      );
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1500, system: AGENT_PROMPT, messages: [{ role: "user", content: `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nRequest: ${agentInput}` }] }),
+        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1500, system: AGENT_PROMPT, messages: apiMessages }),
       });
       const data = await response.json();
       const reply = data.content[0].text.trim();
@@ -325,7 +333,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         )}
         {range && (
-          <Text style={[s.qRange, { color: outsideRange ? "#F59E0B" : B.gray3 }]}>Typical range: {formatMoney(range.low)} – {formatMoney(range.high)}</Text>
+          <Text style={[s.qRange, { color: outsideRange ? "#F59E0B" : B.muted }]}>Typical range: {formatMoney(range.low)} – {formatMoney(range.high)}</Text>
         )}
         <View style={s.qStickyRow}>
           <View>

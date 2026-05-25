@@ -8,7 +8,7 @@ import { s, wl } from "../styles";
 import { Business, QuotePresentation } from "../types";
 import { getCardTheme } from "../utils/color";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
-import { formatLongDate, formatMoney } from "../utils/helpers";
+import { formatLongDate, formatMoney, resolveDocPrefs } from "../utils/helpers";
 import { shareQuotePDF } from "../utils/shareQuotePDF";
 
 const SCREEN_H = Dimensions.get("window").height;
@@ -38,6 +38,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
   const t = totals;
   const hasTerms = !!(termsAndConditions && termsAndConditions.trim());
   const canSign = (!hasTerms || agreed) && !signingBusy;
+  const docPrefs = resolveDocPrefs(business.docPrefs); // what the customer sees on this card
 
   useEffect(() => {
     if (reduceMotion) { slide.setValue(1); return; }
@@ -88,6 +89,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
     depositPct: t.depositPct,
     deposit: t.deposit,
     balanceDue,
+    docPrefs: business.docPrefs,
   });
 
   const onShare = async () => {
@@ -149,38 +151,41 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
             <Text style={[s.ccFixedPrice, { color: primaryColor, textTransform: "uppercase" }]}>Fixed price estimate</Text>
             <Text style={[s.closingCustomer, { color: theme.customerColor }]}>{customerName || "Customer"}</Text>
 
-            <View style={[s.closingDivider, { backgroundColor: theme.dividerColor }]} />
-
-            <View style={{ gap: 10 }}>
-              {schema?.summaryLines?.map((line: any, i: number) => {
-                if (line.showIf && !evaluateCondition(line.showIf, t.ctx, schema.pricing || {})) return null;
-                const label = line.label.replace(/\{(\w+)\}/g, (_: string, key: string) => t.ctx[key] ?? schema.pricing?.[key] ?? key);
-                const value = evaluateFormula(line.value, t.ctx, schema.pricing || {});
-                if (!value) return null;
-                return (
-                  <View key={i} style={s.lineItem}>
-                    <Text style={[s.lineLabel, { color: theme.lineColor }]}>{label}</Text>
-                    <Text style={[s.lineValue, { color: theme.valueColor }]}>{formatMoney(value)}</Text>
-                  </View>
-                );
-              })}
-              {selectedAddOns.map(id => {
-                const ao = schema?.addOns?.find((a: any) => a.id === id);
-                if (!ao) return null;
-                return (
-                  <View key={id} style={s.lineItem}>
-                    <Text style={[s.lineLabel, { color: theme.lineColor }]}>{ao.label}</Text>
-                    <Text style={[s.lineValue, { color: theme.valueColor }]}>${ao.price?.toLocaleString()}</Text>
-                  </View>
-                );
-              })}
-              {t.taxRate > 0 && (
-                <View style={s.lineItem}>
-                  <Text style={[s.lineLabel, { color: theme.lineColor }]}>Tax ({t.taxRate}%)</Text>
-                  <Text style={[s.lineValue, { color: theme.valueColor }]}>{formatMoney(t.tax)}</Text>
+            {docPrefs.showLineItems && (
+              <>
+                <View style={[s.closingDivider, { backgroundColor: theme.dividerColor }]} />
+                <View style={{ gap: 10 }}>
+                  {schema?.summaryLines?.map((line: any, i: number) => {
+                    if (line.showIf && !evaluateCondition(line.showIf, t.ctx, schema.pricing || {})) return null;
+                    const label = line.label.replace(/\{(\w+)\}/g, (_: string, key: string) => t.ctx[key] ?? schema.pricing?.[key] ?? key);
+                    const value = evaluateFormula(line.value, t.ctx, schema.pricing || {});
+                    if (!value) return null;
+                    return (
+                      <View key={i} style={s.lineItem}>
+                        <Text style={[s.lineLabel, { color: theme.lineColor }]}>{label}</Text>
+                        {docPrefs.showPricing && <Text style={[s.lineValue, { color: theme.valueColor }]}>{formatMoney(value)}</Text>}
+                      </View>
+                    );
+                  })}
+                  {selectedAddOns.map(id => {
+                    const ao = schema?.addOns?.find((a: any) => a.id === id);
+                    if (!ao) return null;
+                    return (
+                      <View key={id} style={s.lineItem}>
+                        <Text style={[s.lineLabel, { color: theme.lineColor }]}>{ao.label}</Text>
+                        {docPrefs.showPricing && <Text style={[s.lineValue, { color: theme.valueColor }]}>${ao.price?.toLocaleString()}</Text>}
+                      </View>
+                    );
+                  })}
+                  {docPrefs.showSubtotal && docPrefs.showPricing && t.taxRate > 0 && (
+                    <View style={s.lineItem}>
+                      <Text style={[s.lineLabel, { color: theme.lineColor }]}>Tax ({t.taxRate}%)</Text>
+                      <Text style={[s.lineValue, { color: theme.valueColor }]}>{formatMoney(t.tax)}</Text>
+                    </View>
+                  )}
                 </View>
-              )}
-            </View>
+              </>
+            )}
 
             <View style={[s.closingDivider, { backgroundColor: theme.dividerColor }]} />
             <View style={s.totalRow}>
@@ -270,7 +275,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
               )}
             </View>
 
-            {(business.brand.phone || business.brand.email || business.brand.address) && (
+            {docPrefs.showContact && (business.brand.phone || business.brand.email || business.brand.address) && (
               <View style={[s.contactFooter, { borderTopColor: theme.dividerColor }]}>
                 {business.brand.phone ? <ContactRow icon="phone" text={business.brand.phone} color={theme.lineColor} /> : null}
                 {business.brand.email ? <ContactRow icon="mail" text={business.brand.email} color={theme.lineColor} /> : null}
@@ -286,6 +291,14 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
               {sharing ? <ActivityIndicator color={B.white} size="small" /> : <Feather name="share" size={18} color={B.white} />}
               <Text style={s.btnText}>{sharing ? "Preparing PDF…" : "Share Quote"}</Text>
             </TouchableOpacity>
+
+            {/* After signing, an always-visible exit so the card is never a dead end (incl. after the share sheet closes). */}
+            {signature && (
+              <TouchableOpacity style={[s.btnSecondary, { borderColor: primaryColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onClose}>
+                <Feather name="check" size={16} color={primaryColor} />
+                <Text style={[s.btnSecondaryText, { color: primaryColor }]}>Done — Back to Quote</Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
         </View>
       </Animated.View>

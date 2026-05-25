@@ -1,11 +1,13 @@
 import { Feather } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState } from "react";
-import { Image, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Image, SafeAreaView, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { KitChatModal } from "../components/KitChatModal";
 import { B, DEFAULT_BRAND } from "../constants/brand";
 import { s } from "../styles";
-import { BrandConfig, Business } from "../types";
+import { BrandConfig, Business, DocPrefs } from "../types";
 import { isValidHex } from "../utils/color";
+import { resolveDocPrefs } from "../utils/helpers";
 
 const BG_PRESETS = [
   { label: "Dark Navy", hex: "#0A0E1A" },
@@ -16,7 +18,7 @@ const BG_PRESETS = [
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
 export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToTerms }: {
   business: Business;
-  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string }) => void;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs }) => void;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
   scrollToTerms?: boolean;
@@ -28,10 +30,16 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
   const [background, setBackground] = useState(business.brand.backgroundColor || DEFAULT_BRAND.backgroundColor);
   const [terms, setTerms] = useState(business.termsAndConditions ?? "");
   const [editingTerms, setEditingTerms] = useState(false);
+  const [dp, setDp] = useState<DocPrefs>(resolveDocPrefs(business.docPrefs));
   const [kitOpen, setKitOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const termsY = useRef(0);
+
+  const setDocStyle = (style: DocPrefs["style"]) => setDp(resolveDocPrefs({ ...dp, style }));
+  const toggleDoc = (key: keyof DocPrefs) => setDp(prev => resolveDocPrefs({ ...prev, style: "custom", [key]: !prev[key as "showLineItems"] }));
+  const copyBusinessId = async () => { await Clipboard.setStringAsync(business.code); setCopied(true); setTimeout(() => setCopied(false), 1500); };
 
   const trade = business.schema?.trade || "contracting";
   const TC_SYSTEM = `You are Kit, helping the owner of "${business.name}" (a ${trade} business) write professional terms and conditions for their customer quotes. Ask these questions ONE at a time, conversationally: (1) what trade/service they provide, (2) whether they carry liability insurance and what it covers, (3) what items or situations they are NOT responsible for, (4) their cancellation policy, (5) any deposit or payment terms. After you have enough, output the finished terms as plain text prefixed EXACTLY with "TERMS_READY:" on its own, then the full terms as short numbered clauses (no markdown headers). Keep it professional, fair, and concise.`;
@@ -48,7 +56,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
   const pickLogo = async () => { const uri = await onPickLogo(); if (uri) setLogoUri(uri); };
   const resetDefaults = () => { setPrimary(DEFAULT_BRAND.primaryColor); setSecondary(DEFAULT_BRAND.secondaryColor); setBackground(DEFAULT_BRAND.backgroundColor); };
   const save = () => {
-    onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined });
+    onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp });
     setEditingTerms(false);
     setToast(true);
     setTimeout(() => setToast(false), 1600);
@@ -116,6 +124,19 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
               <TouchableOpacity onPress={() => setLogoUri(null)}><Text style={{ color: B.red, fontSize: 13, marginTop: 4 }}>Remove logo</Text></TouchableOpacity>
             )}
           </View>
+
+          {/* Business ID — share with new team members so they can join. Read-only + copy. */}
+          <View style={{ gap: 6 }}>
+            <Text style={s.formLabel}>Business ID</Text>
+            <Text style={s.formHint}>Share this with new team members so they can join your account.</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: B.card, borderWidth: 1, borderColor: B.border, borderRadius: 12, padding: 14 }}>
+              <Text style={{ flex: 1, color: B.white, fontSize: 18, fontWeight: "800", letterSpacing: 3, fontFamily: "Syne_700Bold" }}>{business.code}</Text>
+              <TouchableOpacity onPress={copyBusinessId} style={{ flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: pc }}>
+                <Feather name={copied ? "check" : "copy"} size={14} color={pc} />
+                <Text style={{ color: pc, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{copied ? "Copied" : "Copy"}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
 
         {/* Brand colors */}
@@ -170,6 +191,36 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
               <Text style={[s.btnSecondaryText, { color: pc }]}>Have Kit write them</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Quote Document — control what the customer sees on the quote (PDF + in-app). */}
+        <View style={{ gap: 12 }}>
+          <Text style={s.sectionTitle}>QUOTE DOCUMENT</Text>
+          <Text style={s.formHint}>Choose what your customers see on the quote.</Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {(["detailed", "summary", "custom"] as const).map(st => {
+              const active = dp.style === st;
+              return (
+                <TouchableOpacity key={st} onPress={() => setDocStyle(st)} style={[s.setPreset, { flex: 1, alignItems: "center" }, active && { borderColor: pc, backgroundColor: pc + "20" }]}>
+                  <Text style={[s.setPresetText, active && { color: B.white }]}>{st.charAt(0).toUpperCase() + st.slice(1)}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {([
+            ["showLineItems", "Show line items"],
+            ["showPricing", "Show individual pricing"],
+            ["showSubtotal", "Show subtotal breakdown"],
+            ["showContact", "Show business contact info"],
+          ] as const).map(([key, label]) => (
+            <View key={key} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 2 }}>
+              <Text style={{ color: B.gray1, fontSize: 15, flex: 1, fontFamily: "DMSans_400Regular" }}>{label}</Text>
+              <Switch value={dp[key]} onValueChange={() => toggleDoc(key)} trackColor={{ true: pc, false: B.border }} thumbColor={B.white} />
+            </View>
+          ))}
+          <Text style={{ color: B.muted, fontSize: 12, fontFamily: "DMSans_400Regular" }}>
+            {dp.style === "summary" ? "Summary: just business, customer, total, deposit & signature." : dp.style === "detailed" ? "Detailed: full line items, pricing & breakdown." : "Custom: your toggle choices above."}
+          </Text>
         </View>
 
         <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={save}>

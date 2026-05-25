@@ -244,6 +244,27 @@ export async function saveSignature(code: string, appId: string, signatureData: 
   } catch { }
 }
 
+// Resolve which business a username belongs to (admin OR rep), so username+PIN login can find
+// the business before the user is a member. Cloud: a SECURITY DEFINER RPC (migration 0005) that
+// bypasses RLS and matches config->>'username' or any member username. Local/demo: scan storage.
+export async function resolveBusinessCodeByUsername(username: string): Promise<string | null> {
+  const uname = username.trim().toLowerCase();
+  if (!uname) return null;
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase.rpc("resolve_business_code", { p_username: uname });
+      if (!error && typeof data === "string" && data) return data;
+    } catch { /* fall through to local */ }
+  }
+  try {
+    const { businesses } = await scanAllData();
+    const b = businesses.find(biz =>
+      (biz.username || "").trim().toLowerCase() === uname ||
+      (biz.members || []).some(m => (m.username || "").trim().toLowerCase() === uname));
+    return b?.code ?? null;
+  } catch { return null; }
+}
+
 // Scan every stored business/quote/user for the master analytics dashboard.
 // NOTE: this reads local AsyncStorage only. Under RLS an anonymous session can read
 // just the businesses it belongs to, so a true cross-tenant aggregate would need the

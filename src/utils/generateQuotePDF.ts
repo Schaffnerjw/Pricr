@@ -1,5 +1,5 @@
 import { QuotePresentation } from "../types";
-import { formatLongDate, formatMoney } from "./helpers";
+import { formatLongDate, formatMoney, resolveDocPrefs } from "./helpers";
 
 export interface QuotePDFLine { label: string; amount: number; }
 
@@ -17,10 +17,14 @@ const esc = (s: unknown) =>
 // Builds a self-contained, print-ready HTML string styled as a premium quote/proposal document.
 export function generateQuotePDF(d: QuotePDFData): string {
   const accent = d.brandColor || "#2979FF";
-  const lineRows = d.lineItems
-    .map(li => `<tr><td class="li">${esc(li.label)}</td><td class="amt">${formatMoney(li.amount)}</td></tr>`)
-    .join("");
-  const taxRow = d.taxRate > 0
+  // Customer-document preferences (default: detailed/show-all). Summary hides items + breakdown.
+  const prefs = resolveDocPrefs(d.docPrefs);
+  const lineRows = prefs.showLineItems
+    ? d.lineItems
+        .map(li => `<tr><td class="li">${esc(li.label)}</td><td class="amt">${prefs.showPricing ? formatMoney(li.amount) : ""}</td></tr>`)
+        .join("")
+    : "";
+  const taxRow = prefs.showLineItems && prefs.showSubtotal && prefs.showPricing && d.taxRate > 0
     ? `<tr><td class="li muted">Tax (${d.taxRate}%)</td><td class="amt muted">${formatMoney(d.tax)}</td></tr>`
     : "";
   const depositBlock = d.depositPct > 0 && d.total > 0
@@ -119,7 +123,7 @@ export function generateQuotePDF(d: QuotePDFData): string {
     ${signatureBlock}
     <div class="valid">This estimate is valid for 30 days · through ${esc(formatLongDate(d.validThrough))}</div>
     ${signLinkBlock}
-    ${contactBits ? `<div class="footer">${contactBits}</div>` : ""}
+    ${prefs.showContact && contactBits ? `<div class="footer">${contactBits}</div>` : ""}
   </div>
   ${termsPage}
 </body></html>`;

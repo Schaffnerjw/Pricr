@@ -16,6 +16,7 @@ import { QuoteScreen } from "../src/screens/QuoteScreen";
 import { QuotesHistoryScreen } from "../src/screens/QuotesHistoryScreen";
 import { RepJoinScreen } from "../src/screens/RepJoinScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
+import { SetUsernameScreen } from "../src/screens/SetUsernameScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
 import { SignupBrandScreen } from "../src/screens/SignupBrandScreen";
 import { SignupScreen } from "../src/screens/SignupScreen";
@@ -23,8 +24,9 @@ import { UsersScreen } from "../src/screens/UsersScreen";
 import { WelcomeScreen } from "../src/screens/WelcomeScreen";
 import { s } from "../src/styles";
 import { isSupabaseConfigured } from "../src/lib/supabase";
-import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getUsers, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers } from "../src/storage";
+import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers } from "../src/storage";
 import { BrandConfig, Business, DemoBusiness, Screen, User } from "../src/types";
+import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse } from "../src/utils/helpers";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
@@ -65,6 +67,7 @@ export default function Index() {
   const [setupPricing, setSetupPricing] = useState("");
 
   const [authName, setAuthName] = useState("");
+  const [authUsername, setAuthUsername] = useState("");
   const [authPin, setAuthPin] = useState("");
   const [authCode, setAuthCode] = useState("");
   const [authError, setAuthError] = useState("");
@@ -140,14 +143,16 @@ export default function Index() {
   const pickLogo = async () => { const uri = await pickImage(); if (uri) setSignupBrand(b => ({ ...b, logoUri: uri })); };
 
   const handleSignUp = async (brandConfigured: boolean = true) => {
-    if (!signupBizName.trim() || !authName.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
+    if (!signupBizName.trim() || !authName.trim() || !authUsername.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
     if (authPin.length < 4) { setAuthError("PIN must be at least 4 digits."); return; }
     const finalColor = isValidHex(signupBrand.primaryColor) ? signupBrand.primaryColor : "#2979FF";
     try {
       const code = generateCode();
-      const user: User = { id: Date.now().toString(), name: authName, role: "admin", businessCode: code };
+      const username = authUsername.trim();
+      const adminPinHash = await hashPin(username, authPin);
+      const user: User = { id: Date.now().toString(), name: authName, role: "admin", businessCode: code, username, pinHash: adminPinHash };
       const biz: Business = {
-        code, name: signupBizName, ownerName: authName, adminPin: authPin,
+        code, name: signupBizName, ownerName: authName, adminPin: "", username, adminPinHash,
         brand: { ...signupBrand, primaryColor: finalColor },
         schema: null, createdAt: Date.now(), brandConfigured,
       };
@@ -161,30 +166,80 @@ export default function Index() {
     } catch { setAuthError("Something went wrong. Try again."); }
   };
 
-  const handleAdminLogin = async () => {
-    if (!authCode.trim() || !authPin.trim()) { setAuthError("Enter your business code and PIN."); return; }
+  // Username+PIN login (also supports a Business-ID fallback for legacy accounts). Resolves the
+  // business, verifies the hashed PIN for the admin OR the matching rep, and logs that user in.
+  const handleLogin = async (mode: "username" | "code") => {
+    setAuthError("");
     try {
-      const biz = await getBusiness(authCode.toUpperCase());
-      if (!biz) { setAuthError("Business code not found."); return; }
-      if (biz.adminPin !== authPin) { setAuthError("Incorrect PIN."); return; }
+      let code: string | null;
+      if (mode === "username") {
+        if (!authUsername.trim() || authPin.length < 4) { setAuthError("Enter your username and PIN."); return; }
+        code = await resolveBusinessCodeByUsername(authUsername);
+        if (!code) { setAuthError("No account found for that username."); return; }
+      } else {
+        if (!authCode.trim() || authPin.length < 4) { setAuthError("Enter your Business ID and PIN."); return; }
+        code = authCode.toUpperCase();
+      }
+      const biz = await getBusiness(code);
+      if (!biz) { setAuthError("Account not found."); return; }
       const users = await getUsers(biz.code);
-      const admin = users.find(u => u.role === "admin");
-      if (!admin) { setAuthError("Admin not found."); return; }
-      await saveCurrentUser(admin);
-      setCurrentUser(admin);
+      let user: User | undefined;
+      let ok = false;
+      const uname = authUsername.trim().toLowerCase();
+      if (mode === "username" && (biz.username || "").toLowerCase() !== uname) {
+        // A rep is signing in.
+        const m = users.find(u => (u.username || "").toLowerCase() === uname);
+        if (m?.pinHash) ok = (await hashPin(m.username!, authPin)) === m.pinHash;
+        user = m;
+      } else {
+        // Admin (username match, or Business-ID mode).
+        if (biz.adminPinHash && biz.username) ok = (await hashPin(biz.username, authPin)) === biz.adminPinHash;
+        else if (biz.adminPin) ok = biz.adminPin === authPin; // legacy plaintext
+        user = users.find(u => u.role === "admin") ?? { id: Date.now().toString(), name: biz.ownerName, role: "admin", businessCode: biz.code, username: biz.username };
+      }
+      if (!ok || !user) { setAuthError("Incorrect username or PIN."); return; }
+      await saveCurrentUser(user);
+      setCurrentUser(user);
       setBusiness(biz);
+      setAuthError("");
+      // Legacy account with no username yet → prompt to create one now.
+      if (!biz.username) { setAuthUsername(""); setAuthPin(""); setScreen("set_username"); return; }
+      setScreen("done");
+    } catch { setAuthError("Something went wrong. Try again."); }
+  };
+
+  // Legacy migration: a logged-in admin without a username picks one (+ PIN) here.
+  const handleSetUsername = async () => {
+    if (!business) return;
+    if (!authUsername.trim() || authPin.length < 4) { setAuthError("Choose a username and a 4+ digit PIN."); return; }
+    try {
+      const username = authUsername.trim();
+      const adminPinHash = await hashPin(username, authPin);
+      const updated: Business = { ...business, username, adminPinHash, adminPin: "" };
+      await saveBusiness(updated);
+      const users = await getUsers(updated.code);
+      const newUsers = users.map(u => u.role === "admin" ? { ...u, username, pinHash: adminPinHash } : u);
+      await saveUsers(updated.code, newUsers);
+      const admin = newUsers.find(u => u.role === "admin");
+      if (admin) { await saveCurrentUser(admin); setCurrentUser(admin); }
+      setBusiness(updated);
       setAuthError("");
       setScreen("done");
     } catch { setAuthError("Something went wrong. Try again."); }
   };
 
   const handleRepJoin = async () => {
-    if (!authName.trim() || !authCode.trim()) { setAuthError("Enter your name and business code."); return; }
+    if (!authName.trim() || !authCode.trim() || !authUsername.trim() || authPin.length < 4) { setAuthError("Fill in every field (PIN is 4+ digits)."); return; }
     try {
       const biz = await getBusiness(authCode.toUpperCase());
-      if (!biz) { setAuthError("Business code not found. Check with your admin."); return; }
-      const user: User = { id: Date.now().toString(), name: authName, role: "rep", businessCode: biz.code };
+      if (!biz) { setAuthError("Business ID not found. Check with your admin."); return; }
       const users = await getUsers(biz.code);
+      const uname = authUsername.trim();
+      if ((biz.username || "").toLowerCase() === uname.toLowerCase() || users.some(u => (u.username || "").toLowerCase() === uname.toLowerCase())) {
+        setAuthError("That username is taken. Choose another."); return;
+      }
+      const pinHash = await hashPin(uname, authPin);
+      const user: User = { id: Date.now().toString(), name: authName, role: "rep", businessCode: biz.code, username: uname, pinHash };
       users.push(user);
       await saveUsers(biz.code, users);
       await saveCurrentUser(user);
@@ -346,8 +401,8 @@ export default function Index() {
       onPickLogo={pickImage}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
-      onSave={async ({ name, brand, termsAndConditions }) => {
-        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions };
+      onSave={async ({ name, brand, termsAndConditions, docPrefs }) => {
+        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs };
         setBusiness(updated);
         await saveBusiness(updated);
       }}
@@ -413,13 +468,20 @@ export default function Index() {
     />
   );
 
+  if (screen === "set_username" && business && currentUser) return (
+    <SetUsernameScreen
+      username={authUsername} pin={authPin} error={authError}
+      onUsernameChange={setAuthUsername} onPinChange={setAuthPin} onSave={handleSetUsername}
+    />
+  );
+
   if (screen === "signup") return (
     <SignupScreen
-      bizName={signupBizName} name={authName} pin={authPin} error={authError}
-      onBizNameChange={setSignupBizName} onNameChange={setAuthName} onPinChange={setAuthPin}
+      bizName={signupBizName} name={authName} username={authUsername} pin={authPin} error={authError}
+      onBizNameChange={setSignupBizName} onNameChange={setAuthName} onUsernameChange={setAuthUsername} onPinChange={setAuthPin}
       onBack={() => { setAuthError(""); setScreen("get_started"); }}
       onContinue={() => {
-        if (!signupBizName.trim() || !authName.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
+        if (!signupBizName.trim() || !authName.trim() || !authUsername.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
         if (authPin.length < 4) { setAuthError("PIN must be at least 4 digits."); return; }
         setAuthError("");
         setScreen("signup_brand");
@@ -429,24 +491,24 @@ export default function Index() {
 
   if (screen === "login") return (
     <LoginScreen
-      code={authCode} pin={authPin} error={authError}
-      onCodeChange={v => setAuthCode(v.toUpperCase())} onPinChange={setAuthPin}
-      onBack={() => { setAuthError(""); setScreen("welcome"); }} onSignIn={handleAdminLogin}
+      username={authUsername} code={authCode} pin={authPin} error={authError}
+      onUsernameChange={setAuthUsername} onCodeChange={v => setAuthCode(v.toUpperCase())} onPinChange={setAuthPin}
+      onBack={() => { setAuthError(""); setScreen("welcome"); }} onSignIn={handleLogin}
     />
   );
 
   if (screen === "rep_join") return (
     <RepJoinScreen
-      name={authName} code={authCode} error={authError}
-      onNameChange={setAuthName} onCodeChange={v => setAuthCode(v.toUpperCase())}
+      name={authName} code={authCode} username={authUsername} pin={authPin} error={authError}
+      onNameChange={setAuthName} onCodeChange={v => setAuthCode(v.toUpperCase())} onUsernameChange={setAuthUsername} onPinChange={setAuthPin}
       onBack={() => { setAuthError(""); setScreen("get_started"); }} onJoin={handleRepJoin}
     />
   );
 
   if (screen === "get_started") return (
     <GetStartedScreen
-      onCreateBusiness={() => { setAuthError(""); setSignupBizName(""); setAuthName(""); setAuthPin(""); setSignupBrand({ ...DEFAULT_BRAND }); setScreen("signup"); }}
-      onJoinAsRep={() => { setAuthError(""); setAuthName(""); setAuthCode(""); setScreen("rep_join"); }}
+      onCreateBusiness={() => { setAuthError(""); setSignupBizName(""); setAuthName(""); setAuthUsername(""); setAuthPin(""); setSignupBrand({ ...DEFAULT_BRAND }); setScreen("signup"); }}
+      onJoinAsRep={() => { setAuthError(""); setAuthName(""); setAuthUsername(""); setAuthPin(""); setAuthCode(""); setScreen("rep_join"); }}
       onBack={() => setScreen("welcome")}
     />
   );
@@ -456,7 +518,7 @@ export default function Index() {
     <WelcomeScreen
       onLogoTap={handleLogoTap}
       onGetStarted={() => { setAuthError(""); setScreen("get_started"); }}
-      onSignIn={() => { setAuthError(""); setAuthCode(""); setAuthPin(""); setScreen("login"); }}
+      onSignIn={() => { setAuthError(""); setAuthUsername(""); setAuthCode(""); setAuthPin(""); setScreen("login"); }}
       showMasterEntry={showMasterEntry}
       masterInput={masterInput}
       masterError={masterError}
