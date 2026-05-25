@@ -7,7 +7,7 @@ import { B, DEFAULT_BRAND } from "../constants/brand";
 import { s } from "../styles";
 import { BrandConfig, Business, DocPrefs } from "../types";
 import { isValidHex } from "../utils/color";
-import { getContrastColor, isReadable } from "../utils/colorUtils";
+import { getContrastColor, isReadable, ON_PRIMARY } from "../utils/colorUtils";
 import { resolveDocPrefs } from "../utils/helpers";
 
 const BG_PRESETS = [
@@ -113,7 +113,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
             <Text style={{ color: previewText, fontSize: 26, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>$2,400</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1, backgroundColor: pc, borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
-                <Text style={{ color: getContrastColor(pc), fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Primary</Text>
+                <Text style={{ color: ON_PRIMARY, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Primary</Text>
               </View>
               <View style={{ flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: "center", borderWidth: 1, borderColor: sc }}>
                 <Text style={{ color: sc, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Secondary</Text>
@@ -244,7 +244,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
         </View>
 
         <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={onSavePress}>
-          <Text style={[s.btnText, { color: getContrastColor(pc) }]}>Save</Text>
+          <Text style={[s.btnText, { color: ON_PRIMARY }]}>Save</Text>
         </TouchableOpacity>
       </ScrollView>
 

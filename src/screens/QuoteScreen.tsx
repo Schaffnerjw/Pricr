@@ -15,7 +15,7 @@ import { useReduceMotion } from "../hooks/useReduceMotion";
 import { addQuote, attachQuotePresentation, getQuoteSigningToken, getQuotes, markQuoteSent, saveBusiness, saveSignature } from "../storage";
 import { s } from "../styles";
 import { Business, QuotePresentation, SavedQuote, User } from "../types";
-import { getBrandPalette, getContrastColor } from "../utils/colorUtils";
+import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { formatMoney } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 
@@ -49,7 +49,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);          // always-readable palette derived from brand colors
   const primaryColor = pal.primary;
-  const onPrimary = getContrastColor(pal.primary); // readable text/icon color on top of the primary color
+  const onPrimary = ON_PRIMARY; // brand look: always white text/icons on the primary color
 
   const sections = useMemo(() => groupFields(schema?.fields ?? []), [schema]);
   const setField = (id: string, value: any) => setFieldValues(p => ({ ...p, [id]: value }));

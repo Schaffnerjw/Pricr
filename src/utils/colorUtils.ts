@@ -36,6 +36,11 @@ export function contrastRatio(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+// Text/icon color for content sitting ON the primary brand color (CTA buttons, selected pills/cards,
+// avatars). Product decision: the brand look wins on buttons, so this is ALWAYS white — even when
+// WCAG would prefer black on a light primary. Backgrounds still auto-contrast via getContrastColor.
+export const ON_PRIMARY = "#FFFFFF";
+
 // Black or white — whichever reads better on the given background.
 export function getContrastColor(backgroundColor: string): "#000000" | "#FFFFFF" {
   return contrastRatio("#FFFFFF", backgroundColor) >= contrastRatio("#000000", backgroundColor) ? "#FFFFFF" : "#000000";

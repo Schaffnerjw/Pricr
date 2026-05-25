@@ -5,7 +5,7 @@ import { TypingDots } from "../components/TypingDots";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s } from "../styles";
-import { getContrastColor } from "../utils/colorUtils";
+import { getContrastColor, ON_PRIMARY } from "../utils/colorUtils";
 
 export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, chips, onInputChange, onSend, onQuickReply, scrollRef }: {
   primaryColor: string; backgroundColor?: string;
@@ -30,7 +30,7 @@ export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, 
   // Pills come only from Kit's own SUGGESTED_REPLIES (parsed upstream), never hardcoded heuristics.
   const showChips = !loading && chips.length > 0 && messages[messages.length - 1]?.role === "assistant";
   const txt = getContrastColor(backgroundColor || "#0A0E1A"); // readable text on whatever bg is set
-  const onPrimary = getContrastColor(primaryColor);
+  const onPrimary = ON_PRIMARY; // brand look: always white on the primary color
 
   return (
     <SafeAreaView style={[s.container, backgroundColor ? { backgroundColor } : null]}>

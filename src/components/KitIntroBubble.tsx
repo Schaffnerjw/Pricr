@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Text, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { Business } from "../types";
-import { getContrastColor } from "../utils/colorUtils";
+import { ON_PRIMARY } from "../utils/colorUtils";
 import { KitChatModal } from "./KitChatModal";
 
 const SEEN_KEY = "kitIntroSeen";
@@ -16,7 +16,7 @@ export function KitIntroBubble({ business, onSetupTerms }: {
   onSetupTerms: () => void;
 }) {
   const accent = business.brand.primaryColor || B.blue;
-  const onAccent = getContrastColor(accent); // readable text/icon on the accent color
+  const onAccent = ON_PRIMARY; // brand look: always white on the accent/primary color
   const [showIntro, setShowIntro] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const slide = useRef(new Animated.Value(0)).current;

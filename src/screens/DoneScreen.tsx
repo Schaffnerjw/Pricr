@@ -7,7 +7,7 @@ import { B } from "../constants/brand";
 import { getQuotes } from "../storage";
 import { s } from "../styles";
 import { Business, User } from "../types";
-import { getBrandPalette, getContrastColor } from "../utils/colorUtils";
+import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { monthlyQuoteTotal } from "../utils/quote";
 
 export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms }: {
@@ -17,7 +17,7 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
-  const onPrimary = getContrastColor(pal.primary);
+  const onPrimary = ON_PRIMARY; // brand look: always white on the primary color
   const bg = pal.background;
   const [monthTotal, setMonthTotal] = useState<number | null>(null);
   const [allTimeCount, setAllTimeCount] = useState<number | null>(null);
