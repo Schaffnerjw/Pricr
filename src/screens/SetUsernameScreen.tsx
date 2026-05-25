@@ -17,7 +17,7 @@ export function SetUsernameScreen({ username, pin, error, onUsernameChange, onPi
         <ScrollView contentContainerStyle={{ padding: 28, paddingTop: 60, gap: 8 }} keyboardShouldPersistTaps="handled">
           <PricrLogo />
           <Text style={[s.h2, { marginTop: 8 }]}>Set Up Your Login</Text>
-          <Text style={[s.body, { marginBottom: 24 }]}>Choose a username and PIN. You'll use these to sign in from now on.</Text>
+          <Text style={[s.body, { marginBottom: 24 }]}>Choose a username and PIN. You’ll use these to sign in from now on.</Text>
           <View style={{ gap: 6, marginBottom: 16 }}>
             <Text style={s.formLabel}>Username</Text>
             <TextInput style={s.input} placeholder="Choose a username" placeholderTextColor={B.gray3} value={username} onChangeText={onUsernameChange} autoCapitalize="none" autoCorrect={false} />

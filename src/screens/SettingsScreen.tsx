@@ -19,7 +19,7 @@ const BG_PRESETS = [
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
 export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToTerms }: {
   business: Business;
-  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs }) => void;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs }) => void | Promise<void>;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
   scrollToTerms?: boolean;
@@ -69,11 +69,15 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
 
   const pickLogo = async () => { const uri = await onPickLogo(); if (uri) setLogoUri(uri); };
   const resetDefaults = () => { setPrimary(DEFAULT_BRAND.primaryColor); setSecondary(DEFAULT_BRAND.secondaryColor); setBackground(DEFAULT_BRAND.backgroundColor); };
-  const save = () => {
-    onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp });
-    setEditingTerms(false);
-    setToast(true);
-    setTimeout(() => setToast(false), 1600);
+  const save = async () => {
+    try {
+      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp });
+      setEditingTerms(false);
+      setToast(true);
+      setTimeout(() => setToast(false), 1600);
+    } catch {
+      Alert.alert("Couldn't save", "We couldn't save your settings. Check your connection and try again.");
+    }
   };
 
   const ColorRow = ({ label, value, valid, onChange }: { label: string; value: string; valid: string; onChange: (v: string) => void }) => (

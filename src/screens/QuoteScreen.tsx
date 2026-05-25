@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useState } from "react";
-import { LayoutAnimation, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
+import { Alert, LayoutAnimation, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
 import { AnimatedDollar } from "../components/AnimatedDollar";
 import { BrandHeader } from "../components/BrandHeader";
 import { ClosingCard } from "../components/ClosingCard";
@@ -96,24 +96,29 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setExpanded(p => ({ ...p, [key]: !p[key] }));
   };
 
-  const saveQuote = async (): Promise<string | null> => {
-    try {
-      const quote: SavedQuote = {
-        id: Date.now().toString(), timestamp: Date.now(), customerName,
-        trade: schema?.trade, total: t.total, deposit: t.deposit, fieldValues,
-        userId: currentUser.id, repName: currentUser.name, status: "open",
-        ...(discount.value > 0 ? { discount: { mode: discount.mode, value: discount.value, reason: discount.reason || undefined } } : {}),
-      };
-      const isFirstReal = history.filter(q => !q.isSample).length === 0;
-      await addQuote(business.code, quote);
-      setHistory(h => [...h, quote]);
-      setLastSavedId(quote.id);
-      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      if (isFirstReal) { setShowCelebration(true); setTimeout(() => setShowCelebration(false), 2000); }
-      return quote.id;
-    } catch { return null; }
+  // Throws if the write fails — callers MUST surface the error and not show a success state.
+  const saveQuote = async (): Promise<string> => {
+    const quote: SavedQuote = {
+      id: Date.now().toString(), timestamp: Date.now(), customerName,
+      trade: schema?.trade, total: t.total, deposit: t.deposit, fieldValues,
+      userId: currentUser.id, repName: currentUser.name, status: "open",
+      ...(discount.value > 0 ? { discount: { mode: discount.mode, value: discount.value, reason: discount.reason || undefined } } : {}),
+    };
+    const isFirstReal = history.filter(q => !q.isSample).length === 0;
+    await addQuote(business.code, quote); // throws on backend failure — success UI below only runs if it didn't
+    setHistory(h => [...h, quote]);
+    setLastSavedId(quote.id);
+    if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    if (isFirstReal) { setShowCelebration(true); setTimeout(() => setShowCelebration(false), 2000); }
+    return quote.id;
+  };
+
+  // Save button handler: surfaces failures instead of silently showing "Saved".
+  const onSavePress = async () => {
+    try { await saveQuote(); }
+    catch { Alert.alert("Couldn't save quote", "We couldn't save this quote. Check your connection and try again."); }
   };
 
   // Sharing the proposal: persist it (if not already), stash the rendered presentation so the
@@ -394,7 +399,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </View>
 
       {showTotal && (
-        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} saved={saved} onSave={saveQuote} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} />
+        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} />
       )}
 
       {isAdmin && !showTotal && (

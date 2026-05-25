@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
+import { isSupabaseConfigured } from "../lib/supabase";
 import { scanAllData } from "../storage";
 import { s } from "../styles";
 
@@ -55,6 +56,7 @@ export function MasterAnalytics() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
+    if (isSupabaseConfigured) { setLoading(false); return; } // local scan is meaningless in cloud mode
     setLoading(true);
     scanAllData().then(d => { setStats(compute(d)); setLoading(false); });
   }, []);
@@ -64,13 +66,23 @@ export function MasterAnalytics() {
     <View style={{ gap: 12 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text style={s.sectionTitle}>PLATFORM ANALYTICS</Text>
-        <TouchableOpacity onPress={load} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Feather name="refresh-cw" size={13} color={B.blue} />
-          <Text style={{ color: B.blue, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Refresh</Text>
-        </TouchableOpacity>
+        {!isSupabaseConfigured && (
+          <TouchableOpacity onPress={load} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Feather name="refresh-cw" size={13} color={B.blue} />
+            <Text style={{ color: B.blue, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Refresh</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {loading || !stats ? (
+      {/* In cloud mode the metrics live in Supabase, not local storage — show a placeholder instead
+          of empty zeroes until cross-business analytics are wired server-side. */}
+      {isSupabaseConfigured ? (
+        <View style={[s.masterCard, { alignItems: "center", paddingVertical: 28, gap: 8 }]}>
+          <Feather name="bar-chart-2" size={28} color={B.cyan} />
+          <Text style={[s.configLabel, { textAlign: "center" }]}>ANALYTICS COMING SOON</Text>
+          <Text style={[s.emptyText, { textAlign: "center" }]}>Your data is stored securely in the cloud. Cross-business analytics are coming soon.</Text>
+        </View>
+      ) : loading || !stats ? (
         <View style={[s.masterCard, { alignItems: "center", paddingVertical: 32 }]}><ActivityIndicator color={B.cyan} /></View>
       ) : (
         <>

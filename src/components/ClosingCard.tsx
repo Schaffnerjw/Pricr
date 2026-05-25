@@ -106,6 +106,8 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
         { ...presentation, signatureData: signature ?? undefined, signedAt: signedAt ?? undefined, signingLink: signingLink ?? undefined, termsAndConditions },
         signingLink ? { message: `Here is your quote from ${business.name}. Review and sign here: ${signingLink}` } : undefined,
       );
+    } catch {
+      Alert.alert("Couldn't share quote", "We couldn't prepare this quote to share. Check your connection and try again.");
     } finally {
       setSharing(false);
     }

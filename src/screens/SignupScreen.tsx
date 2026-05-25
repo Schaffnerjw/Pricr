@@ -33,12 +33,12 @@ export function SignupScreen({ bizName, name, username, pin, error, onBizNameCha
           </View>
           <View style={{ gap: 6, marginBottom: 16 }}>
             <Text style={s.formLabel}>Username</Text>
-            <Text style={s.formHint}>You'll use this to sign in.</Text>
+            <Text style={s.formHint}>You’ll use this to sign in.</Text>
             <TextInput style={s.input} placeholder="Choose a username" placeholderTextColor={B.gray3} value={username} onChangeText={onUsernameChange} autoCapitalize="none" autoCorrect={false} />
           </View>
           <View style={{ gap: 10, marginBottom: 24 }}>
             <Text style={s.formLabel}>Create a PIN</Text>
-            <Text style={s.formHint}>4–6 digits. You'll enter this to sign in — keep it safe.</Text>
+            <Text style={s.formHint}>4–6 digits. You’ll enter this to sign in — keep it safe.</Text>
             <PinKeypad value={pin} onChange={onPinChange} />
           </View>
 
