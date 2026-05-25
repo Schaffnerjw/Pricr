@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Text, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { Business } from "../types";
+import { getContrastColor } from "../utils/colorUtils";
 import { KitChatModal } from "./KitChatModal";
 
 const SEEN_KEY = "kitIntroSeen";
@@ -15,6 +16,7 @@ export function KitIntroBubble({ business, onSetupTerms }: {
   onSetupTerms: () => void;
 }) {
   const accent = business.brand.primaryColor || B.blue;
+  const onAccent = getContrastColor(accent); // readable text/icon on the accent color
   const [showIntro, setShowIntro] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const slide = useRef(new Animated.Value(0)).current;
@@ -44,7 +46,7 @@ export function KitIntroBubble({ business, onSetupTerms }: {
         onPress={() => setChatOpen(true)}
         style={{ position: "absolute", right: 20, bottom: 28, width: 56, height: 56, borderRadius: 28, backgroundColor: accent, alignItems: "center", justifyContent: "center", shadowColor: accent, shadowOpacity: 0.5, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 }}
       >
-        <Text style={{ color: B.white, fontSize: 22, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>K</Text>
+        <Text style={{ color: onAccent, fontSize: 22, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>K</Text>
       </TouchableOpacity>
 
       {/* One-time intro card */}
@@ -58,7 +60,7 @@ export function KitIntroBubble({ business, onSetupTerms }: {
         >
           <View style={{ backgroundColor: B.card, borderRadius: 16, borderWidth: 1, borderColor: accent + "55", padding: 16, flexDirection: "row", gap: 12 }}>
             <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: accent, alignItems: "center", justifyContent: "center" }}>
-              <Text style={{ color: B.white, fontSize: 17, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>K</Text>
+              <Text style={{ color: onAccent, fontSize: 17, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>K</Text>
             </View>
             <View style={{ flex: 1, gap: 12 }}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -72,7 +74,7 @@ export function KitIntroBubble({ business, onSetupTerms }: {
                   style={{ flex: 1, backgroundColor: accent, borderRadius: 10, paddingVertical: 10, alignItems: "center" }}
                   onPress={() => { dismissIntro(); onSetupTerms(); }}
                 >
-                  <Text style={{ color: B.white, fontWeight: "700", fontSize: 13, fontFamily: "DMSans_700Bold" }}>Set up T&amp;C now</Text>
+                  <Text style={{ color: onAccent, fontWeight: "700", fontSize: 13, fontFamily: "DMSans_700Bold" }}>Set up T&amp;C now</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={{ paddingVertical: 10, paddingHorizontal: 12, alignItems: "center", justifyContent: "center" }} onPress={dismissIntro}>
                   <Text style={{ color: B.gray2, fontWeight: "600", fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Maybe later</Text>

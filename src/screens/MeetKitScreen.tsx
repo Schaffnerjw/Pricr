@@ -5,12 +5,12 @@ import { TypingDots } from "../components/TypingDots";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s } from "../styles";
-import { quickReplies } from "../utils/quote";
+import { getContrastColor } from "../utils/colorUtils";
 
-export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, onInputChange, onSend, onQuickReply, scrollRef }: {
+export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, chips, onInputChange, onSend, onQuickReply, scrollRef }: {
   primaryColor: string; backgroundColor?: string;
   messages: { role: "user" | "assistant"; content: string }[];
-  input: string; loading: boolean; progress: number;
+  input: string; loading: boolean; progress: number; chips: string[];
   onInputChange: (v: string) => void; onSend: () => void; onQuickReply: (text: string) => void;
   scrollRef: RefObject<ScrollView | null>;
 }) {
@@ -27,8 +27,10 @@ export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, 
     return () => sub.remove();
   }, [scrollRef]);
 
-  const last = messages[messages.length - 1];
-  const chips = !loading && last?.role === "assistant" ? quickReplies(last.content) : [];
+  // Pills come only from Kit's own SUGGESTED_REPLIES (parsed upstream), never hardcoded heuristics.
+  const showChips = !loading && chips.length > 0 && messages[messages.length - 1]?.role === "assistant";
+  const txt = getContrastColor(backgroundColor || "#0A0E1A"); // readable text on whatever bg is set
+  const onPrimary = getContrastColor(primaryColor);
 
   return (
     <SafeAreaView style={[s.container, backgroundColor ? { backgroundColor } : null]}>
@@ -39,21 +41,21 @@ export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, 
       </View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}>
         <View style={s.kitIntroBar}>
-          <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={s.kitAvatarText}>K</Text></View>
+          <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={[s.kitAvatarText, { color: onPrimary }]}>K</Text></View>
           <View>
-            <Text style={{ fontSize: 17, fontWeight: "700", color: B.white, fontFamily: "Syne_700Bold" }}>Meet Kit</Text>
-            <Text style={{ fontSize: 13, color: B.gray3, fontFamily: "DMSans_400Regular" }}>Your Pricr assistant</Text>
+            <Text style={{ fontSize: 17, fontWeight: "700", color: txt, fontFamily: "Syne_700Bold" }}>Meet Kit</Text>
+            <Text style={{ fontSize: 13, color: txt, opacity: 0.7, fontFamily: "DMSans_400Regular" }}>Your Pricr assistant</Text>
           </View>
         </View>
         <View style={s.kitIntroBanner}>
-          <Text style={{ fontSize: 14, color: B.gray2, lineHeight: 22, fontFamily: "DMSans_400Regular" }}>
+          <Text style={{ fontSize: 14, color: txt, opacity: 0.85, lineHeight: 22, fontFamily: "DMSans_400Regular" }}>
             Kit builds your quote tool and keeps it updated. Once you are set up, find Kit in the bottom right corner of your quote screen anytime you want to make a change.
           </Text>
         </View>
         <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }} keyboardShouldPersistTaps="handled">
           {messages.map((msg, i) => (
             <View key={i} style={[s.bubble, msg.role === "user" ? [s.bubbleUser, { backgroundColor: primaryColor }] : s.bubbleKit]}>
-              <Text style={[s.bubbleText, msg.role === "user" && { color: B.white }]}>{msg.content}</Text>
+              <Text style={[s.bubbleText, msg.role === "user" && { color: onPrimary }]}>{msg.content}</Text>
             </View>
           ))}
           {loading && (
@@ -61,7 +63,7 @@ export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, 
               <TypingDots color={B.gray2} />
             </View>
           )}
-          {chips.length > 0 && (
+          {showChips && (
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
               {chips.map(c => (
                 <TouchableOpacity key={c} style={[s.chip, { borderColor: primaryColor + "60" }]} onPress={() => onQuickReply(c)}>

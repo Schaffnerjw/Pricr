@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { s } from "../styles";
+import { parseSuggestedReplies } from "../utils/helpers";
 import { TypingDots } from "./TypingDots";
 
 const SUGGESTIONS = ["What are my options?", "Update my pricing", "Add an add-on", "Why is the total this?", "Change my deposit"];
@@ -25,7 +26,9 @@ export function KitAgentSheet({ primaryColor, messages, input, loading, onInputC
 
   const last = messages[messages.length - 1];
   const showLayout = !loading && last?.role === "assistant" && last.content.includes("LAYOUT_OPTIONS");
-  const clean = (c: string) => c.replace(/LAYOUT_OPTIONS/g, "").trim();
+  const clean = (c: string) => parseSuggestedReplies(c.replace(/LAYOUT_OPTIONS/g, "")).content;
+  // Contextual answer pills from Kit's own SUGGESTED_REPLIES (only when it asked something).
+  const suggested = !loading && !showLayout && last?.role === "assistant" ? parseSuggestedReplies(last.content).replies : [];
 
   const buildWithLayout = () => {
     onSend(`Build it with these settings — input type: ${layout.input}, display style: ${layout.display}, ${layout.required.toLowerCase()}. Go ahead and create the field now.`);
@@ -61,6 +64,17 @@ export function KitAgentSheet({ primaryColor, messages, input, loading, onInputC
           </View>
         ))}
         {loading && <View style={s.bubbleKit}><TypingDots color={B.gray2} /></View>}
+
+        {/* Contextual answer pills — only what Kit returned for the question it just asked. */}
+        {suggested.length > 0 && (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 }}>
+            {suggested.map(c => (
+              <TouchableOpacity key={c} style={[s.chip, { borderColor: primaryColor + "60" }]} onPress={() => onSend(c)}>
+                <Text style={[s.chipText, { color: primaryColor }]}>{c}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
 
         {/* Interactive layout pills — shown when Kit asks how to lay out a new field. */}
         {showLayout && (

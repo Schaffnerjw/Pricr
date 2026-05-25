@@ -2,6 +2,16 @@ import { DocPrefs } from "../types";
 
 export function generateCode(): string { return Math.random().toString(36).substring(2,8).toUpperCase(); }
 
+// Extracts Kit's contextual reply pills from a message: strips the `SUGGESTED_REPLIES: [...]` line
+// and returns the cleaned conversational text plus the parsed options (empty when none).
+export function parseSuggestedReplies(text: string): { content: string; replies: string[] } {
+  const m = (text || "").match(/SUGGESTED_REPLIES:\s*(\[[\s\S]*?\])/);
+  if (!m) return { content: text || "", replies: [] };
+  let replies: string[] = [];
+  try { const arr = JSON.parse(m[1]); if (Array.isArray(arr)) replies = arr.filter((x: any) => typeof x === "string" && x.trim()).slice(0, 4); } catch { /* ignore */ }
+  return { content: (text.replace(m[0], "").trim()) || text.trim(), replies };
+}
+
 // Resolve a business's customer-document preferences, defaulting to "detailed" (show everything)
 // when unset. "summary" hides line items/pricing/breakdown; "custom" honors the individual toggles.
 export function resolveDocPrefs(p?: Partial<DocPrefs> | null): DocPrefs {
@@ -18,7 +28,7 @@ export function resolveDocPrefs(p?: Partial<DocPrefs> | null): DocPrefs {
 }
 export function formatDate(ts: number): string { return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}); }
 export function formatLongDate(ts: number): string { return new Date(ts).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}); }
-export function formatMoney(n: number): string { return `$${Math.round(n).toLocaleString()}`; }
+export function formatMoney(n: number): string { const a = Math.round(Math.abs(n)).toLocaleString(); return n < 0 ? `-$${a}` : `$${a}`; }
 export function parseSchemaFromResponse(raw: string): any|null {
   try {
     let c = raw.trim().replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();

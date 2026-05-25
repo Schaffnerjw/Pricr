@@ -7,6 +7,7 @@ import { B } from "../constants/brand";
 import { getQuotes } from "../storage";
 import { s } from "../styles";
 import { Business, User } from "../types";
+import { getBrandPalette, getContrastColor } from "../utils/colorUtils";
 import { monthlyQuoteTotal } from "../utils/quote";
 
 export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms }: {
@@ -15,7 +16,9 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
-  const bg = business.brand.backgroundColor || B.midnight;
+  const pal = getBrandPalette(business);
+  const onPrimary = getContrastColor(pal.primary);
+  const bg = pal.background;
   const [monthTotal, setMonthTotal] = useState<number | null>(null);
   const [allTimeCount, setAllTimeCount] = useState<number | null>(null);
   const [dismissed, setDismissed] = useState(false);
@@ -30,13 +33,20 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
     <SafeAreaView style={[s.container, { backgroundColor: bg }]}>
       <BrandHeader business={business} right={
         <TouchableOpacity onPress={onSignOut}>
-          <Text style={{ color: B.gray3, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Sign out</Text>
+          <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Sign out</Text>
         </TouchableOpacity>
       } />
       <ScrollView contentContainerStyle={{ padding: 24, gap: 16, paddingTop: 24 }}>
+        {pal.adjusted && (
+          <TouchableOpacity style={[s.brandBanner, { borderColor: primaryColor + "60" }]} onPress={onOpenSettings}>
+            <Feather name="alert-triangle" size={18} color={primaryColor} />
+            <Text style={[s.brandBannerText, { color: pal.text }]}>Your brand colors need adjustment — visit Settings to fix</Text>
+            <Feather name="chevron-right" size={18} color={pal.textMuted} />
+          </TouchableOpacity>
+        )}
         <View>
-          <Text style={s.h1}>Hey, {currentUser.name}.</Text>
-          <Text style={[s.body, { marginTop: 4 }]}>{business.name} is configured and ready to quote.</Text>
+          <Text style={[s.h1, { color: pal.text }]}>Hey, {currentUser.name}.</Text>
+          <Text style={[s.body, { marginTop: 4, color: pal.textMuted }]}>{business.name} is configured and ready to quote.</Text>
         </View>
 
         {isAdmin && business.brandConfigured === false && (
@@ -48,32 +58,32 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         )}
 
         {showTestPrompt && !dismissed && (
-          <View style={[s.configCard, { borderColor: primaryColor + "60", gap: 10 }]}>
+          <View style={[s.configCard, { backgroundColor: pal.surface, borderColor: primaryColor + "60", gap: 10 }]}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
                 <Feather name="check-circle" size={18} color={primaryColor} />
-                <Text style={{ fontSize: 16, fontWeight: "800", color: B.white, fontFamily: "Syne_700Bold" }}>Your tool is ready</Text>
+                <Text style={{ fontSize: 16, fontWeight: "800", color: pal.text, fontFamily: "Syne_700Bold" }}>Your tool is ready</Text>
               </View>
               <TouchableOpacity onPress={() => { setDismissed(true); onDismissTestPrompt(); }}>
-                <Feather name="x" size={20} color={B.gray3} />
+                <Feather name="x" size={20} color={pal.textMuted} />
               </TouchableOpacity>
             </View>
-            <Text style={s.body}>Want to run a test quote to see it in action?</Text>
+            <Text style={[s.body, { color: pal.textMuted }]}>Want to run a test quote to see it in action?</Text>
             <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={() => { setDismissed(true); onTestQuote(); }}>
-              <Text style={s.btnText}>Run a test quote</Text>
+              <Text style={[s.btnText, { color: onPrimary }]}>Run a test quote</Text>
             </TouchableOpacity>
           </View>
         )}
 
         {business.kitSummary && (
-          <View style={[s.configCard, { flexDirection: "row", gap: 12, alignItems: "flex-start" }]}>
-            <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={s.kitAvatarText}>K</Text></View>
-            <Text style={[s.body, { flex: 1, color: B.gray1 }]}>{business.kitSummary}</Text>
+          <View style={[s.configCard, { backgroundColor: pal.surface, borderColor: pal.border, flexDirection: "row", gap: 12, alignItems: "flex-start" }]}>
+            <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={[s.kitAvatarText, { color: onPrimary }]}>K</Text></View>
+            <Text style={[s.body, { flex: 1, color: pal.text }]}>{business.kitSummary}</Text>
           </View>
         )}
 
         {business.schema && (
-          <View style={s.configCard}>
+          <View style={[s.configCard, { backgroundColor: pal.surface, borderColor: pal.border }]}>
             {[
               ["TRADE", business.schema.trade],
               ["CUSTOM INPUTS", `${business.schema.fields?.length} field${business.schema.fields?.length !== 1 ? "s" : ""} built for your trade`],
@@ -82,30 +92,30 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
             ].map(([label, value], i, arr) => (
               <View key={label}>
                 <View style={{ gap: 4, paddingVertical: 4 }}>
-                  <Text style={s.configLabel}>{label}</Text>
-                  <Text style={s.configValue}>{value}</Text>
+                  <Text style={[s.configLabel, { color: pal.textMuted }]}>{label}</Text>
+                  <Text style={[s.configValue, { color: pal.text }]}>{value}</Text>
                 </View>
-                {i < arr.length - 1 && <View style={s.sep} />}
+                {i < arr.length - 1 && <View style={[s.sep, { backgroundColor: pal.border }]} />}
               </View>
             ))}
           </View>
         )}
 
         {/* Monthly quoted total */}
-        <View style={[s.infoCard, { gap: 4 }]}>
-          <Text style={s.infoLabel}>QUOTED THIS MONTH</Text>
+        <View style={[s.infoCard, { backgroundColor: pal.surface, borderColor: pal.border, gap: 4 }]}>
+          <Text style={[s.infoLabel, { color: pal.textMuted }]}>QUOTED THIS MONTH</Text>
           {monthTotal === null ? (
-            <Text style={[s.infoCode, { color: B.gray3, fontSize: 20 }]}>—</Text>
+            <Text style={[s.infoCode, { color: pal.textMuted, fontSize: 20 }]}>—</Text>
           ) : monthTotal > 0 ? (
             <Text style={[s.infoCode, { color: primaryColor, fontSize: 28 }]}>${monthTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</Text>
           ) : (
-            <Text style={[s.configValue, { color: B.gray2 }]}>No quotes yet this month.</Text>
+            <Text style={[s.configValue, { color: pal.textMuted }]}>No quotes yet this month.</Text>
           )}
-          {allTimeCount !== null && <Text style={[s.configValue, { color: B.gray2, marginTop: 6 }]}>Total quotes all time: {allTimeCount}</Text>}
+          {allTimeCount !== null && <Text style={[s.configValue, { color: pal.textMuted, marginTop: 6 }]}>Total quotes all time: {allTimeCount}</Text>}
         </View>
 
         <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={onOpenQuoteTool}>
-          <Text style={s.btnText}>Open My Quote Tool</Text>
+          <Text style={[s.btnText, { color: onPrimary }]}>Open My Quote Tool</Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.btnSecondary} onPress={onQuoteHistory}>
           <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Quote History</Text>

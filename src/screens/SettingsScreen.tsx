@@ -1,12 +1,13 @@
 import { Feather } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState } from "react";
-import { Image, SafeAreaView, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Image, SafeAreaView, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { KitChatModal } from "../components/KitChatModal";
 import { B, DEFAULT_BRAND } from "../constants/brand";
 import { s } from "../styles";
 import { BrandConfig, Business, DocPrefs } from "../types";
 import { isValidHex } from "../utils/color";
+import { getContrastColor, isReadable } from "../utils/colorUtils";
 import { resolveDocPrefs } from "../utils/helpers";
 
 const BG_PRESETS = [
@@ -52,6 +53,19 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
   const sc = isValidHex(secondary) ? secondary : DEFAULT_BRAND.secondaryColor;
   const bg = isValidHex(background) ? background : DEFAULT_BRAND.backgroundColor;
   const norm = (v: string) => v.startsWith("#") ? v : "#" + v;
+  // Live contrast result for the chosen background — drives the preview + the unreadable warning.
+  const previewText = getContrastColor(bg);
+  const bgReadable = isReadable(previewText, bg);
+
+  const doSave = () => { save(); };
+  const onSavePress = () => {
+    if (bgReadable) { doSave(); return; }
+    Alert.alert(
+      "Hard-to-read colors",
+      "This background color makes text hard to read. Consider a darker background. Save anyway?",
+      [{ text: "Keep editing", style: "cancel" }, { text: "Save anyway", style: "destructive", onPress: doSave }],
+    );
+  };
 
   const pickLogo = async () => { const uri = await onPickLogo(); if (uri) setLogoUri(uri); };
   const resetDefaults = () => { setPrimary(DEFAULT_BRAND.primaryColor); setSecondary(DEFAULT_BRAND.secondaryColor); setBackground(DEFAULT_BRAND.backgroundColor); };
@@ -94,18 +108,24 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
               ) : (
                 <Text style={{ color: pc, fontWeight: "800", fontFamily: "Syne_700Bold", fontSize: 16 }}>{name || business.name}</Text>
               )}
-              <Text style={{ color: B.gray3, fontSize: 11, fontFamily: "DMSans_400Regular" }}>Preview</Text>
+              <Text style={{ color: previewText, opacity: 0.7, fontSize: 11, fontFamily: "DMSans_400Regular" }}>Preview</Text>
             </View>
-            <Text style={{ color: B.white, fontSize: 26, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>$2,400</Text>
+            <Text style={{ color: previewText, fontSize: 26, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>$2,400</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1, backgroundColor: pc, borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
-                <Text style={{ color: B.white, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Primary</Text>
+                <Text style={{ color: getContrastColor(pc), fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Primary</Text>
               </View>
               <View style={{ flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: "center", borderWidth: 1, borderColor: sc }}>
                 <Text style={{ color: sc, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Secondary</Text>
               </View>
             </View>
           </View>
+          {!bgReadable && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: B.red + "1A", borderColor: B.red, borderWidth: 1, borderRadius: 10, padding: 12 }}>
+              <Feather name="alert-triangle" size={16} color={B.red} />
+              <Text style={{ flex: 1, color: B.red, fontSize: 13, fontFamily: "DMSans_400Regular" }}>This background color makes text hard to read. Consider a darker background.</Text>
+            </View>
+          )}
         </View>
 
         {/* Business info */}
@@ -223,8 +243,8 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
           </Text>
         </View>
 
-        <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={save}>
-          <Text style={s.btnText}>Save</Text>
+        <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={onSavePress}>
+          <Text style={[s.btnText, { color: getContrastColor(pc) }]}>Save</Text>
         </TouchableOpacity>
       </ScrollView>
 

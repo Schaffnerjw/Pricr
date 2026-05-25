@@ -28,7 +28,7 @@ import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, ge
 import { BrandConfig, Business, DemoBusiness, Screen, User } from "../src/types";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
-import { generateCode, parseSchemaFromResponse } from "../src/utils/helpers";
+import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
 
 // Web image picker: a hidden <input type="file"> read as a data URL (expo-image-picker's
@@ -76,6 +76,7 @@ export default function Index() {
   const [signupBrand, setSignupBrand] = useState<BrandConfig>({ ...DEFAULT_BRAND });
 
   const [kitMessages, setKitMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [kitReplies, setKitReplies] = useState<string[]>([]);
   const [kitInput, setKitInput] = useState("");
   const [kitLoading, setKitLoading] = useState(false);
   const [kitStarted, setKitStarted] = useState(false);
@@ -287,7 +288,9 @@ export default function Index() {
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 600, system: KIT_CONVERSATION_PROMPT, messages: [{ role: "user", content: opener }] }),
       });
       const data = await response.json();
-      setKitMessages([{ role: "assistant", content: data.content[0].text.trim() }]);
+      const { content, replies } = parseSuggestedReplies(data.content[0].text.trim());
+      setKitMessages([{ role: "assistant", content }]);
+      setKitReplies(replies);
       setKitStarted(true);
     } catch {
       setKitMessages([{ role: "assistant", content: "Hey, good to meet you. What is the main way you measure or size a job?" }]);
@@ -351,6 +354,7 @@ export default function Index() {
     const newMessages = [...kitMessages, userMsg];
     setKitMessages(newMessages);
     setKitInput("");
+    setKitReplies([]);
     setKitLoading(true);
     try {
       const formSummary = `Business: ${business?.name}, Services: ${setupServices}, Materials: ${setupProducts}, Pricing: ${setupPricing}`;
@@ -362,7 +366,7 @@ export default function Index() {
       const data = await response.json();
       const reply = data.content[0].text.trim();
       if (reply.includes("READY_TO_BUILD")) {
-        const cleanReply = reply.replace("READY_TO_BUILD", "").trim();
+        const { content: cleanReply } = parseSuggestedReplies(reply.replace("READY_TO_BUILD", "").trim());
         const finalMessages = cleanReply ? [...newMessages, { role: "assistant" as const, content: cleanReply }] : newMessages;
         setKitMessages(finalMessages);
         setKitReady(true); // fill the progress bar to 100% before building
@@ -370,7 +374,9 @@ export default function Index() {
         setTimeout(() => buildSchema(finalMessages), 500);
         return;
       } else {
-        setKitMessages([...newMessages, { role: "assistant", content: reply }]);
+        const { content, replies } = parseSuggestedReplies(reply);
+        setKitMessages([...newMessages, { role: "assistant", content }]);
+        setKitReplies(replies);
         setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
       }
     } catch {
@@ -446,7 +452,7 @@ export default function Index() {
 
   if (screen === "meet_kit") return (
     <MeetKitScreen
-      primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor} messages={kitMessages} input={kitInput} loading={kitLoading}
+      primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor} messages={kitMessages} input={kitInput} loading={kitLoading} chips={kitReplies}
       progress={kitReady ? 1 : Math.min(0.9, kitMessages.length * 0.12)}
       onInputChange={setKitInput} onSend={() => sendKitMessage()} onQuickReply={(t) => sendKitMessage(t)} scrollRef={scrollRef}
     />

@@ -126,7 +126,8 @@ export function optionPrice(option: string, pricing: Record<string, number>): nu
 }
 
 // Central total calculation — coerces number fields to actual numbers before evaluating.
-export function computeTotals(schema: any, fieldValues: Record<string, any>, addOnIds: string[]) {
+// Optional discount (flat $ or %) is applied to the subtotal before tax.
+export function computeTotals(schema: any, fieldValues: Record<string, any>, addOnIds: string[], discount?: { mode: "amount" | "percent"; value: number } | null) {
   const pricing: Record<string, number> = schema?.pricing || {};
   const ctx: Record<string, any> = {};
   for (const f of schema?.fields || []) {
@@ -138,17 +139,23 @@ export function computeTotals(schema: any, fieldValues: Record<string, any>, add
   const base = schema?.calculation ? evaluateFormula(schema.calculation, ctx, pricing) : 0;
   const addOnTotal = (addOnIds || []).reduce((sum, id) => sum + (schema?.addOns?.find((a: any) => a.id === id)?.price || 0), 0);
   const subtotal = base + addOnTotal;
+  // Discount off the subtotal (capped so it can't go negative).
+  const dv = discount && discount.value > 0 ? discount.value : 0;
+  const discountAmount = dv > 0
+    ? (discount!.mode === "percent" ? subtotal * (Math.min(100, dv) / 100) : Math.min(dv, subtotal))
+    : 0;
+  const discountedSubtotal = Math.max(0, subtotal - discountAmount);
   // Normalize tax: a value < 1 (e.g. 0.07) is a fraction → treat as 7%. A value >= 1 is already a percent.
   const rawTax = pricing.taxRate ?? 0;
   const taxRate = rawTax > 0 && rawTax < 1 ? rawTax * 100 : rawTax;
-  const tax = subtotal * (taxRate / 100);
-  const rawTotal = subtotal + tax;
+  const tax = discountedSubtotal * (taxRate / 100);
+  const rawTotal = discountedSubtotal + tax;
   const minimum = pricing.minimumCharge || 0;
   const belowMin = rawTotal > 0 && rawTotal < minimum;
   const total = rawTotal > 0 ? Math.max(rawTotal, minimum) : 0;
   const depositPct = pricing.depositPercent ?? 0;
   const deposit = depositPct > 0 && total > 0 ? total * (depositPct / 100) : 0;
-  return { subtotal, taxRate, tax, rawTotal, minimum, belowMin, total, depositPct, deposit, ctx };
+  return { subtotal, discountAmount, taxRate, tax, rawTotal, minimum, belowMin, total, depositPct, deposit, ctx };
 }
 
 export function monthlyQuoteTotal(quotes: SavedQuote[]): number {

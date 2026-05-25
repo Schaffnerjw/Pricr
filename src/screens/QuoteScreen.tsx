@@ -15,6 +15,7 @@ import { useReduceMotion } from "../hooks/useReduceMotion";
 import { addQuote, attachQuotePresentation, getQuoteSigningToken, getQuotes, markQuoteSent, saveBusiness, saveSignature } from "../storage";
 import { s } from "../styles";
 import { Business, QuotePresentation, SavedQuote, User } from "../types";
+import { getBrandPalette, getContrastColor } from "../utils/colorUtils";
 import { formatMoney } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 
@@ -34,6 +35,10 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const [saved, setSaved] = useState(false);
   const [lastSavedId, setLastSavedId] = useState<string | null>(null);
   const [history, setHistory] = useState<SavedQuote[]>([]);
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [discountMode, setDiscountMode] = useState<"amount" | "percent">("amount");
+  const [discountValue, setDiscountValue] = useState("");
+  const [discountReason, setDiscountReason] = useState("");
   const [showCelebration, setShowCelebration] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentInput, setAgentInput] = useState("");
@@ -42,7 +47,9 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
   const reduceMotion = useReduceMotion();
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
-  const primaryColor = business.brand.primaryColor || B.blue;
+  const pal = getBrandPalette(business);          // always-readable palette derived from brand colors
+  const primaryColor = pal.primary;
+  const onPrimary = getContrastColor(pal.primary); // readable text/icon color on top of the primary color
 
   const sections = useMemo(() => groupFields(schema?.fields ?? []), [schema]);
   const setField = (id: string, value: any) => setFieldValues(p => ({ ...p, [id]: value }));
@@ -79,7 +86,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     });
   }, [schema, business.code]);
 
-  const t = computeTotals(schema, fieldValues, selectedAddOns);
+  const discount = { mode: discountMode, value: Number(discountValue) || 0, reason: discountReason.trim() };
+  const t = computeTotals(schema, fieldValues, selectedAddOns, discount);
   const range = typicalRange(history);
   const outsideRange = !!range && t.total > 0 && (t.total > range.avg + 1.5 * range.std || t.total < Math.max(0, range.avg - 1.5 * range.std));
 
@@ -94,6 +102,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         id: Date.now().toString(), timestamp: Date.now(), customerName,
         trade: schema?.trade, total: t.total, deposit: t.deposit, fieldValues,
         userId: currentUser.id, repName: currentUser.name, status: "open",
+        ...(discount.value > 0 ? { discount: { mode: discount.mode, value: discount.value, reason: discount.reason || undefined } } : {}),
       };
       const isFirstReal = history.filter(q => !q.isSample).length === 0;
       await addQuote(business.code, quote);
@@ -179,9 +188,9 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     const hint = fieldRate(field, schema?.pricing || {});
     return (
       <View key={field.id} style={{ gap: 6 }}>
-        <Text style={s.fieldLabel}>{field.label.toUpperCase()}</Text>
-        <TextInput style={s.input} placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`} placeholderTextColor={B.gray3} value={value ? value.toString() : ""} onChangeText={v => setField(field.id, v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
-        {hint ? <Text style={s.qHint}>{hint}</Text> : null}
+        <Text style={[s.fieldLabel, { color: pal.textMuted }]}>{field.label.toUpperCase()}</Text>
+        <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`} placeholderTextColor={pal.textMuted} value={value ? value.toString() : ""} onChangeText={v => setField(field.id, v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
+        {hint ? <Text style={[s.qHint, { color: pal.textMuted }]}>{hint}</Text> : null}
       </View>
     );
   };
@@ -190,15 +199,15 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     const value = fieldValues[field.id];
     return (
       <View key={field.id} style={{ gap: 8 }}>
-        <Text style={s.fieldLabel}>{field.label.toUpperCase()}</Text>
+        <Text style={[s.fieldLabel, { color: pal.textMuted }]}>{field.label.toUpperCase()}</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
           {field.options?.map((opt: string) => {
             const selected = value === opt;
             const price = optionPrice(opt, schema?.pricing || {});
             return (
-              <PressableScale key={opt} onPress={() => setField(field.id, opt)} style={[s.qOptionCard, { borderColor: selected ? primaryColor : B.border, backgroundColor: selected ? primaryColor : B.card }]}>
-                <Text style={[s.qOptionName, { color: selected ? B.white : B.gray1 }]}>{opt}</Text>
-                {price != null ? <Text style={[s.qOptionPrice, { color: selected ? B.white : primaryColor }]}>${price.toLocaleString()}</Text> : null}
+              <PressableScale key={opt} onPress={() => setField(field.id, opt)} style={[s.qOptionCard, { borderColor: selected ? primaryColor : pal.border, backgroundColor: selected ? primaryColor : pal.surface }]}>
+                <Text style={[s.qOptionName, { color: selected ? onPrimary : pal.text }]}>{opt}</Text>
+                {price != null ? <Text style={[s.qOptionPrice, { color: selected ? onPrimary : primaryColor }]}>${price.toLocaleString()}</Text> : null}
               </PressableScale>
             );
           })}
@@ -211,18 +220,18 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     const on = !!fieldValues[field.id];
     const hint = fieldRate(field, schema?.pricing || {});
     const Pill = ({ label, active }: { label: string; active: boolean }) => (
-      <PressableScale onPress={() => setField(field.id, label === "Include")} style={[s.qPill, { borderColor: active ? primaryColor : B.border, backgroundColor: active ? primaryColor : B.card }]}>
-        <Text style={[s.qPillText, { color: active ? B.white : B.gray2 }]}>{label}</Text>
+      <PressableScale onPress={() => setField(field.id, label === "Include")} style={[s.qPill, { borderColor: active ? primaryColor : pal.border, backgroundColor: active ? primaryColor : pal.surface }]}>
+        <Text style={[s.qPillText, { color: active ? onPrimary : pal.textMuted }]}>{label}</Text>
       </PressableScale>
     );
     return (
       <View key={field.id} style={{ gap: 8 }}>
-        <Text style={s.fieldLabel}>{field.label.toUpperCase()}</Text>
+        <Text style={[s.fieldLabel, { color: pal.textMuted }]}>{field.label.toUpperCase()}</Text>
         <View style={{ flexDirection: "row", gap: 10 }}>
           <Pill label="Include" active={on} />
           <Pill label="Don't Include" active={!on} />
         </View>
-        {hint ? <Text style={s.qHint}>{hint}</Text> : null}
+        {hint ? <Text style={[s.qHint, { color: pal.textMuted }]}>{hint}</Text> : null}
       </View>
     );
   };
@@ -250,15 +259,15 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       <Pressable onPress={() => toggleSection(key)} style={s.qSectionHeader}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <Feather name={icon} size={18} color={primaryColor} />
-          <Text style={s.qSectionTitle}>{title}</Text>
+          <Text style={[s.qSectionTitle, { color: pal.text }]}>{title}</Text>
         </View>
-        {optional ? <Feather name={open ? "chevron-up" : "chevron-down"} size={20} color={B.gray3} /> : null}
+        {optional ? <Feather name={open ? "chevron-up" : "chevron-down"} size={20} color={pal.textMuted} /> : null}
       </Pressable>
     );
   };
 
   return (
-    <SafeAreaView style={[s.container, { backgroundColor: business.brand.backgroundColor || B.midnight }]}>
+    <SafeAreaView style={[s.container, { backgroundColor: pal.background }]}>
       <BrandHeader business={business} right={
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <View style={[s.roleBadge, isAdmin && { borderColor: primaryColor + "60", backgroundColor: primaryColor + "15" }]}>
@@ -280,8 +289,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: 200 }} keyboardShouldPersistTaps="handled">
         <View style={{ gap: 6 }}>
-          <Text style={s.fieldLabel}>CUSTOMER NAME</Text>
-          <TextInput style={s.input} placeholder="Customer full name" placeholderTextColor={B.gray3} value={customerName} onChangeText={setCustomerName} />
+          <Text style={[s.fieldLabel, { color: pal.textMuted }]}>CUSTOMER NAME</Text>
+          <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Customer full name" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
         </View>
 
         {!ready ? (
@@ -310,9 +319,9 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                     {schema.addOns.map((a: any) => {
                       const selected = selectedAddOns.includes(a.id);
                       return (
-                        <PressableScale key={a.id} onPress={() => toggleAddOn(a.id)} style={[s.qOptionCard, { borderColor: selected ? primaryColor : B.border, backgroundColor: selected ? primaryColor : B.card }]}>
-                          <Text style={[s.qOptionName, { color: selected ? B.white : B.gray1 }]}>{a.label}</Text>
-                          {a.price ? <Text style={[s.qOptionPrice, { color: selected ? B.white : primaryColor }]}>${a.price.toLocaleString()}</Text> : null}
+                        <PressableScale key={a.id} onPress={() => toggleAddOn(a.id)} style={[s.qOptionCard, { borderColor: selected ? primaryColor : pal.border, backgroundColor: selected ? primaryColor : pal.surface }]}>
+                          <Text style={[s.qOptionName, { color: selected ? onPrimary : pal.text }]}>{a.label}</Text>
+                          {a.price ? <Text style={[s.qOptionPrice, { color: selected ? onPrimary : primaryColor }]}>${a.price.toLocaleString()}</Text> : null}
                         </PressableScale>
                       );
                     })}
@@ -320,12 +329,49 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                 )}
               </View>
             )}
+
+            {/* Discount — optional, collapsed by default; available on every quote regardless of trade. */}
+            <View style={{ gap: 14 }}>
+              {!discountOpen && t.discountAmount <= 0 ? (
+                <PressableScale onPress={() => setDiscountOpen(true)} style={s.qAddPill}>
+                  <Feather name="plus" size={16} color={primaryColor} />
+                  <Text style={{ fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold", color: primaryColor }}>Add Discount</Text>
+                </PressableScale>
+              ) : (
+                <>
+                  <Pressable onPress={() => setDiscountOpen(o => !o)} style={s.qSectionHeader}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                      <Feather name="tag" size={18} color={primaryColor} />
+                      <Text style={[s.qSectionTitle, { color: pal.text }]}>Discount</Text>
+                    </View>
+                    <Feather name={discountOpen ? "chevron-up" : "chevron-down"} size={20} color={pal.textMuted} />
+                  </Pressable>
+                  {discountOpen && (
+                    <View style={{ gap: 12 }}>
+                      <View style={{ flexDirection: "row", gap: 10 }}>
+                        {(["amount", "percent"] as const).map(m => {
+                          const active = discountMode === m;
+                          return (
+                            <PressableScale key={m} onPress={() => setDiscountMode(m)} style={[s.qPill, { borderColor: active ? primaryColor : pal.border, backgroundColor: active ? primaryColor : pal.surface }]}>
+                              <Text style={[s.qPillText, { color: active ? onPrimary : pal.textMuted }]}>{m === "amount" ? "$ Amount" : "% Off"}</Text>
+                            </PressableScale>
+                          );
+                        })}
+                      </View>
+                      <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder={discountMode === "amount" ? "Discount amount" : "Percent off (e.g. 10)"} placeholderTextColor={pal.textMuted} value={discountValue} onChangeText={v => setDiscountValue(v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
+                      <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Discount reason (optional)" placeholderTextColor={pal.textMuted} value={discountReason} onChangeText={setDiscountReason} />
+                      {t.discountAmount > 0 && <Text style={[s.qHint, { color: pal.textMuted }]}>Applied: -{formatMoney(t.discountAmount)}</Text>}
+                    </View>
+                  )}
+                </>
+              )}
+            </View>
           </>
         )}
       </ScrollView>
 
       {/* Sticky live total bar (+ minimum warning, + typical range) */}
-      <View style={s.qStickyWrap}>
+      <View style={[s.qStickyWrap, { backgroundColor: pal.background, borderTopColor: pal.border, borderTopWidth: 1 }]}>
         {t.belowMin && (
           <View style={s.qMinWarn}>
             <Feather name="alert-triangle" size={14} color={B.midnight} />
@@ -333,22 +379,22 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         )}
         {range && (
-          <Text style={[s.qRange, { color: outsideRange ? "#F59E0B" : B.muted }]}>Typical range: {formatMoney(range.low)} – {formatMoney(range.high)}</Text>
+          <Text style={[s.qRange, { color: outsideRange ? "#F59E0B" : pal.textMuted }]}>Typical range: {formatMoney(range.low)} – {formatMoney(range.high)}</Text>
         )}
         <View style={s.qStickyRow}>
           <View>
-            <Text style={s.qStickyLabel}>ESTIMATED TOTAL</Text>
-            <AnimatedDollar value={t.total} style={s.qStickyTotal} />
+            <Text style={[s.qStickyLabel, { color: pal.textMuted }]}>ESTIMATED TOTAL</Text>
+            <AnimatedDollar value={t.total} style={[s.qStickyTotal, { color: pal.text }]} />
           </View>
           <PressableScale onPress={() => setShowTotal(true)} style={[s.qReviewBtn, { backgroundColor: primaryColor }]}>
-            <Text style={s.qReviewText}>Review</Text>
-            <Feather name="chevron-up" size={18} color={B.white} />
+            <Text style={[s.qReviewText, { color: onPrimary }]}>Review</Text>
+            <Feather name="chevron-up" size={18} color={onPrimary} />
           </PressableScale>
         </View>
       </View>
 
       {showTotal && (
-        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} saved={saved} onSave={saveQuote} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} />
+        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} saved={saved} onSave={saveQuote} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} />
       )}
 
       {isAdmin && !showTotal && (

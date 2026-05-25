@@ -16,9 +16,9 @@ const SCREEN_H = Dimensions.get("window").height;
 type Totals = { ctx: Record<string, any>; taxRate: number; tax: number; total: number; depositPct: number; deposit: number };
 
 // The slide-up "proposal" sheet shown when reviewing a quote. Owns its own entrance animation.
-export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, saved, onSave, prepareShare, onSign, termsAndConditions, onClose }: {
+export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, discount, saved, onSave, prepareShare, onSign, termsAndConditions, onClose }: {
   schema: any; business: Business; primaryColor: string; customerName: string;
-  totals: Totals; selectedAddOns: string[]; saved: boolean; onSave: () => void;
+  totals: Totals; selectedAddOns: string[]; discount?: { amount: number; reason?: string }; saved: boolean; onSave: () => void;
   prepareShare?: (presentation: QuotePresentation) => Promise<{ signingLink: string | null }>;
   onSign?: (signatureData: string, presentation: QuotePresentation) => Promise<void>;
   termsAndConditions?: string;
@@ -66,6 +66,10 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
     for (const id of selectedAddOns) {
       const ao = schema?.addOns?.find((a: any) => a.id === id);
       if (ao) items.push({ label: ao.label, amount: ao.price || 0 });
+    }
+    // Discount as a negative line item so it flows into the PDF and the remote signing page.
+    if (discount && discount.amount > 0) {
+      items.push({ label: discount.reason ? `Discount (${discount.reason})` : "Discount", amount: -discount.amount });
     }
     return items;
   };
@@ -181,6 +185,12 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                     <View style={s.lineItem}>
                       <Text style={[s.lineLabel, { color: theme.lineColor }]}>Tax ({t.taxRate}%)</Text>
                       <Text style={[s.lineValue, { color: theme.valueColor }]}>{formatMoney(t.tax)}</Text>
+                    </View>
+                  )}
+                  {discount && discount.amount > 0 && (
+                    <View style={s.lineItem}>
+                      <Text style={[s.lineLabel, { color: theme.lineColor }]}>{discount.reason ? `Discount (${discount.reason})` : "Discount"}</Text>
+                      <Text style={[s.lineValue, { color: primaryColor }]}>-{formatMoney(discount.amount)}</Text>
                     </View>
                   )}
                 </View>
