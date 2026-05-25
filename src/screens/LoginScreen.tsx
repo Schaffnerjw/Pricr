@@ -2,20 +2,21 @@ import { Feather } from "@expo/vector-icons";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
-import { PinKeypad } from "../components/PinKeypad";
+import { PasswordField } from "../components/PasswordField";
 import { B } from "../constants/brand";
 import { s } from "../styles";
 
-// Primary login is Username + PIN. A Business-ID fallback covers legacy accounts created before
+// Primary login is Username + password. A Business-ID fallback covers legacy accounts created before
 // usernames existed (they're then prompted to set a username on the next screen).
-export function LoginScreen({ username, code, pin, error, onUsernameChange, onCodeChange, onPinChange, onBack, onSignIn }: {
+export function LoginScreen({ username, code, pin, error, staySignedIn, onToggleStay, onUsernameChange, onCodeChange, onPinChange, onBack, onSignIn }: {
   username: string; code: string; pin: string; error: string;
+  staySignedIn: boolean; onToggleStay: (v: boolean) => void;
   onUsernameChange: (v: string) => void; onCodeChange: (v: string) => void; onPinChange: (v: string) => void;
   onBack: () => void; onSignIn: (mode: "username" | "code") => void;
 }) {
   const [mode, setMode] = useState<"username" | "code">("username");
   const idOk = mode === "username" ? !!username.trim() : !!code.trim();
-  const disabled = !idOk || pin.length < 4;
+  const disabled = !idOk || !pin;
 
   return (
     <SafeAreaView style={s.container}>
@@ -27,7 +28,7 @@ export function LoginScreen({ username, code, pin, error, onUsernameChange, onCo
           </TouchableOpacity>
           <PricrLogo />
           <Text style={[s.h2, { marginTop: 8 }]}>Sign In</Text>
-          <Text style={[s.body, { marginBottom: 24 }]}>{mode === "username" ? "Enter your username and PIN." : "Enter your Business ID and PIN."}</Text>
+          <Text style={[s.body, { marginBottom: 24 }]}>{mode === "username" ? "Enter your username and password." : "Enter your Business ID and password."}</Text>
 
           <View style={{ gap: 6, marginBottom: 16 }}>
             <Text style={s.formLabel}>{mode === "username" ? "Username" : "Business ID"}</Text>
@@ -38,10 +39,18 @@ export function LoginScreen({ username, code, pin, error, onUsernameChange, onCo
             )}
           </View>
 
-          <View style={{ gap: 10, marginBottom: 20 }}>
-            <Text style={s.formLabel}>PIN</Text>
-            <PinKeypad value={pin} onChange={onPinChange} />
+          <View style={{ gap: 6, marginBottom: 16 }}>
+            <Text style={s.formLabel}>Password</Text>
+            <PasswordField value={pin} onChange={onPinChange} placeholder="Your password" onSubmitEditing={() => { if (idOk && pin) onSignIn(mode); }} />
           </View>
+
+          {/* Stay signed in on this device — default ON (FIX 8) */}
+          <TouchableOpacity onPress={() => onToggleStay(!staySignedIn)} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6, marginBottom: 16 }}>
+            <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: staySignedIn ? B.blue : B.gray3, backgroundColor: staySignedIn ? B.blue : "transparent", alignItems: "center", justifyContent: "center" }}>
+              {staySignedIn && <Feather name="check" size={15} color={B.white} />}
+            </View>
+            <Text style={{ color: B.gray1, fontSize: 15, fontFamily: "DMSans_400Regular" }}>Stay signed in on this device</Text>
+          </TouchableOpacity>
 
           {error ? <Text style={{ color: B.red, fontSize: 14, marginBottom: 8, fontFamily: "DMSans_400Regular" }}>{error}</Text> : null}
 

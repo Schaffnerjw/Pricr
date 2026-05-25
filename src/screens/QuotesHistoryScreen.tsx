@@ -104,7 +104,7 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
       ) : quotes.length === 0 ? (
         <View style={s.centered}><Text style={[s.emptyText, { color: pal.textMuted }]}>No quotes yet.</Text></View>
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 96 }}>
           {quotes.map(q => (
             <TouchableOpacity key={q.id} style={[s.historyCard, { backgroundColor: pal.surface, borderColor: pal.border }]} onPress={() => setSelected(q)}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>

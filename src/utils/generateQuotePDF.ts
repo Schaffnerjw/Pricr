@@ -56,6 +56,10 @@ export function generateQuotePDF(d: QuotePDFData): string {
          <div class="terms-body">${esc(d.termsAndConditions).replace(/\n/g, "<br/>")}</div>
        </div>`
     : "";
+  // Accepted payment methods (admin sets once in Settings; shown on every quote — FIX 11).
+  const paymentBlock = d.paymentMethods && d.paymentMethods.length
+    ? `<div class="pay"><span class="pay-label">We Accept:</span> ${esc(d.paymentMethods.join(", "))}</div>`
+    : "";
   const contactBits = [d.phone, d.email, d.address].filter(Boolean).map(esc).join("&nbsp;&nbsp;·&nbsp;&nbsp;");
   const mark = d.logoUri
     ? `<img class="logo" src="${esc(d.logoUri)}" /><div class="biz">${esc(d.businessName)}</div>`
@@ -98,6 +102,8 @@ export function generateQuotePDF(d: QuotePDFData): string {
   .sig-cap { color: ${accent}; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; margin-top: 8px; }
   .sign-link { margin-top: 28px; padding: 12px 14px; background: #F8FAFC; border: 1px solid ${accent}40; border-radius: 10px; font-size: 12px; color: #475569; }
   .sign-link a { color: ${accent}; font-weight: 600; word-break: break-all; }
+  .pay { margin-top: 20px; font-size: 13px; color: #1E2640; }
+  .pay-label { font-weight: 700; color: #0A0E1A; }
   .terms-page { page-break-before: always; padding: 40px; }
   .terms-title { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; border-bottom: 3px solid ${accent}; padding-bottom: 10px; margin-bottom: 18px; }
   .terms-body { font-size: 12px; line-height: 1.7; color: #1E2640; white-space: normal; }
@@ -123,6 +129,7 @@ export function generateQuotePDF(d: QuotePDFData): string {
     ${signatureBlock}
     <div class="valid">This estimate is valid for 30 days · through ${esc(formatLongDate(d.validThrough))}</div>
     ${signLinkBlock}
+    ${paymentBlock}
     ${prefs.showContact && contactBits ? `<div class="footer">${contactBits}</div>` : ""}
   </div>
   ${termsPage}

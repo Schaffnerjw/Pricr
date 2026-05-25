@@ -16,13 +16,14 @@ const SCREEN_H = Dimensions.get("window").height;
 type Totals = { ctx: Record<string, any>; taxRate: number; tax: number; total: number; depositPct: number; deposit: number };
 
 // The slide-up "proposal" sheet shown when reviewing a quote. Owns its own entrance animation.
-export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, discount, saved, onSave, prepareShare, onSign, termsAndConditions, onClose }: {
+export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, discount, paymentMethods, saved, onSave, prepareShare, onSign, termsAndConditions, onClose, onNewQuote }: {
   schema: any; business: Business; primaryColor: string; customerName: string;
-  totals: Totals; selectedAddOns: string[]; discount?: { amount: number; reason?: string }; saved: boolean; onSave: () => void;
+  totals: Totals; selectedAddOns: string[]; discount?: { amount: number; reason?: string }; paymentMethods?: string[]; saved: boolean; onSave: () => void;
   prepareShare?: (presentation: QuotePresentation) => Promise<{ signingLink: string | null }>;
   onSign?: (signatureData: string, presentation: QuotePresentation) => Promise<void>;
   termsAndConditions?: string;
   onClose: () => void;
+  onNewQuote?: () => void;
 }) {
   const reduceMotion = useReduceMotion();
   const theme = getCardTheme(primaryColor);
@@ -94,6 +95,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
     deposit: t.deposit,
     balanceDue,
     docPrefs: business.docPrefs,
+    paymentMethods: paymentMethods && paymentMethods.length ? paymentMethods : undefined,
   });
 
   const onShare = async () => {
@@ -287,6 +289,15 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
               )}
             </View>
 
+            {/* Accepted payment methods (admin sets once in Settings; shown on every quote — FIX 11). */}
+            {paymentMethods && paymentMethods.length > 0 && (
+              <View style={{ gap: 4 }}>
+                <View style={[s.closingDivider, { backgroundColor: theme.dividerColor }]} />
+                <Text style={[s.ccTerms, { color: theme.lineColor, fontWeight: "700" }]}>We Accept</Text>
+                <Text style={{ color: theme.valueColor, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{paymentMethods.join(", ")}</Text>
+              </View>
+            )}
+
             {docPrefs.showContact && (business.brand.phone || business.brand.email || business.brand.address) && (
               <View style={[s.contactFooter, { borderTopColor: theme.dividerColor }]}>
                 {business.brand.phone ? <ContactRow icon="phone" text={business.brand.phone} color={theme.lineColor} /> : null}
@@ -309,6 +320,14 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
               <TouchableOpacity style={[s.btnSecondary, { borderColor: primaryColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onClose}>
                 <Feather name="check" size={16} color={primaryColor} />
                 <Text style={[s.btnSecondaryText, { color: primaryColor }]}>Done — Back to Quote</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Start a fresh quote for a new client (FIX 17). */}
+            {onNewQuote && (
+              <TouchableOpacity style={[s.btnSecondary, { borderColor: theme.dividerColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onNewQuote}>
+                <Feather name="plus" size={16} color={theme.lineColor} />
+                <Text style={[s.btnSecondaryText, { color: theme.lineColor }]}>New Quote</Text>
               </TouchableOpacity>
             )}
           </ScrollView>

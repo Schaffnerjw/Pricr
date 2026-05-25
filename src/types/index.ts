@@ -1,10 +1,13 @@
 export type Role = "admin" | "rep" | "superadmin";
-export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"setup"|"meet_kit"|"building"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"master";
+export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"meet_kit"|"building"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"master";
 export interface User { id: string; name: string; role: Role; businessCode: string; username?: string; pinHash?: string; }
 export interface BrandConfig { primaryColor: string; secondaryColor: string; logoUri: string|null; tagline: string; phone: string; email: string; address: string; backgroundColor?: string; }
 // Controls what the customer sees on the quote document (PDF + in-app ClosingCard). Unset => detailed/all.
 export interface DocPrefs { style: "detailed"|"summary"|"custom"; showLineItems: boolean; showPricing: boolean; showSubtotal: boolean; showContact: boolean; }
-export interface Business { code: string; name: string; ownerName: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; }
+// Accepted payment methods (admin sets once in Settings, shown on every quote). `methods` holds the
+// selected built-in labels; `other` is free text for the "Other" option. Unset => nothing shown.
+export interface PaymentMethods { methods: string[]; other?: string; }
+export interface Business { code: string; name: string; ownerName: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; paymentMethods?: PaymentMethods; hasGeneratedQuote?: boolean; }
 export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; }
 export type FieldUnit = "sqft"|"lf"|"each"|"hr"|"flat"|"percent"|"load"|"room"|"vehicle"|"ton";
 export type FieldGroup = "dimensions"|"materials"|"railings"|"lighting"|"fencing"|"extras"|"fees"|"details";
@@ -21,6 +24,7 @@ export interface QuotePresentation {
   lineItems: { label: string; amount: number }[];
   taxRate: number; tax: number; total: number; depositPct: number; deposit: number; balanceDue: number;
   docPrefs?: DocPrefs;
+  paymentMethods?: string[]; // resolved accepted-payment labels, shown on the proposal/PDF
 }
 export interface QuoteDiscount { mode: "amount"|"percent"; value: number; reason?: string }
 export interface SavedQuote { id: string; timestamp: number; customerName: string; trade: string; total: number; deposit: number; fieldValues: Record<string,any>; userId: string; repName: string; isSample?: boolean; status?: QuoteStatus; signatureData?: string; signedAt?: number; presentation?: QuotePresentation; discount?: QuoteDiscount; }

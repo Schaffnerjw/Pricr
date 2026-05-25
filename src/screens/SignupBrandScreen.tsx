@@ -23,7 +23,7 @@ export function SignupBrandScreen({ brand, bizName, onBrandChange, onPickLogo, o
         <ScrollView contentContainerStyle={{ padding: 28, paddingTop: 48, gap: 8 }}>
           <PricrLogo />
           <Text style={[s.h2, { marginTop: 8 }]}>Brand your quotes</Text>
-          <Text style={[s.body, { marginBottom: 24 }]}>This is what your customers will see on their quote. Make it yours.</Text>
+          <Text style={[s.body, { marginBottom: 24 }]}>This is what your clients will see on their quote. Make it yours.</Text>
 
           <View style={{ gap: 6, marginBottom: 20 }}>
             <Text style={s.formLabel}>Logo</Text>

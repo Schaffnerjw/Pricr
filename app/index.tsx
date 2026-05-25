@@ -6,7 +6,6 @@ import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
 import { GetStartedScreen } from "../src/screens/GetStartedScreen";
 import { API_URL, B, DEFAULT_BRAND, MASTER_CODE } from "../src/constants/brand";
-import { DEMO_BUSINESSES } from "../src/constants/demos";
 import { KIT_CONVERSATION_PROMPT, SCHEMA_BUILDER_PROMPT } from "../src/constants/prompts";
 import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { LoginScreen } from "../src/screens/LoginScreen";
@@ -20,16 +19,31 @@ import { SetUsernameScreen } from "../src/screens/SetUsernameScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
 import { SignupBrandScreen } from "../src/screens/SignupBrandScreen";
 import { SignupScreen } from "../src/screens/SignupScreen";
+import { UpgradePasswordScreen } from "../src/screens/UpgradePasswordScreen";
 import { UsersScreen } from "../src/screens/UsersScreen";
 import { WelcomeScreen } from "../src/screens/WelcomeScreen";
 import { s } from "../src/styles";
 import { isSupabaseConfigured } from "../src/lib/supabase";
-import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers } from "../src/storage";
+import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
 import { BrandConfig, Business, DemoBusiness, Screen, User } from "../src/types";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
+
+// Truly generic, trade-agnostic fallback used only when Kit's schema build genuinely fails to parse.
+// Intentionally NOT a specific trade (no Christmas Lights default) — just a blank quantity × rate tool
+// the owner can immediately refine via Kit.
+const GENERIC_FALLBACK_SCHEMA = {
+  trade: "Custom Quote",
+  fields: [
+    { id: "jobSize", label: "Job Size", type: "number", unit: "each", group: "dimensions", placeholder: "Enter the size or quantity" },
+  ],
+  pricing: { jobSizeRate: 100, minimumCharge: 0, taxRate: 0, depositPercent: 0 },
+  addOns: [],
+  calculation: "jobSize * jobSizeRate",
+  summaryLines: [{ label: "Job ({jobSize})", value: "jobSize * jobSizeRate" }],
+};
 
 // Web image picker: a hidden <input type="file"> read as a data URL (expo-image-picker's
 // native gallery flow isn't used on web). Resolves null if the user cancels.
@@ -68,9 +82,12 @@ export default function Index() {
 
   const [authName, setAuthName] = useState("");
   const [authUsername, setAuthUsername] = useState("");
-  const [authPin, setAuthPin] = useState("");
+  const [authPin, setAuthPin] = useState("");           // now a password (8+ chars); legacy accounts may have a short PIN
+  const [authPinConfirm, setAuthPinConfirm] = useState(""); // confirmation field on account creation
   const [authCode, setAuthCode] = useState("");
   const [authError, setAuthError] = useState("");
+  const [staySignedIn, setStayLocal] = useState(true);  // "Stay signed in on this device" — default ON
+  const [isReconfiguring, setIsReconfiguring] = useState(false); // dashboard "Reconfigure with Kit" vs first-time onboarding
 
   const [signupBizName, setSignupBizName] = useState("");
   const [signupBrand, setSignupBrand] = useState<BrandConfig>({ ...DEFAULT_BRAND });
@@ -89,8 +106,12 @@ export default function Index() {
 
   const checkSession = async () => {
     try {
+      const stay = await getStaySignedIn();
+      setStayLocal(stay);
       const user = await getCurrentUser();
       if (user) {
+        // "Stay signed in" off → don't auto-resume; clear the session and start at welcome (FIX 8).
+        if (!stay) { await clearCurrentUser(); setTimeout(() => setScreen("welcome"), 600); return; }
         if (user.role === "superadmin") {
           // Superadmins never auto-resume — drop the session and force a fresh master code entry.
           await clearCurrentUser();
@@ -145,7 +166,8 @@ export default function Index() {
 
   const handleSignUp = async (brandConfigured: boolean = true) => {
     if (!signupBizName.trim() || !authName.trim() || !authUsername.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
-    if (authPin.length < 4) { setAuthError("PIN must be at least 4 digits."); return; }
+    if (authPin.length < 8) { setAuthError("Password must be at least 8 characters."); return; }
+    if (authPin !== authPinConfirm) { setAuthError("Passwords don't match."); return; }
     const finalColor = isValidHex(signupBrand.primaryColor) ? signupBrand.primaryColor : "#2979FF";
     try {
       const code = generateCode();
@@ -160,9 +182,11 @@ export default function Index() {
       await saveBusiness(biz);
       await saveUsers(code, [user]);
       await saveCurrentUser(user);
+      await setStaySignedIn(true); setStayLocal(true);
       setCurrentUser(user);
       setBusiness(biz);
       setAuthError("");
+      setIsReconfiguring(false);
       setScreen("setup");
     } catch { setAuthError("Something went wrong. Try again."); }
   };
@@ -174,11 +198,11 @@ export default function Index() {
     try {
       let code: string | null;
       if (mode === "username") {
-        if (!authUsername.trim() || authPin.length < 4) { setAuthError("Enter your username and PIN."); return; }
+        if (!authUsername.trim() || !authPin) { setAuthError("Enter your username and password."); return; }
         code = await resolveBusinessCodeByUsername(authUsername);
         if (!code) { setAuthError("No account found for that username."); return; }
       } else {
-        if (!authCode.trim() || authPin.length < 4) { setAuthError("Enter your Business ID and PIN."); return; }
+        if (!authCode.trim() || !authPin) { setAuthError("Enter your Business ID and password."); return; }
         code = authCode.toUpperCase();
       }
       const biz = await getBusiness(code);
@@ -198,21 +222,27 @@ export default function Index() {
         else if (biz.adminPin) ok = biz.adminPin === authPin; // legacy plaintext
         user = users.find(u => u.role === "admin") ?? { id: Date.now().toString(), name: biz.ownerName, role: "admin", businessCode: biz.code, username: biz.username };
       }
-      if (!ok || !user) { setAuthError("Incorrect username or PIN."); return; }
+      if (!ok || !user) { setAuthError("Incorrect username or password."); return; }
+      const legacyShortPin = authPin.length < 8; // signed in with an old short PIN → must upgrade
       await saveCurrentUser(user);
+      await setStaySignedIn(staySignedIn); setStayLocal(staySignedIn);
       setCurrentUser(user);
       setBusiness(biz);
       setAuthError("");
-      // Legacy account with no username yet → prompt to create one now.
-      if (!biz.username) { setAuthUsername(""); setAuthPin(""); setScreen("set_username"); return; }
+      // Legacy account with no username yet → prompt to create one (+ password) now.
+      if (!biz.username) { setAuthUsername(""); setAuthPin(""); setAuthPinConfirm(""); setScreen("set_username"); return; }
+      // Existing PIN users: prompt to upgrade to a proper password on next login (FIX 9).
+      if (legacyShortPin) { setAuthPin(""); setAuthPinConfirm(""); setScreen("upgrade_password"); return; }
       setScreen("done");
     } catch { setAuthError("Something went wrong. Try again."); }
   };
 
-  // Legacy migration: a logged-in admin without a username picks one (+ PIN) here.
+  // Legacy migration: a logged-in admin without a username picks one (+ password) here.
   const handleSetUsername = async () => {
     if (!business) return;
-    if (!authUsername.trim() || authPin.length < 4) { setAuthError("Choose a username and a 4+ digit PIN."); return; }
+    if (!authUsername.trim()) { setAuthError("Choose a username."); return; }
+    if (authPin.length < 8) { setAuthError("Password must be at least 8 characters."); return; }
+    if (authPin !== authPinConfirm) { setAuthError("Passwords don't match."); return; }
     try {
       const username = authUsername.trim();
       const adminPinHash = await hashPin(username, authPin);
@@ -230,7 +260,9 @@ export default function Index() {
   };
 
   const handleRepJoin = async () => {
-    if (!authName.trim() || !authCode.trim() || !authUsername.trim() || authPin.length < 4) { setAuthError("Fill in every field (PIN is 4+ digits)."); return; }
+    if (!authName.trim() || !authCode.trim() || !authUsername.trim() || !authPin) { setAuthError("Fill in every field."); return; }
+    if (authPin.length < 8) { setAuthError("Password must be at least 8 characters."); return; }
+    if (authPin !== authPinConfirm) { setAuthError("Passwords don't match."); return; }
     try {
       const biz = await getBusiness(authCode.toUpperCase());
       if (!biz) { setAuthError("Business ID not found. Check with your admin."); return; }
@@ -244,9 +276,40 @@ export default function Index() {
       users.push(user);
       await saveUsers(biz.code, users);
       await saveCurrentUser(user);
+      await setStaySignedIn(true); setStayLocal(true);
       setCurrentUser(user);
       setBusiness(biz);
       setAuthError("");
+      setScreen("done");
+    } catch { setAuthError("Something went wrong. Try again."); }
+  };
+
+  // Existing PIN user upgrades to a proper 8+ char password (FIX 9). Re-hashes for the right principal
+  // (admin → the business adminPinHash + admin member; rep → their own member row), then continues.
+  const handleUpgradePassword = async () => {
+    if (!business || !currentUser) return;
+    if (authPin.length < 8) { setAuthError("Password must be at least 8 characters."); return; }
+    if (authPin !== authPinConfirm) { setAuthError("Passwords don't match."); return; }
+    try {
+      const uname = currentUser.username || business.username;
+      if (!uname) { setAuthError(""); setScreen("done"); return; }
+      const newHash = await hashPin(uname, authPin);
+      const users = await getUsers(business.code);
+      if (currentUser.role === "rep") {
+        const newUsers = users.map(u => u.id === currentUser.id ? { ...u, pinHash: newHash } : u);
+        await saveUsers(business.code, newUsers);
+        const me = newUsers.find(u => u.id === currentUser.id);
+        if (me) { await saveCurrentUser(me); setCurrentUser(me); }
+      } else {
+        const updated: Business = { ...business, adminPinHash: newHash, adminPin: "" };
+        await saveBusiness(updated);
+        const newUsers = users.map(u => u.role === "admin" ? { ...u, pinHash: newHash } : u);
+        await saveUsers(business.code, newUsers);
+        setBusiness(updated);
+        const admin = newUsers.find(u => u.role === "admin");
+        if (admin) { await saveCurrentUser(admin); setCurrentUser(admin); }
+      }
+      setAuthPin(""); setAuthPinConfirm(""); setAuthError("");
       setScreen("done");
     } catch { setAuthError("Something went wrong. Try again."); }
   };
@@ -272,7 +335,8 @@ export default function Index() {
     setCurrentUser(demoUser);
     setBusiness(demoBiz);
     setIsDemoMode(true);
-    setScreen("quote");
+    setIsReconfiguring(false);
+    setScreen("done"); // land on the dashboard first (FIX 23); "Open My Quote Tool" enters the tool
   };
 
   const startKitChat = async () => {
@@ -301,7 +365,7 @@ export default function Index() {
 
   const buildSchema = async (conversation: { role: "user" | "assistant"; content: string }[]) => {
     setScreen("building");
-    const fallbackSchema = DEMO_BUSINESSES.find(d => d.trade === "Christmas Lights")!.schema;
+    const fallbackSchema: any = GENERIC_FALLBACK_SCHEMA;
     let finalSchema: any = fallbackSchema;
     try {
       const formSummary = `Business: ${business?.name}\nServices: ${setupServices}\nMaterials: ${setupProducts}\nPricing: ${setupPricing}`;
@@ -406,11 +470,13 @@ export default function Index() {
   if (screen === "settings" && business && currentUser && isAdmin) return (
     <SettingsScreen
       business={business}
+      currentUser={currentUser}
       onPickLogo={pickImage}
+      onSignOut={handleSignOut}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
-      onSave={async ({ name, brand, termsAndConditions, docPrefs }) => {
-        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs };
+      onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods }) => {
+        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs, paymentMethods };
         await saveBusiness(updated); // throws on failure → SettingsScreen surfaces it; local state only updates on success
         setBusiness(updated);
       }}
@@ -438,13 +504,12 @@ export default function Index() {
   if (screen === "done" && business && currentUser) return (
     <DoneScreen
       business={business} currentUser={currentUser} primaryColor={primaryColor} secondaryColor={secondaryColor}
-      showTestPrompt={justBuilt}
-      onSignOut={handleSignOut}
+      showTestPrompt={justBuilt} isDemoMode={isDemoMode}
       onOpenQuoteTool={() => { setJustBuilt(false); setQuoteInitialValues(undefined); setScreen("quote"); }}
       onQuoteHistory={() => { setJustBuilt(false); setScreen("history"); }}
       onQuotePipeline={isSupabaseConfigured && !isDemoMode ? () => { setJustBuilt(false); setScreen("pipeline"); } : undefined}
       onManageTeam={() => { setJustBuilt(false); setScreen("users"); }}
-      onReconfigure={() => { setJustBuilt(false); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
+      onReconfigure={() => { setJustBuilt(false); setIsReconfiguring(true); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
       onTestQuote={() => { setJustBuilt(false); setQuoteInitialValues(sampleFieldValues(business.schema)); setScreen("quote"); }}
       onDismissTestPrompt={() => setJustBuilt(false)}
       onOpenSettings={() => { setJustBuilt(false); setSettingsFocusTerms(false); setScreen("settings"); }}
@@ -457,6 +522,8 @@ export default function Index() {
       primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor} messages={kitMessages} input={kitInput} loading={kitLoading} chips={kitReplies}
       progress={kitReady ? 1 : Math.min(0.9, kitMessages.length * 0.12)}
       onInputChange={setKitInput} onSend={() => sendKitMessage()} onQuickReply={(t) => sendKitMessage(t)} scrollRef={scrollRef}
+      isReconfiguring={isReconfiguring}
+      onCancel={() => { setIsReconfiguring(false); setScreen("done"); }}
     />
   );
 
@@ -466,6 +533,8 @@ export default function Index() {
       services={setupServices} products={setupProducts} pricing={setupPricing}
       onServicesChange={setSetupServices} onProductsChange={setSetupProducts} onPricingChange={setSetupPricing}
       onContinue={() => { if (!setupServices.trim() || !setupPricing.trim()) return; setScreen("meet_kit"); }}
+      isReconfiguring={isReconfiguring}
+      onCancel={() => { setIsReconfiguring(false); setScreen("done"); }}
     />
   );
 
@@ -478,19 +547,28 @@ export default function Index() {
 
   if (screen === "set_username" && business && currentUser) return (
     <SetUsernameScreen
-      username={authUsername} pin={authPin} error={authError}
-      onUsernameChange={setAuthUsername} onPinChange={setAuthPin} onSave={handleSetUsername}
+      username={authUsername} pin={authPin} confirm={authPinConfirm} error={authError}
+      onUsernameChange={setAuthUsername} onPinChange={setAuthPin} onConfirmChange={setAuthPinConfirm} onSave={handleSetUsername}
+    />
+  );
+
+  if (screen === "upgrade_password" && business && currentUser) return (
+    <UpgradePasswordScreen
+      username={currentUser.username || business.username || ""}
+      pin={authPin} confirm={authPinConfirm} error={authError}
+      onPinChange={setAuthPin} onConfirmChange={setAuthPinConfirm} onSave={handleUpgradePassword}
     />
   );
 
   if (screen === "signup") return (
     <SignupScreen
-      bizName={signupBizName} name={authName} username={authUsername} pin={authPin} error={authError}
-      onBizNameChange={setSignupBizName} onNameChange={setAuthName} onUsernameChange={setAuthUsername} onPinChange={setAuthPin}
+      bizName={signupBizName} name={authName} username={authUsername} pin={authPin} confirm={authPinConfirm} error={authError}
+      onBizNameChange={setSignupBizName} onNameChange={setAuthName} onUsernameChange={setAuthUsername} onPinChange={setAuthPin} onConfirmChange={setAuthPinConfirm}
       onBack={() => { setAuthError(""); setScreen("get_started"); }}
       onContinue={() => {
         if (!signupBizName.trim() || !authName.trim() || !authUsername.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
-        if (authPin.length < 4) { setAuthError("PIN must be at least 4 digits."); return; }
+        if (authPin.length < 8) { setAuthError("Password must be at least 8 characters."); return; }
+        if (authPin !== authPinConfirm) { setAuthError("Passwords don't match."); return; }
         setAuthError("");
         setScreen("signup_brand");
       }}
@@ -500,6 +578,7 @@ export default function Index() {
   if (screen === "login") return (
     <LoginScreen
       username={authUsername} code={authCode} pin={authPin} error={authError}
+      staySignedIn={staySignedIn} onToggleStay={setStayLocal}
       onUsernameChange={setAuthUsername} onCodeChange={v => setAuthCode(v.toUpperCase())} onPinChange={setAuthPin}
       onBack={() => { setAuthError(""); setScreen("welcome"); }} onSignIn={handleLogin}
     />
@@ -507,16 +586,16 @@ export default function Index() {
 
   if (screen === "rep_join") return (
     <RepJoinScreen
-      name={authName} code={authCode} username={authUsername} pin={authPin} error={authError}
-      onNameChange={setAuthName} onCodeChange={v => setAuthCode(v.toUpperCase())} onUsernameChange={setAuthUsername} onPinChange={setAuthPin}
+      name={authName} code={authCode} username={authUsername} pin={authPin} confirm={authPinConfirm} error={authError}
+      onNameChange={setAuthName} onCodeChange={v => setAuthCode(v.toUpperCase())} onUsernameChange={setAuthUsername} onPinChange={setAuthPin} onConfirmChange={setAuthPinConfirm}
       onBack={() => { setAuthError(""); setScreen("get_started"); }} onJoin={handleRepJoin}
     />
   );
 
   if (screen === "get_started") return (
     <GetStartedScreen
-      onCreateBusiness={() => { setAuthError(""); setSignupBizName(""); setAuthName(""); setAuthUsername(""); setAuthPin(""); setSignupBrand({ ...DEFAULT_BRAND }); setScreen("signup"); }}
-      onJoinAsRep={() => { setAuthError(""); setAuthName(""); setAuthUsername(""); setAuthPin(""); setAuthCode(""); setScreen("rep_join"); }}
+      onCreateBusiness={() => { setAuthError(""); setSignupBizName(""); setAuthName(""); setAuthUsername(""); setAuthPin(""); setAuthPinConfirm(""); setSignupBrand({ ...DEFAULT_BRAND }); setScreen("signup"); }}
+      onJoinAsRep={() => { setAuthError(""); setAuthName(""); setAuthUsername(""); setAuthPin(""); setAuthPinConfirm(""); setAuthCode(""); setScreen("rep_join"); }}
       onBack={() => setScreen("welcome")}
     />
   );
@@ -526,7 +605,7 @@ export default function Index() {
     <WelcomeScreen
       onLogoTap={handleLogoTap}
       onGetStarted={() => { setAuthError(""); setScreen("get_started"); }}
-      onSignIn={() => { setAuthError(""); setAuthUsername(""); setAuthCode(""); setAuthPin(""); setScreen("login"); }}
+      onSignIn={() => { setAuthError(""); setAuthUsername(""); setAuthCode(""); setAuthPin(""); setAuthPinConfirm(""); setScreen("login"); }}
       showMasterEntry={showMasterEntry}
       masterInput={masterInput}
       masterError={masterError}

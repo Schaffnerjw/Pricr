@@ -1,6 +1,17 @@
-import { DocPrefs } from "../types";
+import { DocPrefs, PaymentMethods } from "../types";
 
 export function generateCode(): string { return Math.random().toString(36).substring(2,8).toUpperCase(); }
+
+// The built-in payment methods an admin can accept (the "Other" option is free text).
+export const PAYMENT_OPTIONS = ["Credit/Debit Card", "Cash", "Check", "Venmo", "Zelle", "PayPal"] as const;
+
+// Resolve a business's accepted payment methods into a flat list of labels (built-ins + "Other" text).
+export function resolvePaymentMethods(p?: PaymentMethods | null): string[] {
+  if (!p) return [];
+  const list = (p.methods || []).filter(m => m && m !== "Other");
+  if ((p.methods || []).includes("Other") && p.other?.trim()) list.push(p.other.trim());
+  return list;
+}
 
 // Extracts Kit's contextual reply pills from a message: strips the `SUGGESTED_REPLIES: [...]` line
 // and returns the cleaned conversational text plus the parsed options (empty when none).

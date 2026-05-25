@@ -54,7 +54,7 @@ export function KitIntroBubble({ business, onSetupTerms }: {
   };
 
   const trade = business.schema?.trade || "contracting";
-  const KIT_SYSTEM = `You are Kit, a business assistant for "${business.name}", a ${trade} company. You help the owner with terms and conditions, customer follow-ups, pricing questions, objection handling, and general business advice. Keep responses concise and actionable. You know the business uses Pricr for quoting.`;
+  const KIT_SYSTEM = `You are Kit, a business assistant for "${business.name}", a ${trade} company. You help the owner with terms and conditions, client follow-ups, pricing questions, objection handling, and general business advice. Keep responses concise and actionable. You know the business uses Pricr for quoting.`;
 
   useEffect(() => {
     AsyncStorage.getItem(SEEN_KEY).then(v => {
@@ -132,8 +132,8 @@ export function KitIntroBubble({ business, onSetupTerms }: {
         title="Kit"
         subtitle={`Your ${business.name} assistant`}
         systemPrompt={KIT_SYSTEM}
-        opener={`Hey! I'm Kit — here to help with ${business.name}. Ask me to write a customer follow-up, update your terms, talk through pricing, or handle an objection.`}
-        suggestions={["Update my terms & conditions", "Write a follow-up for a customer who went quiet", "Help me handle a price objection"]}
+        opener={`Hey! I'm Kit — here to help with ${business.name}. Ask me to write a client follow-up, update your terms, talk through pricing, or handle an objection.`}
+        suggestions={["Update my terms & conditions", "Write a follow-up for a client who went quiet", "Help me handle a price objection"]}
       />
     </>
   );

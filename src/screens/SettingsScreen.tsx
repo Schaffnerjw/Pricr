@@ -5,10 +5,10 @@ import { Alert, Image, SafeAreaView, ScrollView, Switch, Text, TextInput, Toucha
 import { KitChatModal } from "../components/KitChatModal";
 import { B, DEFAULT_BRAND } from "../constants/brand";
 import { s } from "../styles";
-import { BrandConfig, Business, DocPrefs } from "../types";
+import { BrandConfig, Business, DocPrefs, PaymentMethods, User } from "../types";
 import { isValidHex } from "../utils/color";
 import { getContrastColor, isReadable, ON_PRIMARY } from "../utils/colorUtils";
-import { resolveDocPrefs } from "../utils/helpers";
+import { PAYMENT_OPTIONS, resolveDocPrefs } from "../utils/helpers";
 
 const BG_PRESETS = [
   { label: "Dark Navy", hex: "#0A0E1A" },
@@ -17,11 +17,13 @@ const BG_PRESETS = [
 ];
 
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
-export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToTerms }: {
+export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, scrollToTerms }: {
   business: Business;
-  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs }) => void | Promise<void>;
+  currentUser?: User;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods }) => void | Promise<void>;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
+  onSignOut?: () => void;
   scrollToTerms?: boolean;
 }) {
   const [name, setName] = useState(business.name);
@@ -31,6 +33,8 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
   const [background, setBackground] = useState(business.brand.backgroundColor || DEFAULT_BRAND.backgroundColor);
   const [terms, setTerms] = useState(business.termsAndConditions ?? "");
   const [editingTerms, setEditingTerms] = useState(false);
+  const [payMethods, setPayMethods] = useState<string[]>(business.paymentMethods?.methods ?? []);
+  const [payOther, setPayOther] = useState(business.paymentMethods?.other ?? "");
   const [dp, setDp] = useState<DocPrefs>(resolveDocPrefs(business.docPrefs));
   const [kitOpen, setKitOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -40,10 +44,11 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
 
   const setDocStyle = (style: DocPrefs["style"]) => setDp(resolveDocPrefs({ ...dp, style }));
   const toggleDoc = (key: keyof DocPrefs) => setDp(prev => resolveDocPrefs({ ...prev, style: "custom", [key]: !prev[key as "showLineItems"] }));
+  const togglePay = (m: string) => setPayMethods(prev => prev.includes(m) ? prev.filter(x => x !== m) : [...prev, m]);
   const copyBusinessId = async () => { await Clipboard.setStringAsync(business.code); setCopied(true); setTimeout(() => setCopied(false), 1500); };
 
   const trade = business.schema?.trade || "contracting";
-  const TC_SYSTEM = `You are Kit, helping the owner of "${business.name}" (a ${trade} business) write professional terms and conditions for their customer quotes. Ask these questions ONE at a time, conversationally: (1) what trade/service they provide, (2) whether they carry liability insurance and what it covers, (3) what items or situations they are NOT responsible for, (4) their cancellation policy, (5) any deposit or payment terms. After you have enough, output the finished terms as plain text prefixed EXACTLY with "TERMS_READY:" on its own, then the full terms as short numbered clauses (no markdown headers). Keep it professional, fair, and concise.`;
+  const TC_SYSTEM = `You are Kit, helping the owner of "${business.name}" (a ${trade} business) write professional terms and conditions for their client quotes. Ask these questions ONE at a time, conversationally: (1) what trade/service they provide, (2) whether they carry liability insurance and what it covers, (3) what items or situations they are NOT responsible for, (4) their cancellation policy, (5) any deposit or payment terms. After you have enough, output the finished terms as plain text prefixed EXACTLY with "TERMS_READY:" on its own, then the full terms as short numbered clauses (no markdown headers). Keep it professional, fair, and concise.`;
 
   useEffect(() => {
     if (scrollToTerms) setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, termsY.current - 12), animated: true }), 350);
@@ -71,7 +76,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
   const resetDefaults = () => { setPrimary(DEFAULT_BRAND.primaryColor); setSecondary(DEFAULT_BRAND.secondaryColor); setBackground(DEFAULT_BRAND.backgroundColor); };
   const save = async () => {
     try {
-      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp });
+      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined } });
       setEditingTerms(false);
       setToast(true);
       setTimeout(() => setToast(false), 1600);
@@ -101,7 +106,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
         <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: 96 }} keyboardShouldPersistTaps="handled">
         {/* Live preview */}
         <View style={{ gap: 8 }}>
           <Text style={s.sectionTitle}>LIVE PREVIEW</Text>
@@ -201,7 +206,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
             <View style={{ borderWidth: 1, borderColor: B.border, borderRadius: 12, padding: 14, maxHeight: 220 }}>
               <ScrollView nestedScrollEnabled>
                 <Text style={{ color: terms.trim() ? B.gray1 : B.gray3, fontSize: 13, lineHeight: 20, fontFamily: "DMSans_400Regular" }}>
-                  {terms.trim() || "No terms set yet. Add them so customers agree before signing."}
+                  {terms.trim() || "No terms set yet. Add them so clients agree before signing."}
                 </Text>
               </ScrollView>
             </View>
@@ -220,7 +225,7 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
         {/* Quote Document — control what the customer sees on the quote (PDF + in-app). */}
         <View style={{ gap: 12 }}>
           <Text style={s.sectionTitle}>QUOTE DOCUMENT</Text>
-          <Text style={s.formHint}>Choose what your customers see on the quote.</Text>
+          <Text style={s.formHint}>Choose what your clients see on the quote.</Text>
           <View style={{ flexDirection: "row", gap: 8 }}>
             {(["detailed", "summary", "custom"] as const).map(st => {
               const active = dp.style === st;
@@ -243,13 +248,58 @@ export function SettingsScreen({ business, onSave, onBack, onPickLogo, scrollToT
             </View>
           ))}
           <Text style={{ color: B.muted, fontSize: 12, fontFamily: "DMSans_400Regular" }}>
-            {dp.style === "summary" ? "Summary: just business, customer, total, deposit & signature." : dp.style === "detailed" ? "Detailed: full line items, pricing & breakdown." : "Custom: your toggle choices above."}
+            {dp.style === "summary" ? "Summary: just business, client, total, deposit & signature." : dp.style === "detailed" ? "Detailed: full line items, pricing & breakdown." : "Custom: your toggle choices above."}
           </Text>
+        </View>
+
+        {/* Payment Methods — admin sets accepted methods once; shown on every quote (FIX 11). */}
+        <View style={{ gap: 12 }}>
+          <Text style={s.sectionTitle}>PAYMENT METHODS</Text>
+          <Text style={s.formHint}>What you accept. Shown on every quote, the signing page, and the PDF.</Text>
+          {PAYMENT_OPTIONS.map(m => {
+            const on = payMethods.includes(m);
+            return (
+              <TouchableOpacity key={m} onPress={() => togglePay(m)} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 6 }}>
+                <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: on ? pc : B.gray3, backgroundColor: on ? pc : "transparent", alignItems: "center", justifyContent: "center" }}>
+                  {on && <Feather name="check" size={15} color={ON_PRIMARY} />}
+                </View>
+                <Text style={{ color: B.gray1, fontSize: 15, fontFamily: "DMSans_400Regular" }}>{m}</Text>
+              </TouchableOpacity>
+            );
+          })}
+          {(() => {
+            const on = payMethods.includes("Other");
+            return (
+              <>
+                <TouchableOpacity onPress={() => togglePay("Other")} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 6 }}>
+                  <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: on ? pc : B.gray3, backgroundColor: on ? pc : "transparent", alignItems: "center", justifyContent: "center" }}>
+                    {on && <Feather name="check" size={15} color={ON_PRIMARY} />}
+                  </View>
+                  <Text style={{ color: B.gray1, fontSize: 15, fontFamily: "DMSans_400Regular" }}>Other</Text>
+                </TouchableOpacity>
+                {on && (
+                  <TextInput style={s.input} value={payOther} onChangeText={setPayOther} placeholder="e.g. Apple Pay, Financing" placeholderTextColor={B.gray3} />
+                )}
+              </>
+            );
+          })()}
         </View>
 
         <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={onSavePress}>
           <Text style={[s.btnText, { color: ON_PRIMARY }]}>Save</Text>
         </TouchableOpacity>
+
+        {/* Account — signed-in indicator + sign out at the very bottom (FIX 3 / FIX 8). */}
+        {onSignOut && (
+          <View style={{ gap: 10, alignItems: "center", marginTop: 8 }}>
+            {currentUser?.username ? (
+              <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Signed in as {currentUser.username}</Text>
+            ) : null}
+            <TouchableOpacity onPress={onSignOut} style={{ paddingVertical: 8 }}>
+              <Text style={{ color: B.red, fontSize: 15, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>Sign out of {business.name}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
 
       <KitChatModal

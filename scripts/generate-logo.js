@@ -48,13 +48,13 @@ function render(width, height, frac, outRel) {
 
 // [width, height, wordmark fraction of width, output path]
 const TARGETS = [
-  [1024, 1024, 0.5, "assets/images/icon.png"],          // app / store icon
-  [1024, 1024, 0.5, "assets/images/splash-icon.png"],   // native splash (expo-splash-screen)
-  [2048, 2048, 0.45, "assets/images/splash.png"],        // 2048 splash asset
-  [64, 64, 0.74, "assets/images/favicon.png"],           // browser tab
+  [1024, 1024, 0.63, "assets/images/icon.png"],          // app / store icon — wordmark fills the canvas
+  [1024, 1024, 0.63, "assets/images/splash-icon.png"],   // native splash (expo-splash-screen)
+  [2048, 2048, 0.5, "assets/images/splash.png"],         // 2048 splash asset
+  [64, 64, 0.78, "assets/images/favicon.png"],           // browser tab
   [400, 120, 0.8, "assets/images/logo-horizontal.png"],  // app nav header
-  [192, 192, 0.6, "public/icons/icon-192.png"],          // PWA manifest
-  [512, 512, 0.55, "public/icons/icon-512.png"],         // PWA manifest
+  [192, 192, 0.64, "public/icons/icon-192.png"],         // PWA manifest
+  [512, 512, 0.63, "public/icons/icon-512.png"],         // PWA manifest
 ];
 
 for (const [w, h, frac, out] of TARGETS) render(w, h, frac, out);

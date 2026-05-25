@@ -71,6 +71,13 @@ export async function getCurrentUser(): Promise<User|null> { try { const r=await
 export async function saveCurrentUser(u: User): Promise<void> { await AsyncStorage.setItem(KEYS.currentUser,JSON.stringify(u)); }
 export async function clearCurrentUser(): Promise<void> { await AsyncStorage.removeItem(KEYS.currentUser); }
 
+// ── "stay signed in on this device" (FIX 8) ────────────────────────────────────
+// Default ON. When OFF, checkSession() drops the persisted session on the next launch so the app
+// opens to the welcome screen instead of auto-resuming. AsyncStorage only — no Supabase auth change.
+const STAY_SIGNED_IN_KEY = "pricr_stay_signed_in";
+export async function setStaySignedIn(v: boolean): Promise<void> { try { await AsyncStorage.setItem(STAY_SIGNED_IN_KEY, v ? "1" : "0"); } catch { } }
+export async function getStaySignedIn(): Promise<boolean> { try { return (await AsyncStorage.getItem(STAY_SIGNED_IN_KEY)) !== "0"; } catch { return true; } }
+
 // ── businesses ────────────────────────────────────────────────────────────────
 export async function getBusiness(code: string): Promise<Business|null> {
   if (!isCloudEnabled(code)) { try { const r=await AsyncStorage.getItem(KEYS.business(code)); return r?JSON.parse(r):null; } catch { return null; } }

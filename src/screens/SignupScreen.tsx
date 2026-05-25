@@ -1,16 +1,16 @@
 import { Feather } from "@expo/vector-icons";
 import { KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
-import { PinKeypad } from "../components/PinKeypad";
+import { PasswordField } from "../components/PasswordField";
 import { B } from "../constants/brand";
 import { s } from "../styles";
 
-export function SignupScreen({ bizName, name, username, pin, error, onBizNameChange, onNameChange, onUsernameChange, onPinChange, onBack, onContinue }: {
-  bizName: string; name: string; username: string; pin: string; error: string;
-  onBizNameChange: (v: string) => void; onNameChange: (v: string) => void; onUsernameChange: (v: string) => void; onPinChange: (v: string) => void;
+export function SignupScreen({ bizName, name, username, pin, confirm, error, onBizNameChange, onNameChange, onUsernameChange, onPinChange, onConfirmChange, onBack, onContinue }: {
+  bizName: string; name: string; username: string; pin: string; confirm: string; error: string;
+  onBizNameChange: (v: string) => void; onNameChange: (v: string) => void; onUsernameChange: (v: string) => void; onPinChange: (v: string) => void; onConfirmChange: (v: string) => void;
   onBack: () => void; onContinue: () => void;
 }) {
-  const disabled = !bizName || !name || !username.trim() || pin.length < 4;
+  const disabled = !bizName || !name || !username.trim() || pin.length < 8 || pin !== confirm;
   return (
     <SafeAreaView style={s.container}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -36,10 +36,14 @@ export function SignupScreen({ bizName, name, username, pin, error, onBizNameCha
             <Text style={s.formHint}>You’ll use this to sign in.</Text>
             <TextInput style={s.input} placeholder="Choose a username" placeholderTextColor={B.gray3} value={username} onChangeText={onUsernameChange} autoCapitalize="none" autoCorrect={false} />
           </View>
-          <View style={{ gap: 10, marginBottom: 24 }}>
-            <Text style={s.formLabel}>Create a PIN</Text>
-            <Text style={s.formHint}>4–6 digits. You’ll enter this to sign in — keep it safe.</Text>
-            <PinKeypad value={pin} onChange={onPinChange} />
+          <View style={{ gap: 6, marginBottom: 16 }}>
+            <Text style={s.formLabel}>Create a Password</Text>
+            <Text style={s.formHint}>At least 8 characters. You’ll enter this to sign in — keep it safe.</Text>
+            <PasswordField value={pin} onChange={onPinChange} placeholder="Create a password" />
+          </View>
+          <View style={{ gap: 6, marginBottom: 24 }}>
+            <Text style={s.formLabel}>Confirm Password</Text>
+            <PasswordField value={confirm} onChange={onConfirmChange} placeholder="Re-enter your password" onSubmitEditing={() => { if (!disabled) onContinue(); }} />
           </View>
 
           {error ? <Text style={{ color: B.red, fontSize: 14, marginBottom: 8, fontFamily: "DMSans_400Regular" }}>{error}</Text> : null}

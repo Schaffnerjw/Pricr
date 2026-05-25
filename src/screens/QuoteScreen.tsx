@@ -16,7 +16,7 @@ import { addQuote, attachQuotePresentation, getQuoteSigningToken, getQuotes, mar
 import { s } from "../styles";
 import { Business, QuotePresentation, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
-import { formatMoney } from "../utils/helpers";
+import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -112,7 +112,39 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
     if (isFirstReal) { setShowCelebration(true); setTimeout(() => setShowCelebration(false), 2000); }
+    // Flag the business as having generated a quote so the dashboard hides the onboarding card (FIX 19).
+    if (isFirstReal && !business.hasGeneratedQuote) { try { await saveBusiness({ ...business, hasGeneratedQuote: true }); } catch { } }
     return quote.id;
+  };
+
+  // Reset every field for a fresh quote (FIX 17). Mirrors the initial-load defaults.
+  const resetQuote = () => {
+    const smart = smartDefaults(schema, history);
+    const defaults: Record<string, any> = {};
+    for (const f of schema?.fields ?? []) {
+      if (f.type === "number" || f.type === "area") defaults[f.id] = 0;
+      else if (f.type === "toggle") defaults[f.id] = false;
+      else if (f.type === "selector" && f.options?.length) defaults[f.id] = smart[f.id] ?? f.options[0];
+    }
+    setCustomerName("");
+    setFieldValues(defaults);
+    setSelectedAddOns([]);
+    setDiscountOpen(false); setDiscountValue(""); setDiscountReason("");
+    setLastSavedId(null); setSaved(false);
+    setShowTotal(false);
+  };
+
+  // "New Quote" — confirm first if the current quote has unsaved work.
+  const handleNewQuote = () => {
+    const hasUnsaved = !lastSavedId && (!!customerName.trim() || t.total > 0);
+    if (hasUnsaved) {
+      Alert.alert("Start a new quote?", "This quote hasn't been saved yet. Starting fresh will clear it.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Start new", style: "destructive", onPress: resetQuote },
+      ]);
+    } else {
+      resetQuote();
+    }
   };
 
   // Save button handler: surfaces failures instead of silently showing "Saved".
@@ -286,16 +318,19 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       } />
 
       {isDemoMode && (
-        <View style={s.demoBanner}>
-          <Feather name="radio" size={13} color={B.midnight} />
-          <Text style={s.demoBannerText}>DEMO MODE — changes are live</Text>
+        <View style={{ alignItems: "flex-end", paddingHorizontal: 20, paddingTop: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 12 }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: primaryColor }} />
+            <Text style={{ color: pal.textMuted, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Demo Mode</Text>
+          </View>
         </View>
       )}
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: 200 }} keyboardShouldPersistTaps="handled">
         <View style={{ gap: 6 }}>
-          <Text style={[s.fieldLabel, { color: pal.textMuted }]}>CUSTOMER NAME</Text>
-          <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Customer full name" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
+          <Text style={[s.fieldLabel, { color: pal.textMuted }]}>CLIENT NAME</Text>
+          <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Who is this quote for?" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
+          {!customerName.trim() && <Text style={[s.qHint, { color: pal.textMuted }]}>Optional, but adding a name personalizes the quote and PDF.</Text>}
         </View>
 
         {!ready ? (
@@ -399,7 +434,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </View>
 
       {showTotal && (
-        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} />
+        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
       )}
 
       {isAdmin && !showTotal && (

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { s } from "../styles";
+import { ON_PRIMARY } from "../utils/colorUtils";
 import { parseSuggestedReplies } from "../utils/helpers";
 import { TypingDots } from "./TypingDots";
 
@@ -39,7 +40,7 @@ export function KitAgentSheet({ primaryColor, messages, input, loading, onInputC
       <View style={s.kitSheetHandle} />
       <View style={s.kitSheetHeader}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={s.kitAvatarText}>K</Text></View>
+          <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={[s.kitAvatarText, { color: ON_PRIMARY }]}>K</Text></View>
           <View>
             <Text style={s.kitSheetTitle}>Kit</Text>
             <Text style={s.kitSheetSub}>Ask me anything or tell me what to change</Text>
@@ -60,7 +61,7 @@ export function KitAgentSheet({ primaryColor, messages, input, loading, onInputC
         )}
         {messages.map((msg, i) => (
           <View key={i} style={[s.bubble, msg.role === "user" ? [s.bubbleUser, { backgroundColor: primaryColor }] : s.bubbleKit]}>
-            <Text style={[s.bubbleText, msg.role === "user" && { color: B.white }]}>{clean(msg.content)}</Text>
+            <Text style={[s.bubbleText, msg.role === "user" && { color: ON_PRIMARY }]}>{clean(msg.content)}</Text>
           </View>
         ))}
         {loading && <View style={s.bubbleKit}><TypingDots color={B.gray2} /></View>}

@@ -7,12 +7,13 @@ import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s } from "../styles";
 import { getContrastColor, ON_PRIMARY } from "../utils/colorUtils";
 
-export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, chips, onInputChange, onSend, onQuickReply, scrollRef }: {
+export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, chips, onInputChange, onSend, onQuickReply, scrollRef, isReconfiguring, onCancel }: {
   primaryColor: string; backgroundColor?: string;
   messages: { role: "user" | "assistant"; content: string }[];
   input: string; loading: boolean; progress: number; chips: string[];
   onInputChange: (v: string) => void; onSend: () => void; onQuickReply: (text: string) => void;
   scrollRef: RefObject<ScrollView | null>;
+  isReconfiguring?: boolean; onCancel?: () => void;
 }) {
   const reduceMotion = useReduceMotion();
   const fill = useRef(new Animated.Value(progress)).current;
@@ -35,6 +36,13 @@ export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, 
   return (
     <SafeAreaView style={[s.container, backgroundColor ? { backgroundColor } : null]}>
       <StatusBar barStyle="light-content" />
+      {/* Reconfigure: a prominent cancel back to the dashboard (no changes made). Hidden on first-time onboarding. */}
+      {isReconfiguring && onCancel && (
+        <TouchableOpacity onPress={onCancel} style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4, alignSelf: "flex-start" }}>
+          <Feather name="chevron-left" size={20} color={primaryColor} />
+          <Text style={{ color: primaryColor, fontSize: 16, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Cancel</Text>
+        </TouchableOpacity>
+      )}
       {/* Onboarding progress bar */}
       <View style={{ height: 3, backgroundColor: B.border }}>
         <Animated.View style={{ height: 3, backgroundColor: primaryColor, width: fill.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) }} />

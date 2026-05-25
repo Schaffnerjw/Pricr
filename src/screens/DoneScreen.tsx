@@ -6,37 +6,75 @@ import { KitIntroBubble } from "../components/KitIntroBubble";
 import { B } from "../constants/brand";
 import { getQuotes } from "../storage";
 import { s } from "../styles";
-import { Business, User } from "../types";
+import { Business, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
-import { monthlyQuoteTotal } from "../utils/quote";
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, onSignOut, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms }: {
-  business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean;
-  onSignOut: () => void; onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
+const DAY = 24 * 60 * 60 * 1000;
+
+interface DashStats { realCount: number; monthCount: number; weekCount: number; accepted: number; pending: number; lastDaysAgo: number | null; }
+
+function computeStats(qs: SavedQuote[]): DashStats {
+  const now = new Date();
+  const real = (qs || []).filter(q => !q.isSample);
+  const monthCount = real.filter(q => { const d = new Date(q.timestamp); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); }).length;
+  const weekCount = real.filter(q => Date.now() - q.timestamp < 7 * DAY).length;
+  const accepted = real.filter(q => q.status === "won").length;
+  const pending = real.filter(q => !q.status || q.status === "open").length;
+  const lastTs = real.reduce((m, q) => Math.max(m, q.timestamp), 0);
+  const lastDaysAgo = lastTs > 0 ? Math.floor((Date.now() - lastTs) / DAY) : null;
+  return { realCount: real.length, monthCount, weekCount, accepted, pending, lastDaysAgo };
+}
+
+// Greeting subtext that reflects real quote activity (FIX 24).
+function subtextFor(st: DashStats | null): string {
+  if (!st || st.realCount === 0) return "Ready to build your first quote.";
+  if (st.accepted > 0) return `${st.accepted} quote${st.accepted !== 1 ? "s" : ""} accepted this month. Great work.`;
+  if (st.weekCount > 0) return `You've quoted ${st.weekCount} job${st.weekCount !== 1 ? "s" : ""} this week. Keep closing.`;
+  if (st.lastDaysAgo !== null && st.lastDaysAgo > 7) return `Last quote was ${st.lastDaysAgo} days ago — time to close some jobs.`;
+  return "You're all set — let's close some jobs.";
+}
+
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms }: {
+  business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
+  onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
   const onPrimary = ON_PRIMARY; // brand look: always white on the primary color
   const bg = pal.background;
-  const [monthTotal, setMonthTotal] = useState<number | null>(null);
-  const [allTimeCount, setAllTimeCount] = useState<number | null>(null);
+  const [stats, setStats] = useState<DashStats | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(true);
 
   useEffect(() => {
     let mounted = true;
-    getQuotes(business.code).then(qs => { if (mounted) { setMonthTotal(monthlyQuoteTotal(qs)); setAllTimeCount(qs.filter(q => !q.isSample).length); } });
+    getQuotes(business.code).then(qs => { if (mounted) setStats(computeStats(qs)); });
     return () => { mounted = false; };
   }, [business.code]);
+
+  // Onboarding summary card: visible only until the first quote exists, then hidden permanently (FIX 19).
+  const showOnboardingCard = !!business.schema && !business.hasGeneratedQuote && (stats?.realCount ?? 0) === 0;
+  const hasQuotes = (stats?.realCount ?? 0) > 0;
+
+  const StatCard = ({ label, value }: { label: string; value: number }) => (
+    <View style={{ flex: 1, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 14, paddingVertical: 16, paddingHorizontal: 12, gap: 4, alignItems: "center" }}>
+      <Text style={{ fontSize: 26, fontWeight: "800", color: primaryColor, fontFamily: "Syne_800ExtraBold" }}>{value}</Text>
+      <Text style={{ fontSize: 11, fontWeight: "700", color: pal.textMuted, letterSpacing: 0.5, fontFamily: "DMSans_700Bold", textAlign: "center" }}>{label}</Text>
+    </View>
+  );
 
   return (
     <SafeAreaView style={[s.container, { backgroundColor: bg }]}>
       <BrandHeader business={business} right={
-        <TouchableOpacity onPress={onSignOut}>
-          <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Sign out</Text>
-        </TouchableOpacity>
+        isDemoMode ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 12 }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: primaryColor }} />
+            <Text style={{ color: pal.textMuted, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Demo Mode</Text>
+          </View>
+        ) : undefined
       } />
-      <ScrollView contentContainerStyle={{ padding: 24, gap: 16, paddingTop: 24 }}>
+      <ScrollView contentContainerStyle={{ padding: 24, gap: 16, paddingTop: 24, paddingBottom: 96 }}>
         {pal.adjusted && (
           <TouchableOpacity style={[s.brandBanner, { borderColor: primaryColor + "60" }]} onPress={onOpenSettings}>
             <Feather name="alert-triangle" size={18} color={primaryColor} />
@@ -44,9 +82,11 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
             <Feather name="chevron-right" size={18} color={pal.textMuted} />
           </TouchableOpacity>
         )}
+
+        {/* Greeting + dynamic subtext */}
         <View>
           <Text style={[s.h1, { color: pal.text }]}>Hey, {currentUser.name}.</Text>
-          <Text style={[s.body, { marginTop: 4, color: pal.textMuted }]}>{business.name} is configured and ready to quote.</Text>
+          <Text style={[s.body, { marginTop: 4, color: pal.textMuted }]}>{subtextFor(stats)}</Text>
         </View>
 
         {isAdmin && business.brandConfigured === false && (
@@ -75,20 +115,17 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
           </View>
         )}
 
-        {business.kitSummary && (
-          <View style={[s.configCard, { backgroundColor: pal.surface, borderColor: pal.border, flexDirection: "row", gap: 12, alignItems: "flex-start" }]}>
-            <View style={[s.kitAvatar, { backgroundColor: primaryColor }]}><Text style={[s.kitAvatarText, { color: onPrimary }]}>K</Text></View>
-            <Text style={[s.body, { flex: 1, color: pal.text }]}>{business.kitSummary}</Text>
-          </View>
-        )}
-
-        {business.schema && (
-          <View style={[s.configCard, { backgroundColor: pal.surface, borderColor: pal.border }]}>
-            {[
+        {/* Onboarding summary — collapsible, only before the first quote (no deposit row; FIX 18/19/21) */}
+        {showOnboardingCard && business.schema && (
+          <View style={[s.configCard, { backgroundColor: pal.surface, borderColor: pal.border, gap: summaryOpen ? 8 : 0 }]}>
+            <TouchableOpacity onPress={() => setSummaryOpen(o => !o)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={{ fontSize: 14, fontWeight: "800", color: pal.text, fontFamily: "Syne_700Bold" }}>What Kit set up for you</Text>
+              <Feather name={summaryOpen ? "chevron-up" : "chevron-down"} size={20} color={pal.textMuted} />
+            </TouchableOpacity>
+            {summaryOpen && [
               ["TRADE", business.schema.trade],
               ["CUSTOM INPUTS", `${business.schema.fields?.length} field${business.schema.fields?.length !== 1 ? "s" : ""} built for your trade`],
               ["ADD-ONS", business.schema.addOns?.length > 0 ? business.schema.addOns.map((a: any) => a.label).join(", ") : "None set up"],
-              ...(business.schema.pricing?.depositPercent > 0 ? [["DEPOSIT", `${business.schema.pricing.depositPercent}% upfront`]] : []),
             ].map(([label, value], i, arr) => (
               <View key={label}>
                 <View style={{ gap: 4, paddingVertical: 4 }}>
@@ -101,42 +138,57 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
           </View>
         )}
 
-        {/* Monthly quoted total */}
-        <View style={[s.infoCard, { backgroundColor: pal.surface, borderColor: pal.border, gap: 4 }]}>
-          <Text style={[s.infoLabel, { color: pal.textMuted }]}>QUOTED THIS MONTH</Text>
-          {monthTotal === null ? (
-            <Text style={[s.infoCode, { color: pal.textMuted, fontSize: 20 }]}>—</Text>
-          ) : monthTotal > 0 ? (
-            <Text style={[s.infoCode, { color: primaryColor, fontSize: 28 }]}>${monthTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</Text>
-          ) : (
-            <Text style={[s.configValue, { color: pal.textMuted }]}>No quotes yet this month.</Text>
-          )}
-          {allTimeCount !== null && <Text style={[s.configValue, { color: pal.textMuted, marginTop: 6 }]}>Total quotes all time: {allTimeCount}</Text>}
-        </View>
+        {/* Stats — hidden entirely at 0 quotes; replaced with an encouragement that opens the tool (FIX 20) */}
+        {hasQuotes ? (
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <StatCard label="THIS MONTH" value={stats!.monthCount} />
+            <StatCard label="ACCEPTED" value={stats!.accepted} />
+            <StatCard label="PENDING" value={stats!.pending} />
+          </View>
+        ) : !showOnboardingCard && (
+          <TouchableOpacity onPress={onOpenQuoteTool} style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 }}>
+            <Text style={{ color: primaryColor, fontSize: 16, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Ready to build your first quote</Text>
+            <Feather name="arrow-right" size={18} color={primaryColor} />
+          </TouchableOpacity>
+        )}
 
+        {/* Primary CTA */}
         <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={onOpenQuoteTool}>
           <Text style={[s.btnText, { color: onPrimary }]}>Open My Quote Tool</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={s.btnSecondary} onPress={onQuoteHistory}>
-          <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Quote History</Text>
-        </TouchableOpacity>
-        {isAdmin && (
-          <>
-            {onQuotePipeline && (
-              <TouchableOpacity style={s.btnSecondary} onPress={onQuotePipeline}>
-                <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Quote Pipeline</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={s.btnSecondary} onPress={onManageTeam}>
+
+        {/* Secondary actions — medium, outlined */}
+        <View style={{ gap: 12 }}>
+          {hasQuotes && (
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: secondaryColor + "80" }]} onPress={onOpenQuoteTool}>
+              <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>New Quote</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={[s.btnSecondary, { borderColor: secondaryColor + "80" }]} onPress={onQuoteHistory}>
+            <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Quote History</Text>
+          </TouchableOpacity>
+          {isAdmin && onQuotePipeline && (
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: secondaryColor + "80" }]} onPress={onQuotePipeline}>
+              <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Quote Pipeline</Text>
+            </TouchableOpacity>
+          )}
+          {isAdmin && (
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: secondaryColor + "80" }]} onPress={onManageTeam}>
               <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Manage Team</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={s.btnSecondary} onPress={onReconfigure}>
-              <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Reconfigure with Kit</Text>
+          )}
+        </View>
+
+        {/* Admin-only tertiary — small text links */}
+        {isAdmin && (
+          <View style={{ flexDirection: "row", justifyContent: "center", gap: 24, marginTop: 4 }}>
+            <TouchableOpacity onPress={onReconfigure}>
+              <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Reconfigure with Kit</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={s.btnSecondary} onPress={onOpenSettings}>
-              <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>Settings</Text>
+            <TouchableOpacity onPress={onOpenSettings}>
+              <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Settings</Text>
             </TouchableOpacity>
-          </>
+          </View>
         )}
       </ScrollView>
 

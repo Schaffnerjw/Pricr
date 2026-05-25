@@ -1,13 +1,15 @@
+import { Feather } from "@expo/vector-icons";
 import { Image, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StatusBar, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { s } from "../styles";
 import { Business } from "../types";
 
-export function SetupScreen({ business, primaryColor, services, products, pricing, onServicesChange, onProductsChange, onPricingChange, onContinue }: {
+export function SetupScreen({ business, primaryColor, services, products, pricing, onServicesChange, onProductsChange, onPricingChange, onContinue, isReconfiguring, onCancel }: {
   business: Business | null; primaryColor: string;
   services: string; products: string; pricing: string;
   onServicesChange: (v: string) => void; onProductsChange: (v: string) => void; onPricingChange: (v: string) => void;
   onContinue: () => void;
+  isReconfiguring?: boolean; onCancel?: () => void;
 }) {
   const fields = [
     { label: "What services do you offer?", hint: "List everything you quote on.", value: services, setter: onServicesChange, placeholder: "Walk us through what you do..." },
@@ -19,6 +21,12 @@ export function SetupScreen({ business, primaryColor, services, products, pricin
       <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={{ padding: 24, paddingTop: 48, gap: 8 }}>
+          {isReconfiguring && onCancel && (
+            <TouchableOpacity onPress={onCancel} style={{ flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 12, alignSelf: "flex-start" }}>
+              <Feather name="chevron-left" size={20} color={primaryColor} />
+              <Text style={{ color: primaryColor, fontSize: 16, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Cancel</Text>
+            </TouchableOpacity>
+          )}
           {business?.brand?.logoUri ? (
             <Image source={{ uri: business.brand.logoUri }} style={{ height: 48, width: 160, marginBottom: 8 }} resizeMode="contain" />
           ) : (

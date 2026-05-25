@@ -89,7 +89,7 @@ export function HistoryScreen({ business, currentUser, onBack, onNewQuote }: {
           {/* Search */}
           <View style={[s.histSearch, { backgroundColor: pal.surface, borderColor: pal.border }]}>
             <Feather name="search" size={16} color={pal.textMuted} />
-            <TextInput style={[s.histSearchInput, { color: pal.text }]} placeholder="Search by customer name" placeholderTextColor={pal.textMuted} value={query} onChangeText={setQuery} autoCapitalize="none" />
+            <TextInput style={[s.histSearchInput, { color: pal.text }]} placeholder="Search by client name" placeholderTextColor={pal.textMuted} value={query} onChangeText={setQuery} autoCapitalize="none" />
             {query ? <TouchableOpacity onPress={() => setQuery("")}><Feather name="x" size={16} color={pal.textMuted} /></TouchableOpacity> : null}
           </View>
 
