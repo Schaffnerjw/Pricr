@@ -61,6 +61,16 @@ async function loadSigningContext(token) {
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const money = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('en-US');
+// Resolve accepted payment methods: prefer the resolved labels on the quote presentation, else
+// derive from the business config ({ methods, other }) — mirrors resolvePaymentMethods in the app.
+function resolvePaymentMethods(pres, business) {
+  if (Array.isArray(pres.paymentMethods) && pres.paymentMethods.length) return pres.paymentMethods;
+  const pm = business && business.config && business.config.paymentMethods;
+  if (!pm || !Array.isArray(pm.methods)) return [];
+  const list = pm.methods.filter((m) => m && m !== 'Other');
+  if (pm.methods.indexOf('Other') !== -1 && pm.other && pm.other.trim()) list.push(pm.other.trim());
+  return list;
+}
 // Safe to embed inside a <script> tag (prevents </script> breakouts).
 const jsonForScript = (obj) => JSON.stringify(obj).replace(/</g, '\\u003c');
 
@@ -87,6 +97,7 @@ function pageShell(title, bodyHtml) {
   .dep{display:flex;justify-content:space-between;align-items:center;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:14px 16px;margin-top:16px;}
   .dep .dl{font-weight:700;font-size:14px;} .dep .ds{color:#475569;font-size:12px;} .dep .da{font-size:20px;font-weight:800;color:var(--accent,#2979FF);}
   .sec{margin-top:22px;} .lbl{font-size:13px;font-weight:700;color:#1E2640;margin-bottom:8px;}
+  .pay{font-size:14px;color:#1E2640;}
   .terms{max-height:170px;overflow-y:auto;border:1px solid #E2E8F0;border-radius:10px;padding:12px;font-size:12.5px;color:#1E2640;white-space:pre-wrap;}
   .chk{display:flex;align-items:flex-start;gap:10px;margin-top:12px;cursor:pointer;font-size:14px;}
   .chk input{width:22px;height:22px;margin-top:1px;accent-color:var(--accent,#2979FF);}
@@ -124,6 +135,10 @@ function signingPage(token, quote, business) {
   const dep = (pres.depositPct > 0 && total > 0)
     ? `<div class="dep"><div><div class="dl">${esc(pres.depositPct)}% Deposit Due Today</div><div class="ds">Balance of ${money(pres.balanceDue)} due upon completion</div></div><div class="da">${money(pres.deposit)}</div></div>`
     : '';
+  const payMethods = resolvePaymentMethods(pres, business);
+  const paySec = payMethods.length
+    ? `<div class="sec"><div class="lbl">Payment Methods Accepted</div><div class="pay">${esc(payMethods.join(', '))}</div></div>`
+    : '';
   const header = (logo ? `<img src="${esc(logo)}" alt="${esc(bizName)}"/>` : '') + `<div class="biz">${esc(bizName)}</div>`;
   const termsSec = terms.trim()
     ? `<div class="sec"><div class="lbl">Terms &amp; Conditions</div><div class="terms">${esc(terms)}</div>
@@ -139,6 +154,7 @@ function signingPage(token, quote, business) {
   ${rows}
   <div class="total"><span class="l">Total</span><span class="a">${money(total)}</span></div>
   ${dep}
+  ${paySec}
   ${termsSec}
   <div class="sec">
     <div class="lbl">Your Signature</div>
