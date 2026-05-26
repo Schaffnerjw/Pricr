@@ -3,7 +3,8 @@ import * as Haptics from "expo-haptics";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Image, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { DemoPickerModal } from "../components/DemoPickerModal";
-import { B, MASTER_CODE, SIGN_BASE } from "../constants/brand";
+import { B, SIGN_BASE } from "../constants/brand";
+import { masterAuthHeaders } from "../utils/masterAuth";
 import { s } from "../styles";
 import { Business, DemoBusiness } from "../types";
 import { formatDate } from "../utils/helpers";
@@ -19,7 +20,7 @@ const confirmAction = (title: string, msg: string, onYes: () => void) => {
 async function adminFetch(action: string, body?: any): Promise<any> {
   const res = await fetch(`${SIGN_BASE}/admin/${action}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-master-code": MASTER_CODE },
+    headers: { "Content-Type": "application/json", ...masterAuthHeaders() },
     body: JSON.stringify(body || {}),
   });
   const json = await res.json();
@@ -114,7 +115,7 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
 
   const exportCsv = async () => {
     try {
-      const res = await fetch(`${SIGN_BASE}/admin/export`, { method: "POST", headers: { "x-master-code": MASTER_CODE } });
+      const res = await fetch(`${SIGN_BASE}/admin/export`, { method: "POST", headers: { ...masterAuthHeaders() } });
       const csv = await res.text();
       if (Platform.OS === "web") {
         const blob = new Blob([csv], { type: "text/csv" });

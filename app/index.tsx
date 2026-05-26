@@ -5,7 +5,7 @@ import { BrandHeader } from "../src/components/BrandHeader";
 import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
 import { GetStartedScreen } from "../src/screens/GetStartedScreen";
-import { API_URL, B, DEFAULT_BRAND, MASTER_CODE } from "../src/constants/brand";
+import { API_URL, B, DEFAULT_BRAND } from "../src/constants/brand";
 import { KIT_CONVERSATION_PROMPT, SCHEMA_BUILDER_PROMPT } from "../src/constants/prompts";
 import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { LoginScreen } from "../src/screens/LoginScreen";
@@ -35,6 +35,8 @@ import { BrandConfig, Business, DemoBusiness, QuoteSchema, SavedQuote, Screen, U
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
+import { logger } from "../src/utils/logger";
+import { authenticateMaster } from "../src/utils/masterAuth";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
 import { applySchemaUpdate, BLANK_SCHEMA, extractFromMessage, isBlankSchema, quoteSchemaFromWizard, summarizeUpdate, updateMeaningful, WizardData } from "../src/utils/schemaExtractor";
 import { validateSchema, ValidationResult } from "../src/utils/validateSchema";
@@ -110,7 +112,7 @@ export default function Index() {
   const [importText, setImportText] = useState(""); // preserved across import retries
   const [importResume, setImportResume] = useState(false); // resume an in-progress import
   const [impersonated, setImpersonated] = useState<{ business: Business; quotes: SavedQuote[] } | null>(null); // super-admin "view as"
-  const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); console.log("[Schema] updated:", JSON.stringify(next)); };
+  const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); logger.debug("[Schema] updated"); };
   const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
 
   useEffect(() => { setHydrated(true); runStartupMigrations().then(checkSession); }, []);
@@ -163,7 +165,10 @@ export default function Index() {
   };
 
   const handleMasterLogin = async () => {
-    if (masterInput === MASTER_CODE) {
+    // The code is verified by the proxy (timing-safe), which returns a short-lived in-memory token.
+    // Never compared client-side; never persisted.
+    const ok = await authenticateMaster(masterInput);
+    if (ok) {
       const superUser: User = { id: "superadmin_christian", name: "Christian Schaffner", role: "superadmin", businessCode: "PRICR_MASTER" };
       await saveCurrentUser(superUser);
       setCurrentUser(superUser);
@@ -221,22 +226,19 @@ export default function Index() {
     setAuthError("");
     try {
       let code: string | null;
+      logger.debug("[Login] attempting login...");
       if (mode === "username") {
-        console.log("[Login] username entered:", authUsername.trim().toLowerCase());
         if (!authUsername.trim() || !authPin) { setAuthError("Enter your username and password."); return; }
-        console.log("[Login] calling resolve_business_code RPC");
         code = await resolveBusinessCodeByUsername(authUsername);
-        console.log("[Login] RPC result:", code);
         if (!code) { setAuthError("No account found for that username."); return; }
       } else {
         if (!authCode.trim() || !authPin) { setAuthError("Enter your Business ID and password."); return; }
         code = authCode.toUpperCase();
       }
       const biz = await getBusiness(code);
-      console.log("[Login] business found:", biz ? "yes" : "no");
       if (!biz) { setAuthError("Account not found."); return; }
       // Suspended accounts can't sign in (super admin can lift this from the master dashboard).
-      if (biz.suspended) { console.log("[Login] blocked — account suspended"); setAuthError("This account has been suspended. Contact support at pricr.veraa.io"); return; }
+      if (biz.suspended) { logger.debug("[Login] blocked — account suspended"); setAuthError("This account has been suspended. Contact support at pricr.veraa.io"); return; }
       const users = await getUsers(biz.code);
       let user: User | undefined;
       let ok = false;
@@ -252,9 +254,8 @@ export default function Index() {
         else if (biz.adminPin) ok = biz.adminPin === authPin; // legacy plaintext
         user = users.find(u => u.role === "admin") ?? { id: Date.now().toString(), name: biz.ownerName, role: "admin", businessCode: biz.code, username: biz.username };
       }
-      console.log("[Login] password check:", ok ? "pass" : "fail");
       if (!ok || !user) { setAuthError("Incorrect username or password."); return; }
-      console.log("[Login] success → routing to dashboard");
+      logger.debug("[Login] success");
       const legacyShortPin = authPin.length < 8; // signed in with an old short PIN → must upgrade
       await saveCurrentUser(user);
       await setStaySignedIn(staySignedIn); setStayLocal(staySignedIn);
@@ -416,12 +417,12 @@ export default function Index() {
       });
       const data = await response.json();
       const text = data?.content?.[0]?.text;
-      console.log("[Schema][salvage] raw response:", typeof text === "string" ? text : JSON.stringify(data));
+      logger.debug("[Schema][salvage] received response");
       if (typeof text !== "string") return null;
       const parsed = parseSchemaFromResponse(text); // strips ```json fences + extracts the {...} block
-      console.log("[Schema][salvage] parsed result:", JSON.stringify(parsed));
+      logger.debug("[Schema][salvage] parse complete");
       return parsed;
-    } catch (e) { console.error("[Schema][salvage] error:", e instanceof Error ? e.message : String(e)); return null; }
+    } catch (e) { logger.error("[Schema][salvage] error:", e instanceof Error ? e.message : String(e)); return null; }
   };
 
   // Fire-and-forget real-time extraction after each user message. Merges any confident new pricing
@@ -446,26 +447,26 @@ export default function Index() {
     setScreen("building");
     // Let any in-flight extraction settle so the last answer is captured.
     await new Promise(r => setTimeout(r, 900));
-    console.log("[Schema] finalizing, current state:", JSON.stringify(liveSchemaRef.current));
+    logger.debug("[Schema] finalizing");
     let finalSchema: QuoteSchema = liveSchemaRef.current;
     if (isBlankSchema(finalSchema) || (finalSchema.fields || []).length === 0) {
-      console.log("[Schema] live schema empty — attempting one-shot salvage parse");
+      logger.debug("[Schema] live schema empty — attempting one-shot salvage parse");
       const salvaged = await oneShotParse(conversation);
       if (salvaged && !isBlankSchema(salvaged)) finalSchema = salvaged;
     }
     if (!finalSchema) finalSchema = BLANK_SCHEMA;
     setPendingSchema(finalSchema);
-    console.log("[MeetKit] triggering confirmation preview");
+    logger.debug("[MeetKit] triggering confirmation preview");
     setTimeout(() => setScreen("confirm_schema"), 300);
   };
 
   // Commit the confirmed schema: persist it (preserving all other business settings), seed samples, done.
   const commitSchema = async () => {
     const schemaToSave: QuoteSchema = pendingSchema || BLANK_SCHEMA;
-    console.log("[Schema] committing:", JSON.stringify(schemaToSave));
+    logger.debug("[Schema] committing");
     const kitSummary = buildSchemaSummary(schemaToSave);
     const updatedBiz = { ...business!, schema: schemaToSave, kitSummary };
-    try { await saveBusiness(updatedBiz); } catch (e) { console.warn("[commitSchema] cloud save failed (schema kept locally):", e instanceof Error ? e.message : String(e)); }
+    try { await saveBusiness(updatedBiz); } catch (e) { logger.warn("[commitSchema] cloud save failed (schema kept locally):", e instanceof Error ? e.message : String(e)); }
     setBusiness(updatedBiz);
     setSchemaWarning(null);
     setIsReconfiguring(false);
@@ -647,10 +648,10 @@ export default function Index() {
       onBack={() => setScreen("choose_setup")}
       onComplete={(data: WizardData) => {
         const schema = quoteSchemaFromWizard(data);
-        console.log("[Schema] built from wizard:", JSON.stringify(schema));
+        logger.debug("[Schema] built from wizard");
         setSetupPath("wizard");
         setPendingSchema(schema);
-        console.log("[MeetKit] triggering confirmation preview");
+        logger.debug("[MeetKit] triggering confirmation preview");
         setScreen("confirm_schema");
       }}
     />
@@ -663,11 +664,11 @@ export default function Index() {
       onBack={() => setScreen("choose_setup")}
       onEnterManually={() => { setImportResume(false); setScreen("wizard"); }}
       onComplete={(schema, rawText) => {
-        console.log("[Schema] built from import:", JSON.stringify(schema));
+        logger.debug("[Schema] built from import");
         setSetupPath("import");
         setImportText(rawText);
         setPendingSchema(schema);
-        console.log("[MeetKit] triggering confirmation preview");
+        logger.debug("[MeetKit] triggering confirmation preview");
         setScreen("confirm_schema");
       }}
     />

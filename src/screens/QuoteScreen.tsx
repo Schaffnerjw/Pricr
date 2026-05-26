@@ -20,6 +20,7 @@ import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { deriveSections } from "../utils/buildSchemaFromVerified";
+import { logger } from "../utils/logger";
 import { humanSchemaSummary } from "../utils/schemaExtractor";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -92,95 +93,24 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     }
   };
 
-  // ── Bug 2: multi-select for INDEPENDENT items ──
-  // A MATERIAL_MEASUREMENT section is SINGLE-select when its items are alternatives measured against
-  // one shared measurement (decking by sq ft — pick ONE material). It's MULTI-select when the items
-  // are independently countable (lighting fixtures, components by the "each"/unit) — the rep can
-  // include several and enter a quantity for each. Measurement units stay single; countable → multi.
+  // ── Multi-select for INDEPENDENT items ──
+  // `allowMultiSelect` is set explicitly on the section at build time (lighting fixtures = multi,
+  // decking material = single). Fall back to a unit heuristic only for legacy sections missing the flag.
   const SINGLE_SELECT_UNITS = ["sqft", "lf", "hr", "ton", "room", "load", "yard"];
-  const isMultiSelect = (sec: any): boolean =>
-    sec?.pattern === "MATERIAL_MEASUREMENT" && !!sec.quantityFieldId && !SINGLE_SELECT_UNITS.includes(sec.unit);
-  // Per-item state keys for multi-select. Kept off the schema's declared fields — the single-page total
-  // is section-driven (see newLineItems), so these don't need to live in the pricing formula.
+  const isMultiSelect = (sec: any): boolean => {
+    if (typeof sec?.allowMultiSelect === "boolean") return sec.allowMultiSelect;
+    return sec?.pattern === "MATERIAL_MEASUREMENT" && !!sec.quantityFieldId && !SINGLE_SELECT_UNITS.includes(sec.unit);
+  };
+  // Per-item multi-select state keys (must match src/utils/quoteSelections.ts so the engine reads them).
   const selKey = (sec: any, opt: string) => `${sec.materialFieldId}::sel::${opt}`;
   const qtyKey = (sec: any, opt: string) => `${sec.materialFieldId}::qty::${opt}`;
-
-  // Dollar contribution of one section — zero until the rep makes a selection / enters a measurement.
-  const sectionSubtotal = (sec: any): number => {
-    const pricing = schema?.pricing || {};
-    if (sec.pattern === "MATERIAL_MEASUREMENT") {
-      if (isMultiSelect(sec)) {
-        const sel = fieldById(sec.materialFieldId);
-        return (sel?.options || []).reduce((sum: number, opt: string) => {
-          if (!fieldValues[selKey(sec, opt)]) return sum;
-          const r = optionPrice(opt, pricing) || 0;
-          return sum + r * (Number(fieldValues[qtyKey(sec, opt)]) || 0);
-        }, 0);
-      }
-      const chosen = fieldValues[sec.materialFieldId];
-      if (!chosen) return 0;
-      const rate = optionPrice(chosen, pricing);
-      if (rate == null) return 0;
-      if (sec.quantityFieldId) return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
-      return rate; // flat pick-one tier (no quantity)
-    }
-    if (sec.pattern === "LABOR") {
-      const rate = sec.laborRate || pricing[`${sec.quantityFieldId}Rate`] || 0;
-      return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
-    }
-    if (sec.pattern === "FLAT_RATE") {
-      return (sec.itemFieldIds || []).reduce((sum: number, id: string) => sum + (fieldValues[id] ? (pricing[`${id}Rate`] || 0) : 0), 0);
-    }
-    return 0;
+  // Exact per-option rate — looked up by label (unique within a section), never fuzzy. Falls back to
+  // the legacy fuzzy match only for demo/legacy schemas whose sections carry no option metadata.
+  const optionRate = (sec: any, label: string): number => {
+    const o = (sec?.options || []).find((x: any) => x.label === label);
+    if (o) return o.rate;
+    return optionPrice(label, schema?.pricing || {}) ?? 0;
   };
-
-  // Line items for the single-page layout, derived from what the rep actually selected (NOT from the
-  // schema formula, whose fallback would charge the first option of every unselected selector). This is
-  // what makes the grand total start at $0 and stay honest, and it feeds ClosingCard + the PDF too.
-  const newLineItems = useMemo(() => {
-    if (!useNewLayout) return [] as { label: string; amount: number }[];
-    const pricing = schema?.pricing || {};
-    const items: { label: string; amount: number }[] = [];
-    for (const sec of quoteSections) {
-      if (sec.pattern === "FLAT_RATE") {
-        for (const id of sec.itemFieldIds || []) {
-          if (!fieldValues[id]) continue;
-          const amt = pricing[`${id}Rate`] || 0;
-          if (amt) items.push({ label: fieldById(id)?.label || id, amount: amt });
-        }
-        continue;
-      }
-      if (isMultiSelect(sec)) {
-        const sel = fieldById(sec.materialFieldId);
-        for (const opt of sel?.options || []) {
-          if (!fieldValues[selKey(sec, opt)]) continue;
-          const r = optionPrice(opt, pricing) || 0;
-          const q = Number(fieldValues[qtyKey(sec, opt)]) || 0;
-          const amt = r * q;
-          if (amt > 0) items.push({ label: `${opt} (${q.toLocaleString()} ${unitLabel(sec.unit)})`, amount: amt });
-        }
-        continue;
-      }
-      const sub = sectionSubtotal(sec);
-      if (sub <= 0) continue;
-      const chosen = sec.materialFieldId ? fieldValues[sec.materialFieldId] : null;
-      const qty = sec.quantityFieldId ? Number(fieldValues[sec.quantityFieldId]) || 0 : 0;
-      const unit = unitLabel(sec.unit);
-      let label = sec.name;
-      if (chosen && sec.quantityFieldId) label = `${chosen} (${qty.toLocaleString()} ${unit})`;
-      else if (chosen) label = `${sec.name}: ${chosen}`;
-      else if (sec.quantityFieldId) label = `${sec.name} (${qty.toLocaleString()} ${unit})`;
-      items.push({ label, amount: sub });
-    }
-    return items;
-  }, [useNewLayout, quoteSections, fieldValues, schema]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const newBase = newLineItems.reduce((sum, l) => sum + l.amount, 0);
-  // For the single-page layout, feed computeTotals/ClosingCard a schema whose total + line items come
-  // from the rep's actual selections (zero by default) instead of the formula's first-option fallback.
-  const computeSchema = useNewLayout
-    ? { ...schema, calculation: String(newBase), summaryLines: newLineItems.map(li => ({ label: li.label, value: String(li.amount) })) }
-    : schema;
 
   useEffect(() => {
     if (reduceMotion) { setReady(true); return; }
@@ -217,7 +147,21 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   }, [schema, business.code]);
 
   const discount = { mode: discountMode, value: Number(discountValue) || 0, reason: discountReason.trim() };
-  const t = computeTotals(computeSchema, fieldValues, selectedAddOns, discount);
+  // ALL pricing flows through computeTotals → the pricing engine (exact rate-by-ID for real schemas,
+  // safe formula for demos). t carries lineItems + valid/hasErrors so a pricing problem is never silent.
+  const t = computeTotals(schema, fieldValues, selectedAddOns, discount);
+  const pricingError = !!t.error || t.hasErrors || t.valid === false;
+
+  // Per-section subtotal, sourced from the engine's line items (single source of truth — the card
+  // numbers can't drift from the grand total).
+  const sectionSubtotal = (sec: any): number =>
+    t.lineItems.filter(li => li.sectionId === sec.id).reduce((sum, li) => sum + li.total, 0);
+
+  // ClosingCard + PDF render from line items. For engine schemas, feed them the engine's exact line
+  // items (as literal-valued summary lines); demos keep their original formula-based summary lines.
+  const presentationSchema = (useNewLayout && t.lineItems.length)
+    ? { ...schema, summaryLines: t.lineItems.filter(li => li.type !== "discount").map(li => ({ label: li.label, value: String(li.total) })) }
+    : schema;
   const range = typicalRange(history);
   const outsideRange = !!range && t.total > 0 && (t.total > range.avg + 1.5 * range.std || t.total < Math.max(0, range.avg - 1.5 * range.std));
 
@@ -285,7 +229,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setTimeout(() => setSaved(false), 2000);
     if (isFirstReal) { setShowCelebration(true); setTimeout(() => setShowCelebration(false), 2000); }
     // Flag the business as having generated a quote so the dashboard hides the onboarding card (FIX 19).
-    if (isFirstReal && !business.hasGeneratedQuote) { try { await saveBusiness({ ...business, hasGeneratedQuote: true }); } catch { } }
+    if (isFirstReal && !business.hasGeneratedQuote) { try { await saveBusiness({ ...business, hasGeneratedQuote: true }); } catch (e) { logger.error("[Quote] hasGeneratedQuote flag save failed", e instanceof Error ? e.message : String(e)); } }
     return quote.id;
   };
 
@@ -381,10 +325,12 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             // Keep the single-page layout alive across Kit edits: re-derive section metadata when the
             // schema was using it (the agent returns plain fields/pricing without it).
             if (useNewLayout && updated && Array.isArray(updated.fields)) {
-              try { updated.sections = deriveSections(updated.fields, updated.pricing || {}); } catch { }
+              try { updated.sections = deriveSections(updated.fields, updated.pricing || {}); }
+              catch (e) { logger.error("[Kit] deriveSections failed", e instanceof Error ? e.message : String(e)); Alert.alert("Quote tool needs attention", "We updated your tool but couldn't refresh its layout. Reopen the quote tool to retry."); }
             }
             setSchema(updated);
-            await saveBusiness({ ...business, schema: updated, kitUpdates: (business.kitUpdates || 0) + 1 });
+            try { await saveBusiness({ ...business, schema: updated, kitUpdates: (business.kitUpdates || 0) + 1 }); }
+            catch (e) { logger.error("[Kit] saveBusiness failed", e instanceof Error ? e.message : String(e)); Alert.alert("Couldn't save", "Failed to save — your changes are local only until you reconnect."); }
             const msg = reply.substring(0, jsonStart).replace("CONFIG_UPDATED", "").trim();
             setAgentMessages([...newMessages, { role: "assistant", content: msg || "Done. Your tool is updated." }]);
           } catch {
@@ -663,20 +609,20 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }} keyboardShouldPersistTaps="handled">
             {(sel?.options || []).map((opt: string) => {
               const selected = !!fieldValues[selKey(sec, opt)];
-              const price = optionPrice(opt, pricing);
+              const price = optionRate(sec, opt);
               return (
                 <PressableScale key={opt} onPress={() => toggleMultiItem(sec, opt)} style={{ minWidth: 100, maxWidth: PILL_MAX, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
                   <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
                     {selected && <Feather name="check" size={14} color={onPrimary} style={{ marginTop: 2 }} />}
                     <Text numberOfLines={2} style={{ flexShrink: 1, color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
                   </View>
-                  {price != null && <Text numberOfLines={1} style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>${price.toLocaleString()}/{unitOne}</Text>}
+                  {price > 0 && <Text numberOfLines={1} style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>${price.toLocaleString()}/{unitOne}</Text>}
                 </PressableScale>
               );
             })}
           </ScrollView>
           {selectedOpts.map((opt: string) => {
-            const price = optionPrice(opt, pricing) || 0;
+            const price = optionRate(sec, opt);
             const q = Number(fieldValues[qtyKey(sec, opt)]) || 0;
             const lineTotal = price * q;
             return (
@@ -697,7 +643,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
     const chosen = fieldValues[sec.materialFieldId];
     const qtyField = sec.quantityFieldId ? fieldById(sec.quantityFieldId) : null;
-    const rate = chosen ? optionPrice(chosen, pricing) : null;
+    const rate = chosen ? optionRate(sec, chosen) : null;
     const qty = sec.quantityFieldId ? Number(fieldValues[sec.quantityFieldId]) || 0 : 0;
     const subtotal = sectionSubtotal(sec);
     return (
@@ -705,14 +651,14 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }} keyboardShouldPersistTaps="handled">
           {(sel?.options || []).map((opt: string) => {
             const selected = chosen === opt;
-            const price = optionPrice(opt, pricing);
+            const price = optionRate(sec, opt);
             return (
               <PressableScale key={opt} onPress={() => !readOnly && setField(sec.materialFieldId, opt)} style={{ minWidth: 100, maxWidth: PILL_MAX, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
                 <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
                   {selected && <Feather name="check" size={14} color={onPrimary} style={{ marginTop: 2 }} />}
                   <Text numberOfLines={2} style={{ flexShrink: 1, color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
                 </View>
-                {price != null && <Text numberOfLines={1} style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>{sec.quantityFieldId ? `$${price.toLocaleString()}/${unitLabel(sec.unit).replace(/s$/, "")}` : `$${price.toLocaleString()}`}</Text>}
+                {price > 0 && <Text numberOfLines={1} style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>{sec.quantityFieldId ? `$${price.toLocaleString()}/${unitLabel(sec.unit).replace(/s$/, "")}` : `$${price.toLocaleString()}`}</Text>}
               </PressableScale>
             );
           })}
@@ -838,40 +784,19 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     );
   };
 
-  // Group subtotals for the negotiation overview when the single-page layout is active.
+  // Negotiation-overview groups, built straight from the engine's line items so the review screen,
+  // the cards, and the grand total can never disagree.
   const newOverviewSections = useMemo(() => {
     if (!useNewLayout) return [];
-    const pricing = schema?.pricing || {};
-    const groups = displaySections
-      .filter((g) => activeSections[g.id] && groupSubtotal(g) > 0)
-      .map((g) => {
-        const lines: { label: string; amount: number }[] = [];
-        for (const sec of g.members) {
-          if (sec.pattern === "FLAT_RATE") {
-            (sec.itemFieldIds || []).filter((id: string) => fieldValues[id]).forEach((id: string) => lines.push({ label: fieldById(id)?.label || id, amount: pricing[`${id}Rate`] || 0 }));
-          } else if (isMultiSelect(sec)) {
-            for (const opt of fieldById(sec.materialFieldId)?.options || []) {
-              if (!fieldValues[selKey(sec, opt)]) continue;
-              const r = optionPrice(opt, pricing) || 0;
-              const q = Number(fieldValues[qtyKey(sec, opt)]) || 0;
-              if (r * q > 0) lines.push({ label: `${opt} (${q.toLocaleString()} ${unitLabel(sec.unit)})`, amount: r * q });
-            }
-          } else {
-            const sub = sectionSubtotal(sec);
-            if (sub <= 0) continue;
-            const chosen = sec.materialFieldId ? fieldValues[sec.materialFieldId] : null;
-            const prefix = g.members.length > 1 ? `${memberSubLabel(sec)}: ` : "";
-            lines.push({ label: `${prefix}${chosen ? String(chosen) : sec.name}`, amount: sub });
-          }
-        }
-        return { key: g.id, title: g.name, icon: iconFor(g.name), lines, subtotal: groupSubtotal(g) };
-      });
-    if (selectedAddOns.length) {
-      const lines = selectedAddOns.map(id => { const ao = schema?.addOns?.find((a: any) => a.id === id); return { label: ao?.label || id, amount: ao?.price || 0 }; });
-      groups.push({ key: "addons", title: "Add-ons", icon: "plus-circle", lines, subtotal: lines.reduce((sum, l) => sum + l.amount, 0) });
-    }
+    const groups = displaySections.map((g) => {
+      const memberIds = new Set(g.members.map((m: any) => m.id));
+      const lines = t.lineItems.filter(li => memberIds.has(li.sectionId) && li.type !== "discount").map(li => ({ label: li.label, amount: li.total }));
+      return { key: g.id, title: g.name, icon: iconFor(g.name), lines, subtotal: lines.reduce((s, l) => s + l.amount, 0) };
+    }).filter(g => g.subtotal > 0);
+    const addonLines = t.lineItems.filter(li => li.type === "addon").map(li => ({ label: li.label, amount: li.total }));
+    if (addonLines.length) groups.push({ key: "addons", title: "Add-ons", icon: "plus-circle", lines: addonLines, subtotal: addonLines.reduce((s, l) => s + l.amount, 0) });
     return groups;
-  }, [useNewLayout, displaySections, activeSections, fieldValues, selectedAddOns, schema]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useNewLayout, displaySections, t]);
 
   const displayOverviewSections = useNewLayout ? newOverviewSections : overviewSections;
   const compareSec = quoteSections.find((sec: any) => sec.id === compareSection);
@@ -915,6 +840,20 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           <Feather name="user" size={16} color={pal.textMuted} />
           <TextInput style={{ flex: 1, backgroundColor: pal.surface, color: pal.text, borderColor: pal.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: Platform.OS === "ios" ? 10 : 6, fontFamily: "DMSans_600SemiBold", fontSize: 15 }} placeholder="Client name" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
         </View>
+      )}
+
+      {/* Pricing integrity surface — never let a bad/zero total go out silently. */}
+      {!readOnly && pricingError && (
+        <TouchableOpacity
+          onPress={() => { if (t.error) onBack(); else setShowOverview(true); }}
+          style={{ marginHorizontal: 20, marginTop: 6, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: t.error ? "#7F1D1D" : "#78350F", borderColor: t.error ? "#EF4444" : "#F59E0B", borderWidth: 1, borderRadius: 10, padding: 10 }}>
+          <Feather name="alert-triangle" size={15} color={t.error ? "#FCA5A5" : "#FCD34D"} />
+          <Text style={{ flex: 1, color: B.white, fontSize: 12.5, fontFamily: "DMSans_600SemiBold" }}>
+            {t.error
+              ? "Pricing calculation error — tap to rebuild your quote tool"
+              : "Total may be incorrect — tap Review to verify before sending"}
+          </Text>
+        </TouchableOpacity>
       )}
 
       {/* FIX 2: keep inputs + footer above the keyboard on both platforms */}
@@ -1031,7 +970,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </KeyboardAvoidingView>
 
       {showTotal && !readOnly && (
-        <ClosingCard schema={computeSchema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
+        <ClosingCard schema={presentationSchema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
       )}
 
       {/* ── Section overview / negotiation screen — review subtotals, edit any section, see the live total ── */}
@@ -1136,8 +1075,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                   </View>
                   <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 28, gap: 4 }}>
                     {(sel?.options || []).map((opt: string) => {
-                      const rate = optionPrice(opt, pricing);
-                      const lineTotal = rate == null ? null : (measure > 0 ? rate * measure : rate);
+                      const rate = optionRate(compareSec, opt);
+                      const lineTotal = measure > 0 ? rate * measure : rate;
                       const selected = chosen === opt;
                       return (
                         <TouchableOpacity key={opt} onPress={() => { setField(compareSec.materialFieldId, opt); setCompareSection(null); }} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: pal.border }}>

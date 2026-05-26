@@ -874,8 +874,41 @@ async function handleCertificate(res, token) {
 
 // ── Super-admin cross-tenant endpoints (service role; guarded by the master code) ──
 // These are the ONLY way the app reads/writes across tenants — the app's anon key is RLS-limited.
-const MASTER_CODE = process.env.MASTER_CODE || 'CB101919';
-const adminAuthed = (req) => ((req.headers['x-master-code'] || '') === MASTER_CODE);
+// No hardcoded fallback. If MASTER_CODE isn't configured, the admin endpoints are disabled (503).
+const MASTER_CODE = process.env.MASTER_CODE || '';
+const adminConfigured = () => MASTER_CODE.length > 0;
+
+// In-memory admin session tokens → expiry (ms). Cleared on every redeploy by design (a feature:
+// a redeploy invalidates all admin sessions). 4-hour TTL.
+const ADMIN_TOKEN_TTL_MS = 4 * 60 * 60 * 1000;
+const adminTokens = new Map();
+function issueAdminToken() {
+  const token = crypto.randomBytes(32).toString('hex');
+  const expiresAt = Date.now() + ADMIN_TOKEN_TTL_MS;
+  adminTokens.set(token, expiresAt);
+  return { token, expiresAt };
+}
+function adminTokenValid(token) {
+  if (!token) return false;
+  const exp = adminTokens.get(token);
+  if (!exp) return false;
+  if (Date.now() > exp) { adminTokens.delete(token); return false; }
+  return true;
+}
+// Timing-safe code comparison. SHA-256 both sides → equal-length buffers, so timingSafeEqual is
+// safe regardless of input length and leaks neither the code nor its length.
+function codeMatches(submitted) {
+  if (!adminConfigured()) return false;
+  const a = crypto.createHash('sha256').update(String(submitted || '')).digest();
+  const b = crypto.createHash('sha256').update(MASTER_CODE).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+// Admin requests now carry a short-lived Bearer token (issued by POST /admin/auth), not the code.
+const adminAuthed = (req) => {
+  const h = req.headers['authorization'] || '';
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return m ? adminTokenValid(m[1].trim()) : false;
+};
 const parseJsonBody = (buf) => { try { return JSON.parse(buf.toString() || '{}'); } catch (_) { return {}; } };
 
 async function fetchAllBusinesses() {
@@ -1142,11 +1175,23 @@ const server = http.createServer((req, res) => {
   // Health check (public) — used by the super-admin "proxy ping" + uptime checks.
   if (path === '/health' && req.method === 'GET') { return sendJson(res, 200, { ok: true, ts: Date.now() }); }
 
-  // Super-admin endpoints (POST /admin/<action>) — service role, guarded by the master code header.
+  // Super-admin endpoints (POST /admin/<action>) — service role, guarded by a short-lived Bearer
+  // token issued by POST /admin/auth (the master code is never compared client-side).
   const adminMatch = path.match(/^\/admin\/([a-z-]+)\/?$/);
   if (adminMatch && req.method === 'POST') {
-    if (!adminAuthed(req)) return sendJson(res, 403, { error: 'forbidden' });
     const action = adminMatch[1];
+    if (!adminConfigured()) return sendJson(res, 503, { error: 'Admin not configured' });
+    // Auth handshake: exchange the master code for a session token (timing-safe compare).
+    if (action === 'auth') {
+      readBody((buf) => {
+        const { code } = parseJsonBody(buf);
+        if (codeMatches(code)) { return sendJson(res, 200, issueAdminToken()); }
+        console.warn('[admin] failed auth attempt');
+        return sendJson(res, 401, { error: 'invalid code' });
+      });
+      return;
+    }
+    if (!adminAuthed(req)) return sendJson(res, 401, { error: 'unauthorized' });
     if (action === 'export') { handleAdminExport(res).catch(() => sendJson(res, 500, { error: 'export failed' })); return; }
     readBody((buf) => {
       const handler = ADMIN_HANDLERS[action];

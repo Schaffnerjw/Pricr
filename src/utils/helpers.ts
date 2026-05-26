@@ -2,6 +2,17 @@ import { DocPrefs, PaymentMethods } from "../types";
 
 export function generateCode(): string { return Math.random().toString(36).substring(2,8).toUpperCase(); }
 
+// camelCase id from a label, unique against ids already used (and never starting with a digit).
+// Shared by the schema builder and the extractor — the single source of truth for field/option ids.
+export function slugId(label: string, used: Set<string>): string {
+  const base = String(label || "field").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ")
+    .map((w, i) => (i === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1))).join("") || "field";
+  let id = base; let n = 2;
+  while (used.has(id) || /^\d/.test(id)) { id = /^\d/.test(id) ? `f${id}` : `${base}${n++}`; }
+  used.add(id);
+  return id;
+}
+
 // The built-in payment methods an admin can accept (the "Other" option is free text).
 export const PAYMENT_OPTIONS = ["Credit/Debit Card", "Cash", "Check", "Venmo", "Zelle", "PayPal"] as const;
 

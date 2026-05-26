@@ -2,6 +2,8 @@ import { API_URL } from "../constants/brand";
 import { SCHEMA_EXTRACTION_PROMPT } from "../constants/prompts";
 import { AddOn, FieldGroup, FieldUnit, QuoteSchema, SchemaField } from "../types";
 import { buildSchemaFromVerified, VerifiedAddOn, VerifiedItem, VerifiedSelector, VerifiedUnit } from "./buildSchemaFromVerified";
+import { logger } from "./logger";
+import { slugId } from "./helpers";
 
 // ── Types for the incremental extraction ────────────────────────────────────────
 export type Confidence = "high" | "medium" | "low";
@@ -56,16 +58,6 @@ export function updateMeaningful(u: SchemaUpdate): boolean {
 
 const VALID_UNITS: FieldUnit[] = ["sqft", "lf", "each", "hr", "flat", "percent", "load", "room", "vehicle", "ton"];
 const coerceUnit = (m: any): FieldUnit => (VALID_UNITS.includes(m) ? m : "each");
-
-// camelCase id from a label, made unique against existing ids.
-function slugId(label: string, existing: Set<string>): string {
-  const base = String(label || "field").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ")
-    .map((w, i) => (i === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1))).join("") || "field";
-  let id = base; let n = 2;
-  while (existing.has(id)) { id = `${base}${n++}`; }
-  existing.add(id);
-  return id;
-}
 
 const GROUP_FOR_UNIT: Record<string, FieldGroup> = {
   sqft: "dimensions", lf: "dimensions", room: "dimensions", load: "dimensions", ton: "dimensions",
@@ -329,7 +321,7 @@ function parseExtractionJson(raw: string): any | null {
     if (f !== -1 && l !== -1 && l > f) c = c.substring(f, l + 1);
     return JSON.parse(c);
   } catch (e) {
-    console.error("[SchemaExtractor] JSON parse failed:", e instanceof Error ? e.message : String(e), "| raw:", raw);
+    logger.error("[SchemaExtractor] JSON parse failed:", e instanceof Error ? e.message : String(e));
     return null;
   }
 }
@@ -339,7 +331,7 @@ function parseExtractionJson(raw: string): any | null {
 export async function extractFromMessage(userMessage: string, currentSchema: QuoteSchema, context: string): Promise<SchemaUpdate> {
   try {
     if (!userMessage || !userMessage.trim()) return { ...EMPTY_UPDATE };
-    console.log("[SchemaExtractor] extracting from:", userMessage.substring(0, 50));
+    logger.debug("[SchemaExtractor] extracting...");
     const slim = { trade: currentSchema.trade, fields: (currentSchema.fields || []).map(f => ({ label: f.label, unit: f.unit })), addOns: (currentSchema.addOns || []).map(a => a.label), depositPercent: currentSchema.pricing?.depositPercent ?? 0 };
     const user = `${context ? "Context: " + context + "\n\n" : ""}The user is setting up a quote tool for their contracting business. They just said: "${userMessage}"\n\nCurrent schema state: ${JSON.stringify(slim)}\n\nExtract any NEW pricing or service information from this message and return ONLY the JSON SchemaUpdate object — no markdown, no backticks, no explanation.`;
     const response = await fetch(API_URL, {
@@ -349,15 +341,14 @@ export async function extractFromMessage(userMessage: string, currentSchema: Quo
     });
     const data = await response.json();
     const text = data?.content?.[0]?.text;
-    console.log("[SchemaExtractor] raw response:", typeof text === "string" ? text : JSON.stringify(data));
     if (typeof text !== "string") return { ...EMPTY_UPDATE };
     const parsed = parseExtractionJson(text);
     if (!parsed) return { ...EMPTY_UPDATE };
     const update = normalizeUpdate(parsed);
-    console.log("[SchemaExtractor] parsed update:", JSON.stringify(update));
+    logger.debug("[SchemaExtractor] extraction complete");
     return update;
   } catch (error) {
-    console.error("[SchemaExtractor] error:", error instanceof Error ? error.message : String(error));
+    logger.error("[SchemaExtractor] error:", error instanceof Error ? error.message : String(error));
     return { ...EMPTY_UPDATE };
   }
 }
@@ -365,11 +356,9 @@ export async function extractFromMessage(userMessage: string, currentSchema: Quo
 // Dev/console test harness (Step 7). Runs an extraction against a sample message and logs the result.
 // In the browser console run: __pricrTestExtraction()
 export async function testExtraction(message = "I charge $20 per sq ft for pressure treated and $28 for composite"): Promise<SchemaUpdate> {
-  console.log("[SchemaExtractor][test] message:", message);
   const result = await extractFromMessage(message, BLANK_SCHEMA, "Test run");
-  console.log("[SchemaExtractor][test] result:", JSON.stringify(result, null, 2));
-  const applied = applySchemaUpdate(BLANK_SCHEMA, result);
-  console.log("[SchemaExtractor][test] applied schema:", JSON.stringify(applied, null, 2));
+  logger.debug("[SchemaExtractor][test] complete");
+  applySchemaUpdate(BLANK_SCHEMA, result);
   return result;
 }
 if (typeof globalThis !== "undefined") { (globalThis as any).__pricrTestExtraction = testExtraction; }

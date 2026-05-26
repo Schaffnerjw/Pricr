@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { MASTER_CODE, SIGN_BASE } from "../constants/brand";
+import { SIGN_BASE } from "../constants/brand";
+import { masterAuthHeaders } from "../utils/masterAuth";
 
 export interface PlatformBiz { code: string; name: string; trade: string; joined: string; lastActive: number | null; quotesThisMonth: number; totalQuotes: number; }
 export interface PlatformAnalytics {
@@ -21,7 +22,7 @@ export function usePlatformAnalytics() {
     try {
       const res = await fetch(`${SIGN_BASE}/admin/platform-analytics`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-master-code": MASTER_CODE },
+        headers: { "Content-Type": "application/json", ...masterAuthHeaders() },
         body: "{}",
       });
       const json = await res.json();

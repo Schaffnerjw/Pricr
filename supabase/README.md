@@ -3,7 +3,11 @@
 Persistent cloud backend for Pricr: auth, business profiles, brand config, quotes, and rep accounts.
 RLS is enabled on every table — no table is publicly readable/writable.
 
-> The Veraa super-admin override code **CB101919** is **not** stored in Supabase and is unaffected by this setup.
+> **Super-admin access:** the master code is **not** stored in Supabase or in the app bundle. Set
+> `MASTER_CODE` in **Railway → Variables** (no default — if unset, the `/admin/*` endpoints return
+> `503 Admin not configured`). The client sends the entered code to the proxy's `POST /admin/auth`,
+> which timing-safe-compares it and returns a short-lived (4h) in-memory Bearer token used for all
+> admin calls. **Rotate the code — the old hardcoded `CB101919` is retired and must not be reused.**
 
 ## 1. Create a Supabase project
 

@@ -2,12 +2,12 @@ import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
-import { PROXY_URL } from "../config";
 import { API_URL, B } from "../constants/brand";
 import { PRICE_LIST_UNDERSTAND_PROMPT } from "../constants/prompts";
 import { clearImportProgress, getImportProgress, saveImportProgress } from "../storage";
 import { QuoteSchema } from "../types";
 import { ON_PRIMARY } from "../utils/colorUtils";
+import { logger } from "../utils/logger";
 import { buildSchemaFromVerified, groupImportCategories, VerifiedAddOn, VerifiedCategory, VerifiedItem, VerifiedUnit, verifiedItemCount } from "../utils/buildSchemaFromVerified";
 
 const UNITS: VerifiedUnit[] = ["sq ft", "lf", "hour", "each", "flat", "section", "other"];
@@ -85,48 +85,42 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
       : inputLength < 5000 ? 8000
         : inputLength < 10000 ? 12000
           : 16000;
-    console.log("[Import] input length:", inputLength, "max_tokens:", maxTokens);
+    logger.debug("[Import] input length:", inputLength, "max_tokens:", maxTokens);
     const payload = { model: "claude-sonnet-4-5", max_tokens: maxTokens, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] };
     const payloadStr = JSON.stringify(payload);
-    console.log("[Import] Phase 1 starting, text length:", text.length);
-    console.log("[Import] proxy URL:", PROXY_URL);
-    console.log("[Import] request payload size:", payloadStr.length);
+    logger.debug("[Import] Phase 1 starting, request size:", payloadStr.length);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 60000); // 60s ceiling so it can't hang forever
     try {
       const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: payloadStr, signal: controller.signal });
       clearTimeout(timer);
-      console.log("[Import] response status:", response.status);
-      console.log("[Import] response ok:", response.ok);
+      logger.debug("[Import] response status:", response.status, "ok:", response.ok);
       const rawText = await response.text();
-      console.log("[Import] raw response first 500 chars:", rawText.substring(0, 500));
 
       // STEP 1 — parse the outer Anthropic envelope: { model, content: [{ type:"text", text }] } (or { error }).
       let envelope: any;
       try { envelope = JSON.parse(rawText); }
-      catch { console.error("[Import] envelope JSON.parse failed"); throw new ImportError("Got a response but couldn't read it — try again."); }
-      if (envelope && envelope.error) { console.error("[Import] proxy/anthropic error:", JSON.stringify(envelope.error)); throw new ImportError("Got a response but couldn't read it — try again."); }
-      console.log("[Import] envelope parsed ok");
+      catch { logger.error("[Import] envelope JSON.parse failed"); throw new ImportError("Got a response but couldn't read it — try again."); }
+      if (envelope && envelope.error) { logger.error("[Import] proxy/anthropic error"); throw new ImportError("Got a response but couldn't read it — try again."); }
+      logger.debug("[Import] envelope parsed ok");
 
       // STEP 2 — extract the inner text block. Parsing the envelope already turned the \n escapes in
       // the "text" field into real newlines (and \" into "), so no manual unescaping is needed.
       const innerText: string = envelope?.content?.[0]?.text;
-      if (typeof innerText !== "string") { console.error("[Import] no inner text in envelope"); throw new ImportError("Got a response but couldn't read it — try again."); }
-      console.log("[Import] inner text length:", innerText.length);
-      console.log("[Import] inner text first 200:", innerText.substring(0, 200));
+      if (typeof innerText !== "string") { logger.error("[Import] no inner text in envelope"); throw new ImportError("Got a response but couldn't read it — try again."); }
+      logger.debug("[Import] inner text length:", innerText.length);
 
       // STEP 3 — strip any markdown fences and isolate the {...} object, then parse.
       let cleanedText = innerText.replace(/```json/gi, "").replace(/```/g, "").trim();
       const open = cleanedText.indexOf("{"), close = cleanedText.lastIndexOf("}");
       if (open !== -1 && close !== -1 && close > open) cleanedText = cleanedText.substring(open, close + 1);
-      console.log("[Import] cleaned text first 200:", cleanedText.substring(0, 200));
-      if (!cleanedText.endsWith("}")) console.warn("[Import] cleaned text does not end with } — response may have been truncated");
+      if (!cleanedText.endsWith("}")) logger.warn("[Import] cleaned text does not end with } — response may have been truncated");
 
       let parsed: any;
       try { parsed = JSON.parse(cleanedText); }
-      catch (pe) { console.error("[Import] inner JSON.parse failed (likely truncated):", pe instanceof Error ? pe.message : String(pe)); throw new ImportError("Got a response but couldn't read it — try again."); }
-      console.log("[Import] final parse result:", JSON.stringify(parsed).substring(0, 200));
+      catch (pe) { logger.error("[Import] inner JSON.parse failed (likely truncated):", pe instanceof Error ? pe.message : String(pe)); throw new ImportError("Got a response but couldn't read it — try again."); }
+      logger.debug("[Import] parse complete");
       if (!parsed || !Array.isArray(parsed.categories)) throw new ImportError("Got a response but couldn't read it — try again.");
 
       // Map AI output → verified categories; pull any "add-ons"-style category into the add-ons list.
@@ -156,7 +150,7 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
       if (e?.name === "AbortError") msg = "This is taking too long — try again.";
       else if (e instanceof ImportError) msg = e.message;
       else if (e instanceof TypeError) msg = "Connection failed — check your internet and try again.";
-      console.error("[Import] Phase 1 failed:", e?.name || "Error", "-", e?.message || String(e));
+      logger.error("[Import] Phase 1 failed:", e?.name || "Error", "-", e?.message || String(e));
       setPhase("paste");
       setError(msg);
     }
@@ -183,7 +177,7 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     // Group same-unit items in each category into selectors (+ quantity) so a 69-product list becomes
     // a handful of usable inputs instead of 69 fields.
     const { selectors, items } = groupImportCategories(categories);
-    console.log("[Import] grouped into", selectors.length, "selectors +", items.length, "single fields");
+    logger.debug("[Import] grouped into", selectors.length, "selectors +", items.length, "single fields");
     const schema = buildSchemaFromVerified({ trade, categories: [{ id: "services", name: "Services", items }], selectors, addOns, depositPercent });
     if (!schema.fields.length) { setError("Add at least one service with a price to continue."); return; }
     clearImportProgress();

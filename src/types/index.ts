@@ -18,6 +18,10 @@ export interface QuoteSection {
   unit?: string;              // display unit
   itemFieldIds?: string[];    // FLAT_RATE toggle field ids
   laborRate?: number;         // LABOR / per-unit single rate (also lives in pricing)
+  // Strict pricing-engine fields (added in the foundation rebuild): rates looked up by option ID,
+  // never by name. `allowMultiSelect` is explicit, never inferred from the section name.
+  options?: import("./schema").SchemaOption[];
+  allowMultiSelect?: boolean;
 }
 export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; sections?: QuoteSection[]; }
 export type FieldUnit = "sqft"|"lf"|"each"|"hr"|"flat"|"percent"|"load"|"room"|"vehicle"|"ton";

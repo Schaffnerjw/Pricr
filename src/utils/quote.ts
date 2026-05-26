@@ -1,7 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { ComponentProps } from "react";
 import { FieldGroup, FieldUnit, SavedQuote } from "../types";
-import { evaluateFormula } from "./formula";
+import { evaluateFormulaSafe } from "./formula";
+import { LineItem } from "../types/lineItems";
+import { buildLineItems, validateQuoteTotal } from "./pricingEngine";
+import { addOnSelectionsFrom, schemaUsesEngine, selectionsFromFieldValues, toStrictSections } from "./quoteSelections";
 
 type FeatherName = ComponentProps<typeof Feather>["name"];
 
@@ -125,10 +128,22 @@ export function optionPrice(option: string, pricing: Record<string, number>): nu
   return key && typeof pricing[key] === "number" ? pricing[key] : null;
 }
 
-// Central total calculation — coerces number fields to actual numbers before evaluating.
-// Optional discount (flat $ or %) is applied to the subtotal before tax.
-export function computeTotals(schema: any, fieldValues: Record<string, any>, addOnIds: string[], discount?: { mode: "amount" | "percent"; value: number } | null) {
+// The shape every screen + ClosingCard + PDF consumes. Engine-backed for real schemas; safe
+// formula-backed for demo/legacy schemas. `lineItems`/`error`/`valid` are surfaced so a pricing
+// problem is never silent.
+export interface Totals {
+  subtotal: number; discountAmount: number; taxRate: number; tax: number; rawTotal: number;
+  minimum: number; belowMin: boolean; total: number; depositPct: number; deposit: number;
+  ctx: Record<string, any>; lineItems: LineItem[]; hasErrors: boolean; valid: boolean; error?: string;
+}
+
+// Central total calculation. DEPRECATED as the math owner — it now delegates to the pricing engine
+// (src/utils/pricingEngine.ts) for any schema whose sections carry option metadata (the real product
+// path: exact rate-by-ID, integer cents, no formulas). Demo/legacy schemas without options fall back
+// to the SAFE formula evaluator, whose failures are surfaced via `error` instead of a silent $0.
+export function computeTotals(schema: any, fieldValues: Record<string, any>, addOnIds: string[], discount?: { mode: "amount" | "percent"; value: number } | null): Totals {
   const pricing: Record<string, number> = schema?.pricing || {};
+  // ctx is kept for ClosingCard's summary-line label interpolation ({fieldId}) on legacy schemas.
   const ctx: Record<string, any> = {};
   for (const f of schema?.fields || []) {
     const v = fieldValues?.[f.id];
@@ -136,18 +151,32 @@ export function computeTotals(schema: any, fieldValues: Record<string, any>, add
     else ctx[f.id] = v;
   }
   for (const k of Object.keys(fieldValues || {})) if (!(k in ctx)) ctx[k] = fieldValues[k];
-  const base = schema?.calculation ? evaluateFormula(schema.calculation, ctx, pricing) : 0;
-  const addOnTotal = (addOnIds || []).reduce((sum, id) => sum + (schema?.addOns?.find((a: any) => a.id === id)?.price || 0), 0);
-  const subtotal = base + addOnTotal;
-  // Discount off the subtotal (capped so it can't go negative).
-  const dv = discount && discount.value > 0 ? discount.value : 0;
-  const discountAmount = dv > 0
-    ? (discount!.mode === "percent" ? subtotal * (Math.min(100, dv) / 100) : Math.min(dv, subtotal))
-    : 0;
-  const discountedSubtotal = Math.max(0, subtotal - discountAmount);
-  // Normalize tax: a value < 1 (e.g. 0.07) is a fraction → treat as 7%. A value >= 1 is already a percent.
+
   const rawTax = pricing.taxRate ?? 0;
   const taxRate = rawTax > 0 && rawTax < 1 ? rawTax * 100 : rawTax;
+  const config = { taxRate: pricing.taxRate ?? 0, minimumCharge: pricing.minimumCharge || 0, depositPercent: pricing.depositPercent ?? 0 };
+
+  // ── Engine path (the real product): price every selection by option ID. ──
+  if (schemaUsesEngine(schema)) {
+    const selections = selectionsFromFieldValues(schema, fieldValues);
+    const addOnSel = addOnSelectionsFrom(schema, addOnIds || []);
+    const engineDiscount = discount && discount.value > 0 ? { mode: discount.mode, value: discount.value } : null;
+    const q = buildLineItems(toStrictSections(schema.sections), selections, addOnSel, engineDiscount, config);
+    const rawTotal = q.subtotal - q.discount + q.tax;
+    return {
+      subtotal: q.subtotal, discountAmount: q.discount, taxRate, tax: q.tax, rawTotal,
+      minimum: q.minimum, belowMin: q.belowMin, total: q.total, depositPct: q.deposit, deposit: q.depositAmount,
+      ctx, lineItems: q.lineItems, hasErrors: q.hasErrors, valid: validateQuoteTotal(q).ok && !q.hasErrors,
+    };
+  }
+
+  // ── Demo / legacy formula path (safe evaluator; failures surfaced, never a silent $0). ──
+  const { value: base, error } = schema?.calculation ? evaluateFormulaSafe(schema.calculation, ctx, pricing) : { value: 0, error: undefined };
+  const addOnTotal = (addOnIds || []).reduce((sum, id) => sum + (schema?.addOns?.find((a: any) => a.id === id)?.price || 0), 0);
+  const subtotal = base + addOnTotal;
+  const dv = discount && discount.value > 0 ? discount.value : 0;
+  const discountAmount = dv > 0 ? (discount!.mode === "percent" ? subtotal * (Math.min(100, dv) / 100) : Math.min(dv, subtotal)) : 0;
+  const discountedSubtotal = Math.max(0, subtotal - discountAmount);
   const tax = discountedSubtotal * (taxRate / 100);
   const rawTotal = discountedSubtotal + tax;
   const minimum = pricing.minimumCharge || 0;
@@ -155,7 +184,7 @@ export function computeTotals(schema: any, fieldValues: Record<string, any>, add
   const total = rawTotal > 0 ? Math.max(rawTotal, minimum) : 0;
   const depositPct = pricing.depositPercent ?? 0;
   const deposit = depositPct > 0 && total > 0 ? total * (depositPct / 100) : 0;
-  return { subtotal, discountAmount, taxRate, tax, rawTotal, minimum, belowMin, total, depositPct, deposit, ctx };
+  return { subtotal, discountAmount, taxRate, tax, rawTotal, minimum, belowMin, total, depositPct, deposit, ctx, lineItems: [], hasErrors: false, valid: !error, error };
 }
 
 export function monthlyQuoteTotal(quotes: SavedQuote[]): number {

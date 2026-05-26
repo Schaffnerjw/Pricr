@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getQuotes } from "../storage";
 import { SavedQuote } from "../types";
+import { sumLineItems } from "../utils/pricingEngine";
 
 const HOUR = 3600000;
 const DAY = 86400000;
@@ -62,7 +63,7 @@ export function computeBusinessAnalytics(all: SavedQuote[]): BusinessAnalytics {
   const accepted = quotes.filter(isAccepted);
   const declined = quotes.filter(isDeclined);
   const sent = quotes.filter(isSent);
-  const totalQuoted = quotes.reduce((s, q) => s + (q.total || 0), 0);
+  const totalQuoted = sumLineItems(quotes); // shared reducer (pricingEngine) — SavedQuote has a numeric total
   const avgQuoteValue = totals.length ? Math.round(totals.reduce((a, b) => a + b, 0) / totals.length) : 0;
   const largestQuote = totals.length ? totals[totals.length - 1] : 0;
   const commonRange = totals.length >= 4 ? { low: Math.round(totals[Math.floor(totals.length * 0.25)]), high: Math.round(totals[Math.floor(totals.length * 0.75)]) } : null;

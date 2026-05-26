@@ -2,7 +2,8 @@ import { Feather } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { useState } from "react";
 import { ActivityIndicator, Alert, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { B, MASTER_CODE, SIGN_BASE } from "../constants/brand";
+import { B, SIGN_BASE } from "../constants/brand";
+import { masterAuthHeaders } from "../utils/masterAuth";
 import { PlatformBiz, usePlatformAnalytics } from "../hooks/usePlatformAnalytics";
 import { isSupabaseConfigured } from "../lib/supabase";
 import { s } from "../styles";
@@ -19,7 +20,7 @@ export function SuperAdminAnalyticsScreen({ onBack }: { onBack: () => void }) {
 
   const exportCsv = async () => {
     try {
-      const res = await fetch(`${SIGN_BASE}/admin/export`, { method: "POST", headers: { "x-master-code": MASTER_CODE } });
+      const res = await fetch(`${SIGN_BASE}/admin/export`, { method: "POST", headers: { ...masterAuthHeaders() } });
       const csv = await res.text();
       if (Platform.OS === "web") { const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); link.download = "pricr-businesses.csv"; link.click(); }
       else Alert.alert("Export ready", "CSV export downloads on the web app.");

@@ -1,4 +1,7 @@
 import { AddOn, FieldGroup, FieldUnit, QuoteSchema, QuoteSection, SchemaField, SummaryLine } from "../types";
+import { SchemaOption } from "../types/schema";
+import { slugId } from "./helpers";
+import { optionPrice } from "./quote";
 
 // The unit choices the import editor / wizard offer the human. These are HUMAN-facing labels.
 export type VerifiedUnit = "sq ft" | "lf" | "hour" | "each" | "flat" | "section" | "other";
@@ -30,16 +33,6 @@ const GROUP_FOR_UNIT: Record<string, FieldGroup> = {
   hr: "details", each: "extras", vehicle: "details", flat: "fees", percent: "fees",
 };
 
-// camelCase id from a label, unique against ids already used.
-function slugId(label: string, used: Set<string>): string {
-  const base = String(label || "field").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ")
-    .map((w, i) => (i === 0 ? w : w.charAt(0).toUpperCase() + w.slice(1))).join("") || "field";
-  let id = base; let n = 2;
-  while (used.has(id) || /^\d/.test(id)) { id = /^\d/.test(id) ? `f${id}` : `${base}${n++}`; }
-  used.add(id);
-  return id;
-}
-
 // ── THE deterministic builder. Pure TypeScript: structured, human-verified input in → exact
 // QuoteSchema out. No AI, no parsing, no possible failure. Used by BOTH the import flow and the wizard.
 export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
@@ -49,6 +42,9 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
   const addOns: AddOn[] = [];
   const terms: string[] = [];
   const lines: SummaryLine[] = [];
+  // Exact option metadata (id + rate) per field — built here where the rates are known, so the pricing
+  // engine can look rates up by ID and never by fuzzy name matching.
+  const optionsByField: Record<string, SchemaOption[]> = {};
 
   // 1) Grouped priced choices (selectors) — the antidote to one-field-per-product. A category of
   //    same-unit items collapses to ONE selector (+ a quantity for per-unit pricing) instead of N fields.
@@ -64,6 +60,8 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
     // selector falls back to the first option so an unset selector still prices something.
     const fallback = sel.optional ? "0" : optKeys[0].key;
     const rateExpr = optKeys.map(o => `${selId} == ${JSON.stringify(o.opt)} ? ${o.key}`).join(" : ") + ` : ${fallback}`;
+    // Exact options for the engine: id = the rate key without its "Rate" suffix; label IS the stored value.
+    optionsByField[selId] = opts.map((o, i) => ({ id: optKeys[i].key.replace(/Rate$/, ""), label: o.name, rate: o.rate, unit }));
 
     if (sel.quantityLabel) {
       // Per-unit: quantity × selected option's rate.
@@ -92,6 +90,7 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
         fields.push({ id, label: item.name, type: "toggle", unit: "flat", group: "fees" });
         terms.push(`(${id} ? ${rateKey} : 0)`);
         lines.push({ label: item.name, value: rateKey, showIf: `${id} == true` });
+        optionsByField[id] = [{ id, label: item.name, rate: Number(item.price) || 0, unit: "flat" }];
       } else {
         const unit = UNIT_MAP[item.unit] || "each";
         const field: SchemaField = { id, label: item.name, type: "number", unit, group: GROUP_FOR_UNIT[unit] || "dimensions", placeholder: item.notes?.trim() ? item.notes.trim() : `Enter ${item.name.toLowerCase()}` };
@@ -99,6 +98,7 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
         const term = `(${id} || 0) * ${rateKey}`;
         terms.push(term);
         lines.push({ label: `${item.name} ({${id}})`, value: term });
+        optionsByField[id] = [{ id, label: item.name, rate: Number(item.price) || 0, unit }];
       }
     }
   }
@@ -117,27 +117,60 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
     addOns,
     calculation: terms.length ? terms.join(" + ") : "0",
     summaryLines: lines,
-    sections: deriveSections(fields, pricing),
+    sections: deriveSections(fields, pricing, optionsByField),
   };
+}
+
+// Countable "each" units are independent items the rep can pick several of; measured units (sqft/lf/…)
+// are alternatives where one material is chosen and measured once.
+const COUNTABLE_UNITS = new Set<FieldUnit>(["each", "vehicle", "room", "load", "ton"]);
+
+// Best-effort exact rate for a selector option from the pricing table (used only on the Kit re-derive
+// path, which has fields+pricing but not the original option→rate map). Exact key first, then a
+// last-resort fuzzy match so a re-derived schema still prices rather than breaking.
+function reconstructOptions(field: SchemaField, pricing: Record<string, number>): SchemaOption[] {
+  const used = new Set<string>();
+  return (field.options || []).filter(o => o && o !== "None").map(name => {
+    const key = slugId(name, used) + "Rate";
+    const rate = typeof pricing[key] === "number" ? pricing[key] : (optionPrice(name, pricing) ?? 0);
+    return { id: slugId(name, new Set()), label: name, rate, unit: field.unit || "each" };
+  });
 }
 
 // Derive the single-page render metadata from a built schema's fields. Deterministic and reusable
 // (also called by QuoteScreen after the in-quote Kit agent rewrites a schema, so the new UI persists).
 // Pairs each material selector with a same-unit quantity field (MATERIAL_MEASUREMENT), treats lone
-// number fields as rate × quantity (LABOR), and groups toggles into one FLAT_RATE section.
-export function deriveSections(fields: SchemaField[], pricing: Record<string, number>): QuoteSection[] {
+// number fields as rate × quantity (LABOR), and groups toggles into one FLAT_RATE section. When
+// `optionsByField` is supplied (the build path) options carry EXACT ids+rates; otherwise they are
+// reconstructed from pricing.
+export function deriveSections(
+  fields: SchemaField[],
+  pricing: Record<string, number>,
+  optionsByField?: Record<string, SchemaOption[]>,
+): QuoteSection[] {
   const out: QuoteSection[] = [];
   const usedQty = new Set<string>();
+  const opts = (f: SchemaField): SchemaOption[] => optionsByField?.[f.id] || reconstructOptions(f, pricing);
   for (const sel of fields.filter(f => f.type === "selector")) {
     const qty = fields.find(f => (f.type === "number" || f.type === "area") && f.unit === sel.unit && !usedQty.has(f.id));
-    if (qty) { usedQty.add(qty.id); out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit }); }
-    else out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit }); // pick-one tier, no quantity
+    const options = opts(sel);
+    if (qty) {
+      usedQty.add(qty.id);
+      // Per-unit selector: alternatives unless the unit is countable (e.g. lighting fixtures → multi).
+      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit, options, allowMultiSelect: COUNTABLE_UNITS.has((sel.unit as FieldUnit)) });
+    } else {
+      // Flat pick-one tier (packages): single-select alternatives.
+      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit, options, allowMultiSelect: false });
+    }
   }
   for (const num of fields.filter(f => (f.type === "number" || f.type === "area") && !usedQty.has(f.id))) {
-    out.push({ id: num.id, name: num.label, pattern: "LABOR", quantityFieldId: num.id, unit: num.unit, laborRate: pricing[`${num.id}Rate`] ?? 0 });
+    out.push({ id: num.id, name: num.label, pattern: "LABOR", quantityFieldId: num.id, unit: num.unit, laborRate: pricing[`${num.id}Rate`] ?? 0, options: opts(num), allowMultiSelect: false });
   }
   const toggles = fields.filter(f => f.type === "toggle");
-  if (toggles.length) out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: toggles.map(f => f.id) });
+  if (toggles.length) {
+    const options: SchemaOption[] = toggles.map(t => (optionsByField?.[t.id]?.[0]) || { id: t.id, label: t.label, rate: pricing[`${t.id}Rate`] ?? 0, unit: "flat" });
+    out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: toggles.map(f => f.id), options, allowMultiSelect: true });
+  }
   return out;
 }
 

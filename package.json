@@ -11,7 +11,8 @@
     "web": "expo start --web",
     "pwa:icons": "node scripts/generate-pwa-icons.js",
     "logo": "node scripts/generate-logo.js",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test": "jest"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
@@ -56,10 +57,13 @@
   },
   "devDependencies": {
     "@napi-rs/canvas": "^1.0.0",
+    "@types/jest": "^29.5.14",
     "@types/react": "~19.1.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
+    "jest": "^29.7.0",
     "jimp": "^1.6.1",
+    "ts-jest": "^29.4.11",
     "typescript": "~5.9.2"
   },
   "private": true
