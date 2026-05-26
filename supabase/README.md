@@ -44,6 +44,9 @@ After `schema.sql`, run these in order in the SQL editor (they fix the initial s
 1. `migrations/0001_fix_rls_and_app_storage.sql` — fixes RLS recursion (SECURITY DEFINER `user_business_ids()`), adds `businesses.code` + `businesses.config` jsonb.
 2. `migrations/0002_grant_authenticated.sql` — table grants for the `authenticated` role (the `anon` role stays ungranted, so nothing is public).
 3. `migrations/0003_business_insert_bootstrap.sql` — splits the businesses policy so INSERT is open while select/update/delete stay members-only. Without this, creating the first business deadlocks. **Idempotent — safe to re-run; it prints the resulting 4 policies.**
+4. `migrations/0004_signature_and_terms.sql` — signature + remote-signing columns on `quotes` (incl. `signing_token`) and `terms_and_conditions` on `businesses`.
+5. `migrations/0005_username_login_lookup.sql` — username→business-code lookup RPC for username+password login.
+6. `migrations/0006_signing_audit.sql` — signing audit trail: `signer_ip`, `signer_user_agent`, `signer_email`, and an `audit_log` jsonb on `quotes`. Powers the Certificate of Completion and the signing-confirmation emails. **Idempotent.**
 
 Also enable **anonymous sign-ins** (Auth → Providers/Settings). The app authenticates every device with an anonymous Supabase session so `auth.uid()` exists for RLS — the contractor never sees a login screen.
 

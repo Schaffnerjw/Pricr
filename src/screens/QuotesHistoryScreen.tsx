@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useState } from "react";
-import { ActivityIndicator, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { B } from "../constants/brand";
+import { ActivityIndicator, Linking, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { B, SIGN_BASE } from "../constants/brand";
 import { QuoteRow, QuoteStatus, useQuotes } from "../hooks/useQuotes";
 import { s } from "../styles";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
@@ -34,6 +34,12 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
       signedAt: q.signed_at ? new Date(q.signed_at).getTime() : undefined,
       termsAndConditions,
     });
+  };
+
+  // Open the public Certificate of Completion (audit trail) in the device browser. Token-gated.
+  const openCertificate = (q: QuoteRow) => {
+    if (!q.signing_token) return;
+    Linking.openURL(`${SIGN_BASE}/sign/${encodeURIComponent(q.signing_token)}/certificate`).catch(() => {});
   };
 
   const NewBadge = () => (
@@ -77,7 +83,9 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
             <Text style={[s.historyMeta, { color: pal.textMuted }]}>{formatDate(new Date(selected.created_at).getTime())}</Text>
             <Text style={[s.totalAmount, { color: pal.text, marginTop: 8 }]}>{formatMoney(selected.total || 0)}</Text>
             {selected.signed_at && (
-              <Text style={[s.historyMeta, { color: B.green, marginTop: 6 }]}>Signed {formatDate(new Date(selected.signed_at).getTime())}</Text>
+              <Text style={[s.historyMeta, { color: B.green, marginTop: 6 }]}>
+                Signed by {selected.customer_name || "client"} on {formatDate(new Date(selected.signed_at).getTime())}
+              </Text>
             )}
           </View>
 
@@ -85,6 +93,12 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
             <TouchableOpacity style={[s.btn, { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: accent }]} onPress={() => downloadSignedPDF(selected)}>
               <Feather name="download" size={16} color={ON_PRIMARY} />
               <Text style={[s.btnText, { color: ON_PRIMARY }]}>Download Signed PDF</Text>
+            </TouchableOpacity>
+          )}
+          {selected.signed_at && selected.signing_token && (
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: accent, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }]} onPress={() => openCertificate(selected)}>
+              <Feather name="award" size={16} color={accent} />
+              <Text style={[s.btnSecondaryText, { color: accent }]}>View Certificate</Text>
             </TouchableOpacity>
           )}
           {isAdmin && (
