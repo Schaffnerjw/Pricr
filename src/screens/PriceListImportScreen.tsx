@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
+import { PROXY_URL } from "../config";
 import { API_URL, B } from "../constants/brand";
 import { PRICE_LIST_UNDERSTAND_PROMPT } from "../constants/prompts";
 import { clearImportProgress, getImportProgress, saveImportProgress } from "../storage";
@@ -11,6 +12,8 @@ import { parseSchemaFromResponse } from "../utils/helpers";
 import { buildSchemaFromVerified, VerifiedAddOn, VerifiedCategory, VerifiedItem, VerifiedUnit, verifiedItemCount } from "../utils/buildSchemaFromVerified";
 
 const UNITS: VerifiedUnit[] = ["sq ft", "lf", "hour", "each", "flat", "section", "other"];
+// Carries a user-facing message for a handled Phase 1 failure (vs. network/timeout/unknown).
+class ImportError extends Error {}
 const numOnly = (v: string) => v.replace(/[^0-9.]/g, "");
 let uid = 0;
 const newId = () => `it_${Date.now()}_${uid++}`;
@@ -70,20 +73,39 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
 
   const persist = (over: any = {}) => saveImportProgress({ phase, text, trade, summary, categories, catIndex, addOns, deposit, ...over });
 
-  // ── Phase 1: AI understanding ──
+  // ── Phase 1: AI READS the price list (proxy → Claude). Returns categories for the human to verify. ──
   const understand = async () => {
     if (!text.trim()) return;
     setPhase("loading"); setError("");
+
+    // Price list rides in the user message (NOT the system prompt). max_tokens 4000 so the categories
+    // JSON for a long list is never truncated.
+    const payload = { model: "claude-sonnet-4-5", max_tokens: 4000, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] };
+    const payloadStr = JSON.stringify(payload);
+    console.log("[Import] Phase 1 starting, text length:", text.length);
+    console.log("[Import] proxy URL:", PROXY_URL);
+    console.log("[Import] request payload size:", payloadStr.length);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000); // 60s ceiling so it can't hang forever
     try {
-      const res = await fetch(API_URL, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 4000, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] }),
-      });
-      const data = await res.json();
-      const raw = data?.content?.[0]?.text;
-      console.log("[Import] understanding raw:", typeof raw === "string" ? raw.substring(0, 400) : JSON.stringify(data));
-      const parsed = parseSchemaFromResponse(raw);
-      if (!parsed || !Array.isArray(parsed.categories)) throw new Error("no categories");
+      const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: payloadStr, signal: controller.signal });
+      clearTimeout(timer);
+      console.log("[Import] response status:", response.status);
+      console.log("[Import] response ok:", response.ok);
+      const rawText = await response.text();
+      console.log("[Import] raw response first 500 chars:", rawText.substring(0, 500));
+
+      // The proxy returns Anthropic's JSON envelope ({ content: [{ text }] } or { error }).
+      let data: any;
+      try { data = JSON.parse(rawText); }
+      catch { throw new ImportError("Got a response but couldn't read it — try again."); }
+      if (data && data.error) { console.error("[Import] proxy/anthropic error:", JSON.stringify(data.error)); throw new ImportError("Got a response but couldn't read it — try again."); }
+      const claudeText = data?.content?.[0]?.text;
+      if (typeof claudeText !== "string") throw new ImportError("Got a response but couldn't read it — try again.");
+
+      const parsed = parseSchemaFromResponse(claudeText); // strips any ```json fences + extracts the {...} block
+      if (!parsed || !Array.isArray(parsed.categories)) throw new ImportError("Got a response but couldn't read it — try again.");
 
       // Map AI output → verified categories; pull any "add-ons"-style category into the add-ons list.
       const cats: VerifiedCategory[] = [];
@@ -99,17 +121,22 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
           cats.push({ id: newId(), name: String(c.name || "Services"), items });
         }
       }
-      if (cats.length === 0 && extraAddOns.length === 0) throw new Error("nothing extracted");
+      if (cats.length === 0 && extraAddOns.length === 0) throw new ImportError("Got a response but couldn't read it — try again.");
 
       const t = String(parsed.trade || "");
       const dep = Number(parsed.depositPercent) || 0;
       setTrade(t); setSummary(String(parsed.summary || "")); setCategories(cats); setAddOns(extraAddOns); setDeposit(dep); setCatIndex(0);
       setPhase("verify");
       saveImportProgress({ phase: "verify", text, trade: t, summary: String(parsed.summary || ""), categories: cats, catIndex: 0, addOns: extraAddOns, deposit: dep });
-    } catch (e) {
-      console.error("[Import] understand error:", e instanceof Error ? e.message : String(e));
+    } catch (e: any) {
+      clearTimeout(timer);
+      let msg = "Couldn't read your price list automatically. You can enter your pricing manually instead.";
+      if (e?.name === "AbortError") msg = "This is taking too long — try again.";
+      else if (e instanceof ImportError) msg = e.message;
+      else if (e instanceof TypeError) msg = "Connection failed — check your internet and try again.";
+      console.error("[Import] Phase 1 failed:", e?.name || "Error", "-", e?.message || String(e));
       setPhase("paste");
-      setError("Couldn't read your price list automatically. You can enter your pricing manually instead.");
+      setError(msg);
     }
   };
 

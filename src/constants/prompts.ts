@@ -275,6 +275,8 @@ Return ONLY valid JSON, no markdown fences, no explanation text:
 // categories for a human to verify (it does NOT build the schema — a deterministic function does that).
 export const PRICE_LIST_UNDERSTAND_PROMPT = `A contractor has pasted their price list. Read it carefully and extract all pricing information.
 
+CRITICAL: Return ONLY the raw JSON object. No markdown. No backticks. No code fences. No explanation. The very first character of your response must be { and the very last character must be }
+
 Return ONLY this JSON — no markdown, no explanation:
 {
   "trade": "detected business type",
