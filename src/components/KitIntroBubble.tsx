@@ -83,7 +83,7 @@ export function KitIntroBubble({ business, onSetupTerms }: {
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={openBubble}
-          style={{ height: 44, borderRadius: 22, paddingHorizontal: 22, backgroundColor: accent, alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 6 }}
+          style={{ height: 44, borderRadius: 22, paddingHorizontal: 22, backgroundColor: accent, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: "rgba(255,255,255,0.15)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 }}
         >
           <Text style={{ color: onAccent, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Kit</Text>
         </TouchableOpacity>

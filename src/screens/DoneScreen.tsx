@@ -189,7 +189,8 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         {/* Secondary actions — medium, outlined */}
         <View style={{ gap: 12 }}>
           {hasQuotes && (
-            <TouchableOpacity style={[s.btnSecondary, { borderColor: secondaryColor + "80" }]} onPress={onOpenQuoteTool}>
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: secondaryColor + "80", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onOpenQuoteTool}>
+              <Feather name="plus" size={16} color={secondaryColor} />
               <Text style={[s.btnSecondaryText, { color: secondaryColor }]}>New Quote</Text>
             </TouchableOpacity>
           )}

@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, LayoutAnimation, Modal, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
+import { Alert, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
 import { AnimatedDollar } from "../components/AnimatedDollar";
 import { BrandHeader } from "../components/BrandHeader";
 import { ClosingCard } from "../components/ClosingCard";
@@ -51,7 +51,9 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const [showOverview, setShowOverview] = useState(false);       // section overview / negotiation screen
   const [comparingField, setComparingField] = useState<string | null>(null); // selector with the comparison panel open
   const [activeSections, setActiveSections] = useState<Record<string, boolean>>({}); // single-page: which sections are ON
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({}); // single-page: tap header to hide content (values kept)
   const [compareSection, setCompareSection] = useState<string | null>(null);          // single-page comparison sheet
+  const [showCustomer, setShowCustomer] = useState(false);                              // customer-facing read-only view
   const scrollRef = useRef<ScrollView>(null);
   const sectionY = useRef<Record<string, number>>({});           // section content offsets for "Edit" jumps
 
@@ -65,6 +67,9 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const pal = getBrandPalette(business);          // always-readable palette derived from brand colors
   const primaryColor = pal.primary;
   const onPrimary = ON_PRIMARY; // brand look: always white text/icons on the primary color
+  const PILL_MAX = Platform.OS === "web" ? 180 : 140; // FIX 7: keep pills compact for long material names
+  const COMPLETE_GREEN = "#22C55E";                   // FIX 3: section-complete accent
+  const COMPLETE_TINT = "rgba(34,197,94,0.10)";       // subtle green card tint when a section is done
 
   const sections = useMemo(() => groupFields(schema?.fields ?? []), [schema]);
   const setField = (id: string, value: any) => { if (readOnly) return; setFieldValues(p => ({ ...p, [id]: value })); };
@@ -207,6 +212,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       exp["addons"] = false;
       setExpanded(exp);
       setActiveSections({}); // single-page: every section starts OFF; the rep taps to include
+      setCollapsedGroups({});
     });
   }, [schema, business.code]);
 
@@ -253,6 +259,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setShowOverview(false);
     setExpanded(p => ({ ...p, [key]: true }));        // legacy field-group sections
     setActiveSections(p => ({ ...p, [key]: true }));  // single-page sections
+    setCollapsedGroups(p => ({ ...p, [key]: false })); // ensure its content is visible
     setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, (sectionY.current[key] || 0) - 12), animated: true }), 120);
   };
 
@@ -295,6 +302,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setFieldValues(defaults);
     setSelectedAddOns([]);
     setActiveSections({});
+    setCollapsedGroups({});
     setDiscountOpen(false); setDiscountValue(""); setDiscountReason("");
     setLastSavedId(null); setSaved(false);
     setShowTotal(false);
@@ -578,18 +586,25 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     });
   };
 
-  // Tap a section card: ON → expand inline + scroll into view; OFF → collapse + clear its values.
+  // Tap a checklist card: ON → include section, expand inline + scroll into view; OFF → remove + clear.
   const toggleGroup = (group: any) => {
     if (readOnly) return;
     const willActivate = !activeSections[group.id];
     if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
     setActiveSections(p => ({ ...p, [group.id]: willActivate }));
     if (willActivate) {
+      setCollapsedGroups(p => ({ ...p, [group.id]: false })); // freshly added → show its content
       if (Platform.OS !== "web") Haptics.selectionAsync();
       setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, (sectionY.current[group.id] || 0) - 12), animated: true }), 150);
     } else {
       clearGroupFields(group);
     }
+  };
+
+  // FIX 6: tap a section's header to collapse/expand its content (the values are kept either way).
+  const toggleCollapse = (id: string) => {
+    if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.create(200, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+    setCollapsedGroups(p => ({ ...p, [id]: !p[id] }));
   };
 
   // A large measurement input — big number, unit on the right, numeric keyboard, clear (×). Keyed by
@@ -650,12 +665,12 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
               const selected = !!fieldValues[selKey(sec, opt)];
               const price = optionPrice(opt, pricing);
               return (
-                <PressableScale key={opt} onPress={() => toggleMultiItem(sec, opt)} style={{ minWidth: 100, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    {selected && <Feather name="check" size={14} color={onPrimary} />}
-                    <Text style={{ color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
+                <PressableScale key={opt} onPress={() => toggleMultiItem(sec, opt)} style={{ minWidth: 100, maxWidth: PILL_MAX, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
+                    {selected && <Feather name="check" size={14} color={onPrimary} style={{ marginTop: 2 }} />}
+                    <Text numberOfLines={2} style={{ flexShrink: 1, color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
                   </View>
-                  {price != null && <Text style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>${price.toLocaleString()}/{unitOne}</Text>}
+                  {price != null && <Text numberOfLines={1} style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>${price.toLocaleString()}/{unitOne}</Text>}
                 </PressableScale>
               );
             })}
@@ -692,12 +707,12 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             const selected = chosen === opt;
             const price = optionPrice(opt, pricing);
             return (
-              <PressableScale key={opt} onPress={() => !readOnly && setField(sec.materialFieldId, opt)} style={{ minWidth: 100, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                  {selected && <Feather name="check" size={14} color={onPrimary} />}
-                  <Text style={{ color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
+              <PressableScale key={opt} onPress={() => !readOnly && setField(sec.materialFieldId, opt)} style={{ minWidth: 100, maxWidth: PILL_MAX, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
+                  {selected && <Feather name="check" size={14} color={onPrimary} style={{ marginTop: 2 }} />}
+                  <Text numberOfLines={2} style={{ flexShrink: 1, color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
                 </View>
-                {price != null && <Text style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>{sec.quantityFieldId ? `$${price.toLocaleString()}/${unitLabel(sec.unit).replace(/s$/, "")}` : `$${price.toLocaleString()}`}</Text>}
+                {price != null && <Text numberOfLines={1} style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>{sec.quantityFieldId ? `$${price.toLocaleString()}/${unitLabel(sec.unit).replace(/s$/, "")}` : `$${price.toLocaleString()}`}</Text>}
               </PressableScale>
             );
           })}
@@ -743,7 +758,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           return (
             <PressableScale key={id} onPress={() => !readOnly && setField(id, !on)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: on ? primaryColor : pal.surface, borderColor: on ? primaryColor : pal.border, borderWidth: 1, borderRadius: 14, padding: 16 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
-                <Feather name={on ? "check-circle" : "circle"} size={20} color={on ? onPrimary : pal.textMuted} />
+                <Feather name={on ? "check-square" : "square"} size={20} color={on ? onPrimary : pal.textMuted} />
                 <Text style={{ color: on ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{f.label}</Text>
               </View>
               {price > 0 && <Text style={{ color: on ? onPrimary : primaryColor, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>${price.toLocaleString()}</Text>}
@@ -774,14 +789,19 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
               {displaySections.map((g) => {
                 const on = !!activeSections[g.id];
                 const sub = groupSubtotal(g);
+                const complete = on && sub > 0;                 // FIX 3: toggled on AND has a value
+                const cardBg = complete ? COMPLETE_TINT : pal.surface;
+                const cardBorder = complete ? COMPLETE_GREEN : (on ? primaryColor : pal.border);
                 return (
-                  <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ width: "47.5%", flexGrow: 1, minWidth: 140, backgroundColor: on ? primaryColor : pal.surface, borderColor: on ? primaryColor : pal.border, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }}>
+                  <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ width: "47.5%", flexGrow: 1, minWidth: 140, backgroundColor: cardBg, borderColor: cardBorder, borderWidth: complete || on ? 2 : 1, borderRadius: 16, padding: 14, gap: 8 }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                      <Feather name={iconFor(g.name)} size={20} color={on ? onPrimary : primaryColor} />
-                      <Feather name={on ? "check-circle" : "plus-circle"} size={18} color={on ? onPrimary : pal.textMuted} />
+                      <Feather name={iconFor(g.name)} size={20} color={complete ? COMPLETE_GREEN : primaryColor} />
+                      {complete
+                        ? <Feather name="check-circle" size={18} color={COMPLETE_GREEN} />
+                        : <Feather name={on ? "circle" : "plus-circle"} size={18} color={on ? primaryColor : pal.textMuted} />}
                     </View>
-                    <Text numberOfLines={2} style={{ color: on ? onPrimary : pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{g.name}</Text>
-                    {on && sub > 0 && <Text style={{ color: onPrimary, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}
+                    <Text numberOfLines={2} style={{ color: pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{g.name}</Text>
+                    {complete && <Text style={{ color: COMPLETE_GREEN, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}
                   </PressableScale>
                 );
               })}
@@ -789,27 +809,31 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         )}
 
-        {activeGroups.map((g) => (
-          <View key={g.id} style={{ gap: 16, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 18, padding: 16 }} onLayout={e => { sectionY.current[g.id] = e.nativeEvent.layout.y; }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Feather name={iconFor(g.name)} size={18} color={primaryColor} />
-                <Text style={[s.qSectionTitle, { color: pal.text }]}>{g.name}</Text>
-              </View>
-              {!readOnly && (
-                <TouchableOpacity onPress={() => toggleGroup(g)} hitSlop={8}>
-                  <Feather name="x" size={20} color={pal.textMuted} />
-                </TouchableOpacity>
-              )}
+        {activeGroups.map((g) => {
+          const collapsed = !readOnly && !!collapsedGroups[g.id];
+          const sub = groupSubtotal(g);
+          return (
+            <View key={g.id} style={{ gap: 16, backgroundColor: pal.surface, borderColor: sub > 0 ? COMPLETE_GREEN : pal.border, borderWidth: 1, borderRadius: 18, padding: 16 }} onLayout={e => { sectionY.current[g.id] = e.nativeEvent.layout.y; }}>
+              {/* FIX 6: the full-width header row toggles collapse (easy one-thumb reach); chevron shows state */}
+              <Pressable onPress={() => !readOnly && toggleCollapse(g.id)} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                  <Feather name={iconFor(g.name)} size={18} color={primaryColor} />
+                  <Text style={[s.qSectionTitle, { color: pal.text }]}>{g.name}</Text>
+                  {sub > 0 && <Feather name="check-circle" size={16} color={COMPLETE_GREEN} />}
+                </View>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  {collapsed && sub > 0 && <Text style={{ color: COMPLETE_GREEN, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}
+                  {!readOnly && <Feather name={collapsed ? "chevron-right" : "chevron-down"} size={22} color={pal.textMuted} />}
+                </View>
+              </Pressable>
+              {!collapsed && g.members.map((sec: any) => (
+                <View key={sec.id} style={{ gap: 10 }}>
+                  {renderSectionContent(sec)}
+                </View>
+              ))}
             </View>
-            {g.members.map((sec: any) => (
-              <View key={sec.id} style={{ gap: 10 }}>
-                {g.members.length > 1 && <Text style={[s.fieldLabel, { color: pal.textMuted }]}>{memberSubLabel(sec)}</Text>}
-                {renderSectionContent(sec)}
-              </View>
-            ))}
-          </View>
-        ))}
+          );
+        })}
       </>
     );
   };
@@ -860,7 +884,11 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             <Text style={{ color: onPrimary, fontSize: 11, fontWeight: "800", letterSpacing: 1, fontFamily: "DMSans_700Bold" }}>PREVIEW</Text>
           </View>
         ) : (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            {/* FIX 12: hand-the-phone customer view */}
+            <TouchableOpacity onPress={() => setShowCustomer(true)} hitSlop={8} accessibilityLabel="Show customer view">
+              <Feather name="eye" size={20} color={primaryColor} />
+            </TouchableOpacity>
             <View style={[s.roleBadge, isAdmin && { borderColor: primaryColor + "60", backgroundColor: primaryColor + "15" }]}>
               <Text style={s.roleBadgeText}>{isAdmin ? "Admin" : "Rep"}</Text>
             </View>
@@ -881,13 +909,17 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         </View>
       )}
 
-      <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: readOnly ? 40 : 200 }} keyboardShouldPersistTaps="handled">
-        <View style={{ gap: 6 }}>
-          <Text style={[s.fieldLabel, { color: pal.textMuted }]}>CLIENT NAME</Text>
-          <TextInput editable={!readOnly} style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Who is this quote for?" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
-          {!customerName.trim() && !readOnly && <Text style={[s.qHint, { color: pal.textMuted }]}>Optional, but adding a name personalizes the quote and PDF.</Text>}
+      {/* FIX 5: client name in a fixed bar (never scrolls away) so the rep always sees who it's for */}
+      {!readOnly && (
+        <View style={{ paddingHorizontal: 20, paddingTop: 6, paddingBottom: 4, flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Feather name="user" size={16} color={pal.textMuted} />
+          <TextInput style={{ flex: 1, backgroundColor: pal.surface, color: pal.text, borderColor: pal.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: Platform.OS === "ios" ? 10 : 6, fontFamily: "DMSans_600SemiBold", fontSize: 15 }} placeholder="Client name" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
         </View>
+      )}
 
+      {/* FIX 2: keep inputs + footer above the keyboard on both platforms */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
+      <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: readOnly ? 40 : 32 }} keyboardShouldPersistTaps="handled">
         {!ready ? (
           <View style={{ gap: 14 }}>
             <SkeletonCard height={20} /><SkeletonCard /><SkeletonCard height={90} /><SkeletonCard height={48} />
@@ -967,7 +999,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
       {/* Sticky live total bar (+ minimum warning, + typical range) — hidden in read-only preview */}
       {!readOnly && (
-      <View style={[s.qStickyWrap, { backgroundColor: pal.background, borderTopColor: pal.border, borderTopWidth: 1 }]}>
+      <View style={[s.qStickyWrap, { position: "relative", backgroundColor: pal.background, borderTopColor: pal.border, borderTopWidth: 1 }]}>
         {t.belowMin && (
           <View style={s.qMinWarn}>
             <Feather name="alert-triangle" size={14} color={B.midnight} />
@@ -983,8 +1015,9 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             <AnimatedDollar value={t.total} style={[s.qStickyTotal, { color: primaryColor }]} />
           </View>
           {t.total > 0 ? (
+            // FIX 4: Review button shows the live total
             <PressableScale onPress={() => setShowOverview(true)} style={[s.qReviewBtn, { backgroundColor: primaryColor }]}>
-              <Text style={[s.qReviewText, { color: onPrimary }]}>Review</Text>
+              <Text style={[s.qReviewText, { color: onPrimary }]}>Review — {formatMoney(t.total)}</Text>
               <Feather name="chevron-up" size={18} color={onPrimary} />
             </PressableScale>
           ) : (
@@ -995,6 +1028,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         </View>
       </View>
       )}
+      </KeyboardAvoidingView>
 
       {showTotal && !readOnly && (
         <ClosingCard schema={computeSchema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
@@ -1123,8 +1157,58 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         </View>
       </Modal>
 
+      {/* ── FIX 12: Show Customer — clean, large, read-only view to hand the phone over ── */}
+      <Modal visible={showCustomer} animationType="slide" onRequestClose={() => setShowCustomer(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: pal.background }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 20, borderBottomWidth: 1, borderBottomColor: pal.border, gap: 12 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12, flex: 1 }}>
+              {business.brand.logoUri ? <Image source={{ uri: business.brand.logoUri }} style={{ width: 44, height: 44, borderRadius: 8 }} resizeMode="contain" /> : null}
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={1} style={{ color: pal.text, fontSize: 24, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>{business.name}</Text>
+                {customerName.trim() ? <Text numberOfLines={1} style={{ color: pal.textMuted, fontSize: 15, fontFamily: "DMSans_400Regular" }}>Prepared for {customerName.trim()}</Text> : null}
+              </View>
+            </View>
+            <TouchableOpacity onPress={() => setShowCustomer(false)} hitSlop={10}><Feather name="x" size={28} color={pal.textMuted} /></TouchableOpacity>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 24, gap: 22 }}>
+            {displayOverviewSections.length === 0 && <Text style={{ color: pal.textMuted, fontSize: 18, fontFamily: "DMSans_400Regular", textAlign: "center", marginTop: 48 }}>Your quote is being built…</Text>}
+            {displayOverviewSections.map(g => (
+              <View key={g.key} style={{ gap: 10 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                  <Text style={{ color: pal.text, fontSize: 21, fontWeight: "800", fontFamily: "Syne_700Bold", flex: 1 }}>{g.title}</Text>
+                  <Text style={{ color: primaryColor, fontSize: 21, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(g.subtotal)}</Text>
+                </View>
+                {g.lines.map((ln, i) => (
+                  <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", gap: 16, paddingLeft: 4 }}>
+                    <Text style={{ color: pal.textMuted, fontSize: 16, fontFamily: "DMSans_400Regular", flexShrink: 1 }}>{ln.label}</Text>
+                    <Text style={{ color: pal.text, fontSize: 16, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{formatMoney(ln.amount)}</Text>
+                  </View>
+                ))}
+              </View>
+            ))}
+            {t.discountAmount > 0 && (
+              <View style={{ flexDirection: "row", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: pal.border, paddingTop: 14 }}>
+                <Text style={{ color: pal.textMuted, fontSize: 17, fontFamily: "DMSans_400Regular" }}>Discount</Text>
+                <Text style={{ color: primaryColor, fontSize: 17, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>-{formatMoney(t.discountAmount)}</Text>
+              </View>
+            )}
+          </ScrollView>
+
+          <View style={{ padding: 24, borderTopWidth: 1, borderTopColor: pal.border, gap: 4 }}>
+            <Text style={{ color: pal.textMuted, fontSize: 14, fontWeight: "700", letterSpacing: 1.5, fontFamily: "DMSans_700Bold" }}>YOUR TOTAL</Text>
+            <Text style={{ color: primaryColor, fontSize: 52, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>{formatMoney(t.total)}</Text>
+            {t.depositPct > 0 && t.total > 0 && <Text style={{ color: pal.textMuted, fontSize: 16, fontFamily: "DMSans_400Regular" }}>{t.depositPct}% deposit today: {formatMoney(t.deposit)}</Text>}
+            <TouchableOpacity onPress={() => setShowCustomer(false)} style={[s.btnSecondary, { borderColor: pal.border, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 14 }]}>
+              <Feather name="edit-2" size={15} color={pal.text} />
+              <Text style={[s.btnSecondaryText, { color: pal.text }]}>Back to editing</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
       {isAdmin && !showTotal && !readOnly && (
-        <TouchableOpacity style={[s.kitCircle, { bottom: 150, backgroundColor: primaryColor, shadowColor: primaryColor }]} onPress={() => setAgentOpen(true)}>
+        <TouchableOpacity style={[s.kitCircle, { bottom: 150, backgroundColor: primaryColor, borderWidth: 2, borderColor: "rgba(255,255,255,0.15)", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 }]} onPress={() => setAgentOpen(true)}>
           <Feather name="message-circle" size={24} color={B.white} />
         </TouchableOpacity>
       )}

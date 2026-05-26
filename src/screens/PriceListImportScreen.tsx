@@ -272,6 +272,10 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
           <TouchableOpacity style={[styles.btnSec, { borderColor: primaryColor }]} onPress={() => { setCatIndex(0); setPhase("editor"); persist({ phase: "editor", catIndex: 0 }); }}>
             <Text style={[styles.btnSecTxt, { color: primaryColor }]}>Edit before continuing</Text>
           </TouchableOpacity>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, justifyContent: "center" }}>
+            <Feather name="info" size={13} color={B.muted} />
+            <Text style={{ color: B.muted, fontSize: 12, textAlign: "center", fontFamily: "DMSans_400Regular" }}>Your pricing can be updated anytime in Settings → Rebuild Quote Tool</Text>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );

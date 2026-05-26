@@ -311,6 +311,10 @@ Rules:
 - Put items that share a unit in the same category (all the per-sq-ft decking options together, all
   the per-linear-foot railing options together) so they render as one "pick a material + enter a
   measurement" section instead of many separate fields.
+- When a section has both panel/unit prices AND accessory prices (e.g. fence panels AND gates), keep
+  them as separate items with their correct prices. Do not use accessory prices (gates, posts,
+  hardware) as the main unit price. A fence panel at $18.30/lf and a gate at $200 each are TWO
+  different items — never let the gate's $200 become the panel's per-linear-foot rate.
 - If deposit percentage is mentioned capture it, otherwise 0
 - The summary field is shown to the user to confirm you understood their list correctly`;
 
