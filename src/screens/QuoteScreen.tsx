@@ -87,10 +87,31 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     }
   };
 
+  // ── Bug 2: multi-select for INDEPENDENT items ──
+  // A MATERIAL_MEASUREMENT section is SINGLE-select when its items are alternatives measured against
+  // one shared measurement (decking by sq ft — pick ONE material). It's MULTI-select when the items
+  // are independently countable (lighting fixtures, components by the "each"/unit) — the rep can
+  // include several and enter a quantity for each. Measurement units stay single; countable → multi.
+  const SINGLE_SELECT_UNITS = ["sqft", "lf", "hr", "ton", "room", "load", "yard"];
+  const isMultiSelect = (sec: any): boolean =>
+    sec?.pattern === "MATERIAL_MEASUREMENT" && !!sec.quantityFieldId && !SINGLE_SELECT_UNITS.includes(sec.unit);
+  // Per-item state keys for multi-select. Kept off the schema's declared fields — the single-page total
+  // is section-driven (see newLineItems), so these don't need to live in the pricing formula.
+  const selKey = (sec: any, opt: string) => `${sec.materialFieldId}::sel::${opt}`;
+  const qtyKey = (sec: any, opt: string) => `${sec.materialFieldId}::qty::${opt}`;
+
   // Dollar contribution of one section — zero until the rep makes a selection / enters a measurement.
   const sectionSubtotal = (sec: any): number => {
     const pricing = schema?.pricing || {};
     if (sec.pattern === "MATERIAL_MEASUREMENT") {
+      if (isMultiSelect(sec)) {
+        const sel = fieldById(sec.materialFieldId);
+        return (sel?.options || []).reduce((sum: number, opt: string) => {
+          if (!fieldValues[selKey(sec, opt)]) return sum;
+          const r = optionPrice(opt, pricing) || 0;
+          return sum + r * (Number(fieldValues[qtyKey(sec, opt)]) || 0);
+        }, 0);
+      }
       const chosen = fieldValues[sec.materialFieldId];
       if (!chosen) return 0;
       const rate = optionPrice(chosen, pricing);
@@ -121,6 +142,17 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           if (!fieldValues[id]) continue;
           const amt = pricing[`${id}Rate`] || 0;
           if (amt) items.push({ label: fieldById(id)?.label || id, amount: amt });
+        }
+        continue;
+      }
+      if (isMultiSelect(sec)) {
+        const sel = fieldById(sec.materialFieldId);
+        for (const opt of sel?.options || []) {
+          if (!fieldValues[selKey(sec, opt)]) continue;
+          const r = optionPrice(opt, pricing) || 0;
+          const q = Number(fieldValues[qtyKey(sec, opt)]) || 0;
+          const amt = r * q;
+          if (amt > 0) items.push({ label: `${opt} (${q.toLocaleString()} ${unitLabel(sec.unit)})`, amount: amt });
         }
         continue;
       }
@@ -537,6 +569,10 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         if (sec.materialFieldId) next[sec.materialFieldId] = "";
         if (sec.quantityFieldId) next[sec.quantityFieldId] = 0;
         (sec.itemFieldIds || []).forEach((id: string) => { next[id] = false; });
+        // Multi-select per-item selection + quantity keys.
+        if (isMultiSelect(sec)) {
+          for (const opt of fieldById(sec.materialFieldId)?.options || []) { delete next[selKey(sec, opt)]; next[qtyKey(sec, opt)] = 0; }
+        }
       }
       return next;
     });
@@ -556,21 +592,36 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     }
   };
 
-  // A large measurement input — big number, unit on the right, numeric keyboard, clear (×).
-  const renderMeasurement = (field: any, unit?: string) => {
-    const value = fieldValues[field.id];
+  // A large measurement input — big number, unit on the right, numeric keyboard, clear (×). Keyed by
+  // an arbitrary fieldValues id so multi-select items can each have their own quantity.
+  const renderMeasurementInput = (id: string, unit?: string) => {
+    const value = fieldValues[id];
     const filled = !!value && Number(value) > 0;
     return (
       <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: pal.surface, borderColor: filled ? primaryColor : pal.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 16 }}>
-        <TextInput editable={!readOnly} style={{ flex: 1, color: pal.text, fontSize: 24, fontWeight: "800", fontFamily: "Syne_700Bold", paddingVertical: 14 }} placeholder="0" placeholderTextColor={pal.textMuted} value={value ? value.toString() : ""} onChangeText={v => setField(field.id, v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
+        <TextInput editable={!readOnly} style={{ flex: 1, color: pal.text, fontSize: 24, fontWeight: "800", fontFamily: "Syne_700Bold", paddingVertical: 14 }} placeholder="0" placeholderTextColor={pal.textMuted} value={value ? value.toString() : ""} onChangeText={v => setField(id, v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
         <Text style={{ color: pal.textMuted, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold", marginLeft: 8 }}>{unitLabel(unit)}</Text>
         {filled && !readOnly && (
-          <TouchableOpacity onPress={() => setField(field.id, 0)} style={{ marginLeft: 10, padding: 4 }}>
+          <TouchableOpacity onPress={() => setField(id, 0)} style={{ marginLeft: 10, padding: 4 }}>
             <Feather name="x" size={18} color={pal.textMuted} />
           </TouchableOpacity>
         )}
       </View>
     );
+  };
+  const renderMeasurement = (field: any, unit?: string) => renderMeasurementInput(field.id, unit);
+
+  // Toggle one independent item in a multi-select section; clears its quantity when removed.
+  const toggleMultiItem = (sec: any, opt: string) => {
+    if (readOnly) return;
+    if (Platform.OS !== "web") Haptics.selectionAsync();
+    const on = !!fieldValues[selKey(sec, opt)];
+    setFieldValues(prev => {
+      const next = { ...prev };
+      if (on) { delete next[selKey(sec, opt)]; next[qtyKey(sec, opt)] = 0; }
+      else { next[selKey(sec, opt)] = true; }
+      return next;
+    });
   };
 
   // The running "qty × rate = $total" subtotal that fades in below a section's inputs.
@@ -585,6 +636,50 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const renderMaterialSection = (sec: any) => {
     const sel = fieldById(sec.materialFieldId);
     const pricing = schema?.pricing || {};
+
+    // Multi-select: independent items (e.g. lighting fixtures). Tap to add/remove; each selected item
+    // gets its own quantity input + running subtotal; the section total sums them.
+    if (isMultiSelect(sec)) {
+      const selectedOpts = (sel?.options || []).filter((opt: string) => fieldValues[selKey(sec, opt)]);
+      const total = sectionSubtotal(sec);
+      const unitOne = unitLabel(sec.unit).replace(/s$/, "");
+      return (
+        <View style={{ gap: 14 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }} keyboardShouldPersistTaps="handled">
+            {(sel?.options || []).map((opt: string) => {
+              const selected = !!fieldValues[selKey(sec, opt)];
+              const price = optionPrice(opt, pricing);
+              return (
+                <PressableScale key={opt} onPress={() => toggleMultiItem(sec, opt)} style={{ minWidth: 100, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    {selected && <Feather name="check" size={14} color={onPrimary} />}
+                    <Text style={{ color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
+                  </View>
+                  {price != null && <Text style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>${price.toLocaleString()}/{unitOne}</Text>}
+                </PressableScale>
+              );
+            })}
+          </ScrollView>
+          {selectedOpts.map((opt: string) => {
+            const price = optionPrice(opt, pricing) || 0;
+            const q = Number(fieldValues[qtyKey(sec, opt)]) || 0;
+            const lineTotal = price * q;
+            return (
+              <View key={opt} style={{ gap: 8, borderLeftWidth: 2, borderLeftColor: primaryColor, paddingLeft: 12 }}>
+                <Text style={{ color: pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt} <Text style={{ color: pal.secondary }}>· ${price.toLocaleString()}/{unitOne}</Text></Text>
+                {renderMeasurementInput(qtyKey(sec, opt), sec.unit)}
+                {lineTotal > 0 && subtotalRow(`${q.toLocaleString()} ${unitLabel(sec.unit)} × $${price.toLocaleString()}`, lineTotal)}
+              </View>
+            );
+          })}
+          {selectedOpts.length === 0 && !readOnly && <Text style={[s.qHint, { color: pal.textMuted }]}>Tap each item this job includes — you can pick more than one.</Text>}
+          {total > 0 && selectedOpts.length > 1 && (
+            <View style={{ borderTopWidth: 1, borderTopColor: pal.border, paddingTop: 10 }}>{subtotalRow("Section total", total)}</View>
+          )}
+        </View>
+      );
+    }
+
     const chosen = fieldValues[sec.materialFieldId];
     const qtyField = sec.quantityFieldId ? fieldById(sec.quantityFieldId) : null;
     const rate = chosen ? optionPrice(chosen, pricing) : null;
@@ -730,6 +825,13 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         for (const sec of g.members) {
           if (sec.pattern === "FLAT_RATE") {
             (sec.itemFieldIds || []).filter((id: string) => fieldValues[id]).forEach((id: string) => lines.push({ label: fieldById(id)?.label || id, amount: pricing[`${id}Rate`] || 0 }));
+          } else if (isMultiSelect(sec)) {
+            for (const opt of fieldById(sec.materialFieldId)?.options || []) {
+              if (!fieldValues[selKey(sec, opt)]) continue;
+              const r = optionPrice(opt, pricing) || 0;
+              const q = Number(fieldValues[qtyKey(sec, opt)]) || 0;
+              if (r * q > 0) lines.push({ label: `${opt} (${q.toLocaleString()} ${unitLabel(sec.unit)})`, amount: r * q });
+            }
           } else {
             const sub = sectionSubtotal(sec);
             if (sub <= 0) continue;

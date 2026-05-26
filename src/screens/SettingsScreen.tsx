@@ -17,6 +17,32 @@ const BG_PRESETS = [
   { label: "Pure Black", hex: "#000000" },
 ];
 
+// Hex color input. Defined at MODULE level (not inside SettingsScreen) so it keeps a stable
+// component identity across the parent's re-renders — otherwise the TextInput remounts on every
+// keystroke and loses focus. Holds its own draft text and only commits a COMPLETE valid hex up to
+// the parent (live preview when 6-char valid, plus a commit on blur), so partial typing never
+// triggers the parent re-render cycle.
+function HexColorRow({ label, initial, valid, onCommit }: { label: string; initial: string; valid: string; onCommit: (v: string) => void }) {
+  const [local, setLocal] = useState(initial);
+  // Re-sync when the parent value changes externally (preset buttons, reset to defaults).
+  useEffect(() => { setLocal(initial); }, [initial]);
+  const norm = (v: string) => (v.startsWith("#") ? v : "#" + v);
+  const handleChange = (v: string) => {
+    const n = norm(v.toUpperCase());
+    setLocal(n);
+    if (isValidHex(n)) onCommit(n); // commit (→ live preview) only once it's a complete valid hex
+  };
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={s.formLabel}>{label}</Text>
+      <View style={s.setColorRow}>
+        <View style={[s.setSwatch, { backgroundColor: valid }]} />
+        <TextInput style={s.setHexInput} value={local} onChangeText={handleChange} onBlur={() => { if (isValidHex(local)) onCommit(local); }} placeholder="#000000" placeholderTextColor={B.gray3} autoCapitalize="characters" maxLength={7} />
+      </View>
+    </View>
+  );
+}
+
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
 export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, scrollToTerms }: {
   business: Business;
@@ -64,7 +90,6 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const pc = isValidHex(primary) ? primary : DEFAULT_BRAND.primaryColor;
   const sc = isValidHex(secondary) ? secondary : DEFAULT_BRAND.secondaryColor;
   const bg = isValidHex(background) ? background : DEFAULT_BRAND.backgroundColor;
-  const norm = (v: string) => v.startsWith("#") ? v : "#" + v;
   // Live contrast result for the chosen background — drives the preview + the unreadable warning.
   const previewText = getContrastColor(bg);
   const bgReadable = isReadable(previewText, bg);
@@ -96,16 +121,6 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
     <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
       <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{label}</Text>
       <Text style={{ color: B.gray1, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", flexShrink: 1, textAlign: "right" }}>{value}</Text>
-    </View>
-  );
-
-  const ColorRow = ({ label, value, valid, onChange }: { label: string; value: string; valid: string; onChange: (v: string) => void }) => (
-    <View style={{ gap: 6 }}>
-      <Text style={s.formLabel}>{label}</Text>
-      <View style={s.setColorRow}>
-        <View style={[s.setSwatch, { backgroundColor: valid }]} />
-        <TextInput style={s.setHexInput} value={value} onChangeText={v => onChange(norm(v))} placeholder="#000000" placeholderTextColor={B.gray3} autoCapitalize="characters" maxLength={7} />
-      </View>
     </View>
   );
 
@@ -185,9 +200,9 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
         {/* Brand colors */}
         <View style={{ gap: 12 }}>
           <Text style={s.sectionTitle}>BRAND COLORS</Text>
-          <ColorRow label="Primary" value={primary} valid={pc} onChange={setPrimary} />
-          <ColorRow label="Secondary" value={secondary} valid={sc} onChange={setSecondary} />
-          <ColorRow label="Background" value={background} valid={bg} onChange={setBackground} />
+          <HexColorRow label="Primary" initial={primary} valid={pc} onCommit={setPrimary} />
+          <HexColorRow label="Secondary" initial={secondary} valid={sc} onCommit={setSecondary} />
+          <HexColorRow label="Background" initial={background} valid={bg} onCommit={setBackground} />
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {BG_PRESETS.map(p => {
               const active = bg.toUpperCase() === p.hex.toUpperCase();
