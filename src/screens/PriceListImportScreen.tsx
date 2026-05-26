@@ -8,7 +8,6 @@ import { PRICE_LIST_UNDERSTAND_PROMPT } from "../constants/prompts";
 import { clearImportProgress, getImportProgress, saveImportProgress } from "../storage";
 import { QuoteSchema } from "../types";
 import { ON_PRIMARY } from "../utils/colorUtils";
-import { parseSchemaFromResponse } from "../utils/helpers";
 import { buildSchemaFromVerified, VerifiedAddOn, VerifiedCategory, VerifiedItem, VerifiedUnit, verifiedItemCount } from "../utils/buildSchemaFromVerified";
 
 const UNITS: VerifiedUnit[] = ["sq ft", "lf", "hour", "each", "flat", "section", "other"];
@@ -78,9 +77,10 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     if (!text.trim()) return;
     setPhase("loading"); setError("");
 
-    // Price list rides in the user message (NOT the system prompt). max_tokens 4000 so the categories
-    // JSON for a long list is never truncated.
-    const payload = { model: "claude-sonnet-4-5", max_tokens: 4000, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] };
+    // Price list rides in the user message (NOT the system prompt). max_tokens 8000 so the categories
+    // JSON for a long, detailed list (50+ items) is never truncated — truncation produces incomplete
+    // JSON that can't be parsed, which is the classic "couldn't read it" failure.
+    const payload = { model: "claude-sonnet-4-5", max_tokens: 8000, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] };
     const payloadStr = JSON.stringify(payload);
     console.log("[Import] Phase 1 starting, text length:", text.length);
     console.log("[Import] proxy URL:", PROXY_URL);
@@ -96,15 +96,31 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
       const rawText = await response.text();
       console.log("[Import] raw response first 500 chars:", rawText.substring(0, 500));
 
-      // The proxy returns Anthropic's JSON envelope ({ content: [{ text }] } or { error }).
-      let data: any;
-      try { data = JSON.parse(rawText); }
-      catch { throw new ImportError("Got a response but couldn't read it — try again."); }
-      if (data && data.error) { console.error("[Import] proxy/anthropic error:", JSON.stringify(data.error)); throw new ImportError("Got a response but couldn't read it — try again."); }
-      const claudeText = data?.content?.[0]?.text;
-      if (typeof claudeText !== "string") throw new ImportError("Got a response but couldn't read it — try again.");
+      // STEP 1 — parse the outer Anthropic envelope: { model, content: [{ type:"text", text }] } (or { error }).
+      let envelope: any;
+      try { envelope = JSON.parse(rawText); }
+      catch { console.error("[Import] envelope JSON.parse failed"); throw new ImportError("Got a response but couldn't read it — try again."); }
+      if (envelope && envelope.error) { console.error("[Import] proxy/anthropic error:", JSON.stringify(envelope.error)); throw new ImportError("Got a response but couldn't read it — try again."); }
+      console.log("[Import] envelope parsed ok");
 
-      const parsed = parseSchemaFromResponse(claudeText); // strips any ```json fences + extracts the {...} block
+      // STEP 2 — extract the inner text block. Parsing the envelope already turned the \n escapes in
+      // the "text" field into real newlines (and \" into "), so no manual unescaping is needed.
+      const innerText: string = envelope?.content?.[0]?.text;
+      if (typeof innerText !== "string") { console.error("[Import] no inner text in envelope"); throw new ImportError("Got a response but couldn't read it — try again."); }
+      console.log("[Import] inner text length:", innerText.length);
+      console.log("[Import] inner text first 200:", innerText.substring(0, 200));
+
+      // STEP 3 — strip any markdown fences and isolate the {...} object, then parse.
+      let cleanedText = innerText.replace(/```json/gi, "").replace(/```/g, "").trim();
+      const open = cleanedText.indexOf("{"), close = cleanedText.lastIndexOf("}");
+      if (open !== -1 && close !== -1 && close > open) cleanedText = cleanedText.substring(open, close + 1);
+      console.log("[Import] cleaned text first 200:", cleanedText.substring(0, 200));
+      if (!cleanedText.endsWith("}")) console.warn("[Import] cleaned text does not end with } — response may have been truncated");
+
+      let parsed: any;
+      try { parsed = JSON.parse(cleanedText); }
+      catch (pe) { console.error("[Import] inner JSON.parse failed (likely truncated):", pe instanceof Error ? pe.message : String(pe)); throw new ImportError("Got a response but couldn't read it — try again."); }
+      console.log("[Import] final parse result:", JSON.stringify(parsed).substring(0, 200));
       if (!parsed || !Array.isArray(parsed.categories)) throw new ImportError("Got a response but couldn't read it — try again.");
 
       // Map AI output → verified categories; pull any "add-ons"-style category into the add-ons list.

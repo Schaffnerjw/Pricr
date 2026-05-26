@@ -115,7 +115,10 @@ export async function saveBusiness(b: Business): Promise<void> {
   if (updErr) throw updErr;
   if (!updated || updated.length === 0) {
     const { error } = await supabase!.from("businesses").insert(row);
-    if (error) throw error;
+    // 23505 = duplicate key (409): the row already exists but the members-only UPDATE matched 0 rows
+    // because this anonymous session isn't a recognized member yet. That's fine — the row is there;
+    // the membership upsert below makes us a member. Only genuine errors should throw.
+    if (error && error.code !== "23505") throw error;
   }
   if (uid) {
     const { error: memErr } = await supabase!.from("users").upsert({ id: uid, business_id: id, role: "admin", name: b.ownerName }, { onConflict: "id" });
