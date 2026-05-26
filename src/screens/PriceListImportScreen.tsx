@@ -77,10 +77,16 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     if (!text.trim()) return;
     setPhase("loading"); setError("");
 
-    // Price list rides in the user message (NOT the system prompt). max_tokens 8000 so the categories
-    // JSON for a long, detailed list (50+ items) is never truncated — truncation produces incomplete
-    // JSON that can't be parsed, which is the classic "couldn't read it" failure.
-    const payload = { model: "claude-sonnet-4-5", max_tokens: 8000, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] };
+    // Price list rides in the user message (NOT the system prompt). Scale max_tokens to the input size
+    // so the categories JSON for a long, detailed list is never truncated — truncation produces
+    // incomplete JSON that can't be parsed, the classic "couldn't read it" failure.
+    const inputLength = text.length;
+    const maxTokens = inputLength < 2000 ? 4000
+      : inputLength < 5000 ? 8000
+        : inputLength < 10000 ? 12000
+          : 16000;
+    console.log("[Import] input length:", inputLength, "max_tokens:", maxTokens);
+    const payload = { model: "claude-sonnet-4-5", max_tokens: maxTokens, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] };
     const payloadStr = JSON.stringify(payload);
     console.log("[Import] Phase 1 starting, text length:", text.length);
     console.log("[Import] proxy URL:", PROXY_URL);
