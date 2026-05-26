@@ -1,6 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Platform, SafeAreaView, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Image, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { BrandHeader } from "../src/components/BrandHeader";
 import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
@@ -25,25 +25,13 @@ import { WelcomeScreen } from "../src/screens/WelcomeScreen";
 import { s } from "../src/styles";
 import { isSupabaseConfigured } from "../src/lib/supabase";
 import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
-import { BrandConfig, Business, DemoBusiness, Screen, User } from "../src/types";
+import { BrandConfig, Business, DemoBusiness, QuoteSchema, Screen, User } from "../src/types";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
-
-// Truly generic, trade-agnostic fallback used only when Kit's schema build genuinely fails to parse.
-// Intentionally NOT a specific trade (no Christmas Lights default) — just a blank quantity × rate tool
-// the owner can immediately refine via Kit.
-const GENERIC_FALLBACK_SCHEMA = {
-  trade: "Custom Quote",
-  fields: [
-    { id: "jobSize", label: "Job Size", type: "number", unit: "each", group: "dimensions", placeholder: "Enter the size or quantity" },
-  ],
-  pricing: { jobSizeRate: 100, minimumCharge: 0, taxRate: 0, depositPercent: 0 },
-  addOns: [],
-  calculation: "jobSize * jobSizeRate",
-  summaryLines: [{ label: "Job ({jobSize})", value: "jobSize * jobSizeRate" }],
-};
+import { applySchemaUpdate, BLANK_SCHEMA, extractFromMessage, isBlankSchema, summarizeUpdate, updateMeaningful } from "../src/utils/schemaExtractor";
+import { validateSchema, ValidationResult } from "../src/utils/validateSchema";
 
 // Web image picker: a hidden <input type="file"> read as a data URL (expo-image-picker's
 // native gallery flow isn't used on web). Resolves null if the user cancels.
@@ -102,6 +90,16 @@ export default function Index() {
   const [quoteInitialValues, setQuoteInitialValues] = useState<Record<string, any> | undefined>(undefined);
   const scrollRef = useRef<ScrollView>(null);
 
+  // ── Real-time incremental schema building ──
+  const [liveSchema, setLiveSchema] = useState<QuoteSchema>(BLANK_SCHEMA);
+  const liveSchemaRef = useRef<QuoteSchema>(BLANK_SCHEMA); // latest value for async finalize (avoids stale closures)
+  const [extracting, setExtracting] = useState(false);
+  const [extractionNotes, setExtractionNotes] = useState<string[]>([]);
+  const [pendingSchema, setPendingSchema] = useState<QuoteSchema | null>(null); // built but unconfirmed
+  const [schemaWarning, setSchemaWarning] = useState<ValidationResult | null>(null); // dashboard validation banner
+  const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); };
+  const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
+
   useEffect(() => { runStartupMigrations().then(checkSession); }, []);
 
   const checkSession = async () => {
@@ -122,6 +120,16 @@ export default function Index() {
         if (biz) {
           setCurrentUser(user);
           setBusiness(biz);
+          // Part 8: a business with a blank schema (no trade, no fields) should never land on an empty
+          // quote tool — route straight into onboarding to build it.
+          if (isBlankSchema(biz.schema)) {
+            resetKitBuild(); setKitStarted(false); setKitReady(false); setKitMessages([]); setIsReconfiguring(true);
+            setTimeout(() => setScreen("setup"), 600);
+            return;
+          }
+          // Part 6/10: validate the stored schema; surface a dashboard banner if it's broken/placeholder.
+          const v = validateSchema(biz.schema);
+          setSchemaWarning(v.ok ? null : v);
           setTimeout(() => setScreen("done"), 600);
           return;
         }
@@ -341,6 +349,7 @@ export default function Index() {
 
   const startKitChat = async () => {
     setKitReady(false);
+    resetKitBuild(); // start every onboarding/reconfigure with an empty live schema
     setKitLoading(true);
     try {
       const formSummary = `Business: ${business?.name}\nOwner: ${currentUser?.name}\nServices: ${setupServices}\nMaterials: ${setupProducts || "Not specified"}\nPricing: ${setupPricing}`;
@@ -363,26 +372,19 @@ export default function Index() {
     setKitLoading(false);
   };
 
-  const buildSchema = async (conversation: { role: "user" | "assistant"; content: string }[]) => {
-    setScreen("building");
-    const fallbackSchema: any = GENERIC_FALLBACK_SCHEMA;
-    let finalSchema: any = fallbackSchema;
+  // Salvage path only: a one-shot parse of the whole conversation, used when real-time extraction
+  // produced nothing usable. Returns a parsed schema or null — never saves.
+  const oneShotParse = async (conversation: { role: "user" | "assistant"; content: string }[]): Promise<QuoteSchema | null> => {
     try {
       const formSummary = `Business: ${business?.name}\nServices: ${setupServices}\nMaterials: ${setupProducts}\nPricing: ${setupPricing}`;
-
-      // Pass the full Kit conversation as real user/assistant turns, then a final build instruction.
-      // The conversation starts with Kit (assistant), so lead with a user message to satisfy role
-      // alternation; clone the turns so we never mutate kitMessages state.
       const messages: { role: "user" | "assistant"; content: string }[] = [
         { role: "user", content: `Here is the context from our setup.\n\nBUSINESS:\n${formSummary}` },
         ...conversation.map(m => ({ role: m.role, content: m.content })),
       ];
       const buildInstruction = "Based on everything in our conversation above, build the complete custom quote tool schema now. Output only the JSON schema, no other text.";
       const lastMsg = messages[messages.length - 1];
-      // Avoid two user turns in a row: merge into the last turn if it's already a user message.
       if (lastMsg.role === "user") lastMsg.content += `\n\n${buildInstruction}`;
       else messages.push({ role: "user", content: buildInstruction });
-
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -390,25 +392,69 @@ export default function Index() {
       });
       const data = await response.json();
       const text = data?.content?.[0]?.text;
-      if (typeof text !== "string") throw new Error("schema builder response had no content[0].text");
-      const parsed = parseSchemaFromResponse(text);
-      if (parsed === null) throw new Error("could not parse schema JSON from model response");
-      finalSchema = parsed;
-    } catch (err) {
-      // Genuine error path: schema build failed, falling back to the demo schema.
-      console.warn("[buildSchema] build failed, using fallback schema:", err instanceof Error ? err.message : String(err));
-      finalSchema = fallbackSchema;
+      if (typeof text !== "string") return null;
+      return parseSchemaFromResponse(text);
+    } catch { return null; }
+  };
+
+  // Fire-and-forget real-time extraction after each user message. Merges any confident new pricing
+  // into the live schema and surfaces brief confirmations. A failure never blocks the conversation.
+  const runExtraction = async (text: string) => {
+    setExtracting(true);
+    try {
+      const ctx = `Business: ${business?.name || ""}. Services: ${setupServices || ""}. Pricing notes: ${setupPricing || ""}`;
+      const update = await extractFromMessage(text, liveSchemaRef.current, ctx);
+      if (updateMeaningful(update)) {
+        updateLiveSchema(applySchemaUpdate(liveSchemaRef.current, update));
+        const notes = summarizeUpdate(update);
+        if (notes.length) setExtractionNotes(prev => [...prev, ...notes]);
+      }
+    } catch { /* extraction is best-effort */ }
+    setExtracting(false);
+  };
+
+  // Replaces the old end-of-conversation one-shot parse: use the incrementally-built live schema,
+  // salvage with a one-shot parse only if it's empty, then route to the confirmation preview. Never saves here.
+  const finalizeSchema = async (conversation: { role: "user" | "assistant"; content: string }[]) => {
+    setScreen("building");
+    // Let any in-flight extraction settle so the last answer is captured.
+    await new Promise(r => setTimeout(r, 900));
+    let finalSchema: QuoteSchema = liveSchemaRef.current;
+    if (isBlankSchema(finalSchema) || (finalSchema.fields || []).length === 0) {
+      const salvaged = await oneShotParse(conversation);
+      if (salvaged && !isBlankSchema(salvaged)) finalSchema = salvaged;
     }
-    // ── Common tail: Kit's plain-English summary, persist, and seed 3 sample quotes ──
-    const kitSummary = buildSchemaSummary(finalSchema);
-    const updatedBiz = { ...business!, schema: finalSchema, kitSummary };
-    // Don't let a cloud hiccup strand onboarding on the building screen — the schema is in memory
-    // and the business already exists from signup; persist best-effort and continue to the dashboard.
-    try { await saveBusiness(updatedBiz); } catch (e) { console.warn("[buildSchema] cloud save failed (schema kept locally):", e instanceof Error ? e.message : String(e)); }
+    if (!finalSchema) finalSchema = BLANK_SCHEMA;
+    setPendingSchema(finalSchema);
+    setTimeout(() => setScreen("confirm_schema"), 300);
+  };
+
+  // Commit the confirmed schema: persist it (preserving all other business settings), seed samples, done.
+  const commitSchema = async () => {
+    const schemaToSave: QuoteSchema = pendingSchema || BLANK_SCHEMA;
+    const kitSummary = buildSchemaSummary(schemaToSave);
+    const updatedBiz = { ...business!, schema: schemaToSave, kitSummary };
+    try { await saveBusiness(updatedBiz); } catch (e) { console.warn("[commitSchema] cloud save failed (schema kept locally):", e instanceof Error ? e.message : String(e)); }
     setBusiness(updatedBiz);
-    try { for (const q of sampleQuotes(finalSchema)) await addQuote(updatedBiz.code, q); } catch { }
+    setSchemaWarning(null);
+    setIsReconfiguring(false);
+    if (!isBlankSchema(schemaToSave)) { try { for (const q of sampleQuotes(schemaToSave)) await addQuote(updatedBiz.code, q); } catch { } }
+    setPendingSchema(null);
     setJustBuilt(true);
-    setTimeout(() => setScreen("done"), 500);
+    setScreen("done");
+  };
+
+  // Start a fresh Kit build with a seeded opening message (used by "rebuild" + the placeholder-fix banner).
+  const startKitRebuild = (seedMessage: string) => {
+    setIsReconfiguring(true);
+    resetKitBuild();
+    setPendingSchema(null);
+    setKitMessages([{ role: "assistant", content: seedMessage }]);
+    setKitReplies([]);
+    setKitInput("");
+    setKitReady(false);
+    setKitStarted(true); // keep the seeded message — don't let startKitChat overwrite it
+    setScreen("meet_kit");
   };
 
   useEffect(() => { if (screen === "meet_kit" && !kitStarted) startKitChat(); }, [screen]);
@@ -422,6 +468,7 @@ export default function Index() {
     setKitInput("");
     setKitReplies([]);
     setKitLoading(true);
+    runExtraction(text); // fire-and-forget: build the schema in real time, never blocks the chat
     try {
       const formSummary = `Business: ${business?.name}, Services: ${setupServices}, Materials: ${setupProducts}, Pricing: ${setupPricing}`;
       const response = await fetch(API_URL, {
@@ -437,7 +484,7 @@ export default function Index() {
         setKitMessages(finalMessages);
         setKitReady(true); // fill the progress bar to 100% before building
         setKitLoading(false);
-        setTimeout(() => buildSchema(finalMessages), 500);
+        setTimeout(() => finalizeSchema(finalMessages), 500);
         return;
       } else {
         const { content, replies } = parseSuggestedReplies(reply);
@@ -474,6 +521,7 @@ export default function Index() {
       onPickLogo={pickImage}
       onSignOut={handleSignOut}
       onViewSigningActivity={isSupabaseConfigured && !isDemoMode ? () => { setSettingsFocusTerms(false); setScreen("pipeline"); } : undefined}
+      onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startKitRebuild("Let's rebuild your quote tool. Tell me your main service and what you charge, and I'll set it up fresh."); }}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
       onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification }) => {
@@ -510,7 +558,11 @@ export default function Index() {
       onQuoteHistory={() => { setJustBuilt(false); setScreen("history"); }}
       onQuotePipeline={isSupabaseConfigured && !isDemoMode ? () => { setJustBuilt(false); setScreen("pipeline"); } : undefined}
       onManageTeam={() => { setJustBuilt(false); setScreen("users"); }}
-      onReconfigure={() => { setJustBuilt(false); setIsReconfiguring(true); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
+      schemaWarning={schemaWarning}
+      onFixSchema={() => { setJustBuilt(false); startKitRebuild(schemaWarning?.isPlaceholder
+        ? "Your quote tool has a basic placeholder instead of your real pricing. Tell me your main service and what you charge, and I'll rebuild it right now."
+        : "Let's fix your quote tool. Tell me your main service and what you charge, and I'll rebuild it right now."); }}
+      onReconfigure={() => { setJustBuilt(false); setIsReconfiguring(true); resetKitBuild(); setPendingSchema(null); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
       onTestQuote={() => { setJustBuilt(false); setQuoteInitialValues(sampleFieldValues(business.schema)); setScreen("quote"); }}
       onDismissTestPrompt={() => setJustBuilt(false)}
       onOpenSettings={() => { setJustBuilt(false); setSettingsFocusTerms(false); setScreen("settings"); }}
@@ -521,12 +573,48 @@ export default function Index() {
   if (screen === "meet_kit") return (
     <MeetKitScreen
       primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor} messages={kitMessages} input={kitInput} loading={kitLoading} chips={kitReplies}
+      notes={extractionNotes} liveSchema={liveSchema} extracting={extracting}
       progress={kitReady ? 1 : Math.min(0.9, kitMessages.length * 0.12)}
       onInputChange={setKitInput} onSend={() => sendKitMessage()} onQuickReply={(t) => sendKitMessage(t)} scrollRef={scrollRef}
       isReconfiguring={isReconfiguring}
       onCancel={() => { setIsReconfiguring(false); setScreen("done"); }}
     />
   );
+
+  // ── CONFIRMATION PREVIEW (Part 4) — the real QuoteScreen rendered read-only before saving ──
+  if (screen === "confirm_schema" && business && currentUser) {
+    const preview: Business = { ...business, schema: pendingSchema };
+    return (
+      <View style={{ flex: 1, backgroundColor: business.brand.backgroundColor || B.midnight }}>
+        <View style={{ paddingTop: 52, paddingHorizontal: 20, paddingBottom: 12, backgroundColor: B.card, borderBottomWidth: 1, borderBottomColor: B.border }}>
+          <Text style={[s.h2, { fontSize: 20 }]}>Here&apos;s your quote tool</Text>
+          <Text style={[s.body, { marginTop: 2, fontSize: 13 }]}>Try it below. Nothing is saved until you confirm it looks right.</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <QuoteScreen schema={pendingSchema} setSchema={() => { }} business={preview} currentUser={currentUser} onBack={() => { }} previewMode />
+        </View>
+        <View style={{ padding: 16, gap: 10, backgroundColor: B.card, borderTopWidth: 1, borderTopColor: B.border }}>
+          <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={commitSchema}>
+            <Text style={[s.btnText, { color: B.white }]}>Looks good — let&apos;s go</Text>
+          </TouchableOpacity>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <TouchableOpacity
+              style={[s.btnSecondary, { flex: 1, borderColor: primaryColor }]}
+              onPress={() => { setKitMessages(m => [...m, { role: "assistant", content: "What needs to be fixed? Tell me the service and the right price and I'll update it." }]); setKitReady(false); setScreen("meet_kit"); }}
+            >
+              <Text style={[s.btnSecondaryText, { color: primaryColor }]}>Something&apos;s wrong</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.btnSecondary, { flex: 1 }]}
+              onPress={() => { setPendingSchema(null); resetKitBuild(); setKitMessages([]); setKitStarted(false); setKitReady(false); setScreen("meet_kit"); }}
+            >
+              <Text style={s.btnSecondaryText}>Start over</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   if (screen === "setup") return (
     <SetupScreen

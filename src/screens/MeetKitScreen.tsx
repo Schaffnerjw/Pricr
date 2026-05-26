@@ -1,16 +1,20 @@
 import { Feather } from "@expo/vector-icons";
 import { RefObject, useEffect, useRef } from "react";
 import { Animated, Keyboard, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, StatusBar, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { SchemaPreviewCard } from "../components/SchemaPreviewCard";
 import { TypingDots } from "../components/TypingDots";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { s } from "../styles";
+import { QuoteSchema } from "../types";
 import { getContrastColor, ON_PRIMARY } from "../utils/colorUtils";
+import { isBlankSchema } from "../utils/schemaExtractor";
 
-export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, chips, onInputChange, onSend, onQuickReply, scrollRef, isReconfiguring, onCancel }: {
+export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, loading, progress, chips, notes, liveSchema, extracting, onInputChange, onSend, onQuickReply, scrollRef, isReconfiguring, onCancel }: {
   primaryColor: string; backgroundColor?: string;
   messages: { role: "user" | "assistant"; content: string }[];
   input: string; loading: boolean; progress: number; chips: string[];
+  notes?: string[]; liveSchema?: QuoteSchema; extracting?: boolean;
   onInputChange: (v: string) => void; onSend: () => void; onQuickReply: (text: string) => void;
   scrollRef: RefObject<ScrollView | null>;
   isReconfiguring?: boolean; onCancel?: () => void;
@@ -80,7 +84,22 @@ export function MeetKitScreen({ primaryColor, backgroundColor, messages, input, 
               ))}
             </View>
           )}
+          {/* Inline extraction confirmations — subtle, non-conversational (excluded from the API turns) */}
+          {(notes && notes.length > 0) && (
+            <View style={{ gap: 4, marginTop: 2 }}>
+              {notes.slice(-3).map((n, i) => (
+                <View key={`${n}-${i}`} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "center" }}>
+                  <Feather name="check-circle" size={12} color={primaryColor} />
+                  <Text style={{ color: txt, opacity: 0.6, fontSize: 12, fontFamily: "DMSans_400Regular" }}>{n}</Text>
+                </View>
+              ))}
+            </View>
+          )}
         </ScrollView>
+        {/* Live schema preview — builds in real time as Kit extracts pricing. Sits above the input. */}
+        {liveSchema && !isBlankSchema(liveSchema) && (
+          <SchemaPreviewCard schema={liveSchema} primaryColor={primaryColor} extracting={extracting} />
+        )}
         <View style={s.kitInputRow}>
           <TextInput style={s.kitInput} placeholder="Reply to Kit..." placeholderTextColor={B.gray3} value={input} onChangeText={onInputChange} onSubmitEditing={onSend} returnKeyType="send" />
           <TouchableOpacity style={[s.kitSend, { backgroundColor: primaryColor }]} onPress={onSend} disabled={loading}>

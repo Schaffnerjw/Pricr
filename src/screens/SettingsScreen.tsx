@@ -9,6 +9,7 @@ import { BrandConfig, Business, DocPrefs, PaymentMethods, User } from "../types"
 import { isValidHex } from "../utils/color";
 import { getContrastColor, isReadable, ON_PRIMARY } from "../utils/colorUtils";
 import { PAYMENT_OPTIONS, resolveDocPrefs } from "../utils/helpers";
+import { fieldRate } from "../utils/quote";
 
 const BG_PRESETS = [
   { label: "Dark Navy", hex: "#0A0E1A" },
@@ -17,7 +18,7 @@ const BG_PRESETS = [
 ];
 
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
-export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, scrollToTerms }: {
+export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, scrollToTerms }: {
   business: Business;
   currentUser?: User;
   onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean }) => void | Promise<void>;
@@ -25,6 +26,7 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   onPickLogo: () => Promise<string | null>;
   onSignOut?: () => void;
   onViewSigningActivity?: () => void;
+  onRebuildQuoteTool?: () => void;
   scrollToTerms?: boolean;
 }) {
   const [name, setName] = useState(business.name);
@@ -42,6 +44,8 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const [kitOpen, setKitOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState(false);
+  const [schemaOpen, setSchemaOpen] = useState(false); // collapsible "current schema" debug view
+  const [rawOpen, setRawOpen] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const termsY = useRef(0);
 
@@ -87,6 +91,13 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
       Alert.alert("Couldn't save", "We couldn't save your settings. Check your connection and try again.");
     }
   };
+
+  const DebugRow = ({ label, value }: { label: string; value: string }) => (
+    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+      <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{label}</Text>
+      <Text style={{ color: B.gray1, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", flexShrink: 1, textAlign: "right" }}>{value}</Text>
+    </View>
+  );
 
   const ColorRow = ({ label, value, valid, onChange }: { label: string; value: string; valid: string; onChange: (v: string) => void }) => (
     <View style={{ gap: 6 }}>
@@ -286,6 +297,54 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
               </>
             );
           })()}
+        </View>
+
+        {/* Quote Tool — rebuild + a debug view of exactly what Kit captured (Part 7). */}
+        <View style={{ gap: 12 }}>
+          <Text style={s.sectionTitle}>QUOTE TOOL</Text>
+          {onRebuildQuoteTool && (
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: pc, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onRebuildQuoteTool}>
+              <Feather name="refresh-cw" size={15} color={pc} />
+              <Text style={[s.btnSecondaryText, { color: pc }]}>Rebuild Quote Tool</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => setSchemaOpen(o => !o)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 }}>
+            <Text style={{ color: B.gray1, fontSize: 15, fontFamily: "DMSans_600SemiBold" }}>Current Schema</Text>
+            <Feather name={schemaOpen ? "chevron-up" : "chevron-down"} size={18} color={B.gray2} />
+          </TouchableOpacity>
+          {schemaOpen && (
+            <View style={{ backgroundColor: B.card, borderWidth: 1, borderColor: B.border, borderRadius: 12, padding: 14, gap: 8 }}>
+              <DebugRow label="Trade" value={business.schema?.trade || "(not set)"} />
+              <DebugRow label="Fields" value={String(business.schema?.fields?.length || 0)} />
+              {(business.schema?.fields || []).map((f: any) => (
+                <View key={f.id} style={{ borderTopWidth: 1, borderTopColor: B.border, paddingTop: 6 }}>
+                  <Text style={{ color: B.gray1, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{f.label}</Text>
+                  <Text style={{ color: B.muted, fontSize: 12, fontFamily: "DMSans_400Regular" }}>
+                    {f.type} · {f.unit || "—"}{fieldRate(f, business.schema?.pricing || {}) ? ` · ${fieldRate(f, business.schema?.pricing || {})}` : ""}
+                  </Text>
+                </View>
+              ))}
+              {(business.schema?.addOns || []).map((a: any) => (
+                <View key={a.id} style={{ borderTopWidth: 1, borderTopColor: B.border, paddingTop: 6 }}>
+                  <Text style={{ color: B.gray1, fontSize: 13, fontFamily: "DMSans_400Regular" }}>+ {a.label} — ${Number(a.price || 0).toLocaleString()}</Text>
+                </View>
+              ))}
+              <DebugRow label="Deposit" value={`${business.schema?.pricing?.depositPercent || 0}%`} />
+              <TouchableOpacity onPress={() => setRawOpen(o => !o)} style={{ paddingVertical: 4 }}>
+                <Text style={{ color: pc, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>{rawOpen ? "Hide" : "Show"} raw JSON</Text>
+              </TouchableOpacity>
+              {rawOpen && (
+                <ScrollView horizontal style={{ maxHeight: 200 }}>
+                  <Text style={{ color: B.gray2, fontSize: 11, fontFamily: "DMSans_400Regular" }}>{JSON.stringify(business.schema, null, 2)}</Text>
+                </ScrollView>
+              )}
+              {onRebuildQuoteTool && (
+                <TouchableOpacity onPress={onRebuildQuoteTool} style={{ paddingVertical: 4 }}>
+                  <Text style={{ color: B.red, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>Schema looks wrong? Rebuild</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
 
         {/* Signing & Verification — enterprise e-signature settings. */}

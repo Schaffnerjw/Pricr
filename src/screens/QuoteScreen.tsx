@@ -18,14 +18,16 @@ import { Business, QuotePresentation, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
+import { humanSchemaSummary } from "../utils/schemaExtractor";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, isDemoMode, initialValues }: {
-  schema: any; setSchema: (s: any) => void; business: Business; currentUser: User; onBack: () => void; isDemoMode?: boolean; initialValues?: Record<string, any>;
+export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, isDemoMode, initialValues, previewMode }: {
+  schema: any; setSchema: (s: any) => void; business: Business; currentUser: User; onBack: () => void; isDemoMode?: boolean; initialValues?: Record<string, any>; previewMode?: boolean;
 }) {
+  const readOnly = !!previewMode; // confirmation-preview render: real QuoteScreen, non-interactive
   const [customerName, setCustomerName] = useState("");
   const [fieldValues, setFieldValues] = useState<Record<string, any>>(initialValues ?? {});
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
@@ -52,8 +54,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const onPrimary = ON_PRIMARY; // brand look: always white text/icons on the primary color
 
   const sections = useMemo(() => groupFields(schema?.fields ?? []), [schema]);
-  const setField = (id: string, value: any) => setFieldValues(p => ({ ...p, [id]: value }));
-  const toggleAddOn = (id: string) => setSelectedAddOns(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+  const setField = (id: string, value: any) => { if (readOnly) return; setFieldValues(p => ({ ...p, [id]: value })); };
+  const toggleAddOn = (id: string) => { if (readOnly) return; setSelectedAddOns(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]); };
 
   useEffect(() => {
     if (reduceMotion) { setReady(true); return; }
@@ -190,10 +192,12 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           ? { role: "user" as const, content: `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nRequest: ${m.content}` }
           : m,
       );
+      // Give Kit the full, human-readable quote tool as context so it answers about pricing specifically.
+      const agentSystem = `${AGENT_PROMPT}\n\nYou are Kit, the AI assistant for ${business.name}${schema?.trade ? `, a ${schema.trade} business` : ""}.\n\nYOUR CURRENT QUOTE TOOL:\n${humanSchemaSummary(schema)}`;
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1500, system: AGENT_PROMPT, messages: apiMessages }),
+        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1500, system: agentSystem, messages: apiMessages }),
       });
       const data = await response.json();
       const reply = data.content[0].text.trim();
@@ -226,7 +230,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     return (
       <View key={field.id} style={{ gap: 6 }}>
         <Text style={[s.fieldLabel, { color: pal.textMuted }]}>{field.label.toUpperCase()}</Text>
-        <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`} placeholderTextColor={pal.textMuted} value={value ? value.toString() : ""} onChangeText={v => setField(field.id, v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
+        <TextInput editable={!readOnly} style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`} placeholderTextColor={pal.textMuted} value={value ? value.toString() : ""} onChangeText={v => setField(field.id, v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
         {hint ? <Text style={[s.qHint, { color: pal.textMuted }]}>{hint}</Text> : null}
       </View>
     );
@@ -306,18 +310,24 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   return (
     <SafeAreaView style={[s.container, { backgroundColor: pal.background }]}>
       <BrandHeader business={business} right={
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <View style={[s.roleBadge, isAdmin && { borderColor: primaryColor + "60", backgroundColor: primaryColor + "15" }]}>
-            <Text style={s.roleBadgeText}>{isAdmin ? "Admin" : "Rep"}</Text>
+        readOnly ? (
+          <View style={{ backgroundColor: primaryColor, borderRadius: 8, paddingVertical: 4, paddingHorizontal: 10 }}>
+            <Text style={{ color: onPrimary, fontSize: 11, fontWeight: "800", letterSpacing: 1, fontFamily: "DMSans_700Bold" }}>PREVIEW</Text>
           </View>
-          <TouchableOpacity onPress={onBack} style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
-            <Feather name="chevron-left" size={18} color={primaryColor} />
-            <Text style={[s.navBackText, { color: primaryColor }]}>Back</Text>
-          </TouchableOpacity>
-        </View>
+        ) : (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <View style={[s.roleBadge, isAdmin && { borderColor: primaryColor + "60", backgroundColor: primaryColor + "15" }]}>
+              <Text style={s.roleBadgeText}>{isAdmin ? "Admin" : "Rep"}</Text>
+            </View>
+            <TouchableOpacity onPress={onBack} style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+              <Feather name="chevron-left" size={18} color={primaryColor} />
+              <Text style={[s.navBackText, { color: primaryColor }]}>Back</Text>
+            </TouchableOpacity>
+          </View>
+        )
       } />
 
-      {isDemoMode && (
+      {isDemoMode && !readOnly && (
         <View style={{ alignItems: "flex-end", paddingHorizontal: 20, paddingTop: 8 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 12 }}>
             <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: primaryColor }} />
@@ -326,11 +336,11 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         </View>
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: 200 }} keyboardShouldPersistTaps="handled">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: readOnly ? 40 : 200 }} keyboardShouldPersistTaps="handled">
         <View style={{ gap: 6 }}>
           <Text style={[s.fieldLabel, { color: pal.textMuted }]}>CLIENT NAME</Text>
-          <TextInput style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Who is this quote for?" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
-          {!customerName.trim() && <Text style={[s.qHint, { color: pal.textMuted }]}>Optional, but adding a name personalizes the quote and PDF.</Text>}
+          <TextInput editable={!readOnly} style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Who is this quote for?" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
+          {!customerName.trim() && !readOnly && <Text style={[s.qHint, { color: pal.textMuted }]}>Optional, but adding a name personalizes the quote and PDF.</Text>}
         </View>
 
         {!ready ? (
@@ -371,7 +381,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             )}
 
             {/* Discount — optional, collapsed by default; available on every quote regardless of trade. */}
-            <View style={{ gap: 14 }}>
+            {!readOnly && <View style={{ gap: 14 }}>
               {!discountOpen && t.discountAmount <= 0 ? (
                 <PressableScale onPress={() => setDiscountOpen(true)} style={s.qAddPill}>
                   <Feather name="plus" size={16} color={primaryColor} />
@@ -405,12 +415,13 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                   )}
                 </>
               )}
-            </View>
+            </View>}
           </>
         )}
       </ScrollView>
 
-      {/* Sticky live total bar (+ minimum warning, + typical range) */}
+      {/* Sticky live total bar (+ minimum warning, + typical range) — hidden in read-only preview */}
+      {!readOnly && (
       <View style={[s.qStickyWrap, { backgroundColor: pal.background, borderTopColor: pal.border, borderTopWidth: 1 }]}>
         {t.belowMin && (
           <View style={s.qMinWarn}>
@@ -432,22 +443,23 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </PressableScale>
         </View>
       </View>
+      )}
 
-      {showTotal && (
+      {showTotal && !readOnly && (
         <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
       )}
 
-      {isAdmin && !showTotal && (
+      {isAdmin && !showTotal && !readOnly && (
         <TouchableOpacity style={[s.kitCircle, { bottom: 150, backgroundColor: primaryColor, shadowColor: primaryColor }]} onPress={() => setAgentOpen(true)}>
           <Feather name="message-circle" size={24} color={B.white} />
         </TouchableOpacity>
       )}
 
-      {agentOpen && isAdmin && (
+      {agentOpen && isAdmin && !readOnly && (
         <KitAgentSheet primaryColor={primaryColor} messages={agentMessages} input={agentInput} loading={agentLoading} onInputChange={setAgentInput} onSend={sendAgentMessage} onClose={() => { setAgentOpen(false); setAgentMessages([]); }} />
       )}
 
-      {showCelebration && <ConfettiOverlay message="First quote saved!" />}
+      {showCelebration && !readOnly && <ConfettiOverlay message="First quote saved!" />}
     </SafeAreaView>
   );
 }

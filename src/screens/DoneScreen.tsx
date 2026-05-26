@@ -34,10 +34,11 @@ function subtextFor(st: DashStats | null): string {
   return "You're all set — let's close some jobs.";
 }
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
   onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
+  schemaWarning?: { ok: boolean; isPlaceholder: boolean; reason?: string } | null; onFixSchema?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
@@ -75,6 +76,22 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         ) : undefined
       } />
       <ScrollView contentContainerStyle={{ padding: 24, gap: 16, paddingTop: 24, paddingBottom: 96 }}>
+        {/* Schema validation banner (Parts 6/10) — urgent styling for the $100/placeholder case. */}
+        {isAdmin && schemaWarning && !schemaWarning.ok && onFixSchema && (
+          <TouchableOpacity
+            style={[s.brandBanner, { borderColor: schemaWarning.isPlaceholder ? B.red : primaryColor + "60", backgroundColor: schemaWarning.isPlaceholder ? B.red + "1A" : undefined }]}
+            onPress={onFixSchema}
+          >
+            <Feather name="alert-triangle" size={18} color={schemaWarning.isPlaceholder ? B.red : primaryColor} />
+            <Text style={[s.brandBannerText, { color: pal.text }]}>
+              {schemaWarning.isPlaceholder
+                ? "Your quote tool is using a placeholder — your real pricing wasn't saved. Tap to fix in 2 minutes."
+                : "Your quote tool needs attention — tap here to fix it."}
+            </Text>
+            <Feather name="chevron-right" size={18} color={pal.textMuted} />
+          </TouchableOpacity>
+        )}
+
         {pal.adjusted && (
           <TouchableOpacity style={[s.brandBanner, { borderColor: primaryColor + "60" }]} onPress={onOpenSettings}>
             <Feather name="alert-triangle" size={18} color={primaryColor} />
