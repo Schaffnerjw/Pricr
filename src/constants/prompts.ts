@@ -306,6 +306,11 @@ Rules:
 - Use exact prices — never approximate or change numbers
 - Detect the unit from context (per sf = sq ft, per lf = linear foot, /hr = hour, flat fee = flat)
 - Group items into logical categories matching the contractor's own section headers
+- Use AT MOST 8 categories, grouped by the trade's natural workflow (e.g. a deck: Decking, Railings,
+  Stairs, Substructure, Fees). Prefer fewer, broader categories — each becomes one tappable section.
+- Put items that share a unit in the same category (all the per-sq-ft decking options together, all
+  the per-linear-foot railing options together) so they render as one "pick a material + enter a
+  measurement" section instead of many separate fields.
 - If deposit percentage is mentioned capture it, otherwise 0
 - The summary field is shown to the user to confirm you understood their list correctly`;
 

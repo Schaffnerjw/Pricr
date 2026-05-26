@@ -8,7 +8,18 @@ export interface DocPrefs { style: "detailed"|"summary"|"custom"; showLineItems:
 // selected built-in labels; `other` is free text for the "Other" option. Unset => nothing shown.
 export interface PaymentMethods { methods: string[]; other?: string; }
 export interface Business { code: string; name: string; ownerName: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; paymentMethods?: PaymentMethods; hasGeneratedQuote?: boolean; notificationEmail?: string; requireSmsVerification?: boolean; suspended?: boolean; }
-export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; }
+// Optional render metadata for the single-page job walkthrough. When absent (legacy/demo schemas),
+// QuoteScreen falls back to the classic flat field list. Field ids referenced here exist in fields[].
+export type SectionPattern = "MATERIAL_MEASUREMENT" | "SYSTEM_CONFIG_QUANTITY" | "FLAT_RATE" | "LABOR";
+export interface QuoteSection {
+  id: string; name: string; pattern: SectionPattern;
+  materialFieldId?: string;   // selector field (MATERIAL_MEASUREMENT)
+  quantityFieldId?: string;   // number field (quantity / hours)
+  unit?: string;              // display unit
+  itemFieldIds?: string[];    // FLAT_RATE toggle field ids
+  laborRate?: number;         // LABOR / per-unit single rate (also lives in pricing)
+}
+export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; sections?: QuoteSection[]; }
 export type FieldUnit = "sqft"|"lf"|"each"|"hr"|"flat"|"percent"|"load"|"room"|"vehicle"|"ton";
 export type FieldGroup = "dimensions"|"materials"|"railings"|"lighting"|"fencing"|"extras"|"fees"|"details";
 export interface SchemaField { id: string; label: string; type: "number"|"selector"|"toggle"|"area"; options?: string[]; placeholder?: string; unit?: FieldUnit; group?: FieldGroup; }

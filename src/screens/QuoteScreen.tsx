@@ -19,6 +19,7 @@ import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
+import { deriveSections } from "../utils/buildSchemaFromVerified";
 import { humanSchemaSummary } from "../utils/schemaExtractor";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -49,8 +50,15 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const [agentMessages, setAgentMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [showOverview, setShowOverview] = useState(false);       // section overview / negotiation screen
   const [comparingField, setComparingField] = useState<string | null>(null); // selector with the comparison panel open
+  const [activeSections, setActiveSections] = useState<Record<string, boolean>>({}); // single-page: which sections are ON
+  const [compareSection, setCompareSection] = useState<string | null>(null);          // single-page comparison sheet
   const scrollRef = useRef<ScrollView>(null);
   const sectionY = useRef<Record<string, number>>({});           // section content offsets for "Edit" jumps
+
+  // Single-page job-walkthrough layout — only for schemas that carry section metadata (import/wizard).
+  // Legacy/demo schemas (no sections) keep the classic flat field list below, unchanged.
+  const quoteSections: any[] = schema?.sections || [];
+  const useNewLayout = quoteSections.length > 0;
 
   const reduceMotion = useReduceMotion();
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
@@ -78,7 +86,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       for (const f of schema.fields) {
         if (f.type === "number" || f.type === "area") defaults[f.id] = 0;
         else if (f.type === "toggle") defaults[f.id] = false;
-        else if (f.type === "selector" && f.options?.length) defaults[f.id] = smart[f.id] ?? f.options[0];
+        // Single-page layout: leave selectors unselected so the rep taps a material (the spec's flow).
+        else if (f.type === "selector" && f.options?.length) defaults[f.id] = useNewLayout ? "" : (smart[f.id] ?? f.options[0]);
       }
       setFieldValues({ ...defaults, ...(initialValues ?? {}) });
       const exp: Record<string, boolean> = {};
@@ -90,6 +99,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       if (maxKey) exp[maxKey] = true;
       exp["addons"] = false;
       setExpanded(exp);
+      setActiveSections({}); // single-page: every section starts OFF; the rep taps to include
     });
   }, [schema, business.code]);
 
@@ -134,7 +144,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // "Edit" from the overview: jump straight to that section, expanded, and scroll it into view.
   const editSection = (key: string) => {
     setShowOverview(false);
-    setExpanded(p => ({ ...p, [key]: true }));
+    setExpanded(p => ({ ...p, [key]: true }));        // legacy field-group sections
+    setActiveSections(p => ({ ...p, [key]: true }));  // single-page sections
     setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, (sectionY.current[key] || 0) - 12), animated: true }), 120);
   };
 
@@ -171,11 +182,12 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     for (const f of schema?.fields ?? []) {
       if (f.type === "number" || f.type === "area") defaults[f.id] = 0;
       else if (f.type === "toggle") defaults[f.id] = false;
-      else if (f.type === "selector" && f.options?.length) defaults[f.id] = smart[f.id] ?? f.options[0];
+      else if (f.type === "selector" && f.options?.length) defaults[f.id] = useNewLayout ? "" : (smart[f.id] ?? f.options[0]);
     }
     setCustomerName("");
     setFieldValues(defaults);
     setSelectedAddOns([]);
+    setActiveSections({});
     setDiscountOpen(false); setDiscountValue(""); setDiscountReason("");
     setLastSavedId(null); setSaved(false);
     setShowTotal(false);
@@ -251,6 +263,11 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         if (jsonStart !== -1) {
           try {
             const updated = JSON.parse(reply.substring(jsonStart).trim().replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
+            // Keep the single-page layout alive across Kit edits: re-derive section metadata when the
+            // schema was using it (the agent returns plain fields/pricing without it).
+            if (useNewLayout && updated && Array.isArray(updated.fields)) {
+              try { updated.sections = deriveSections(updated.fields, updated.pricing || {}); } catch { }
+            }
             setSchema(updated);
             await saveBusiness({ ...business, schema: updated, kitUpdates: (business.kitUpdates || 0) + 1 });
             const msg = reply.substring(0, jsonStart).replace("CONFIG_UPDATED", "").trim();
@@ -387,6 +404,266 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     );
   };
 
+  // ── Single-page job-walkthrough helpers (new layout only) ──
+  const fieldById = (id?: string): any => (schema?.fields || []).find((f: any) => f.id === id);
+
+  // Auto-pick a Feather icon from a section name so the checklist reads at a glance.
+  const iconFor = (name: string): any => {
+    const n = (name || "").toLowerCase();
+    if (/light|elect|fixture|lamp/.test(n)) return "sun";
+    if (/rail|fence|linear|trim|edge|gutter/.test(n)) return "git-commit";
+    if (/roof|home|house|room|wall|shingle/.test(n)) return "home";
+    if (/labor|hour|install|service|crew/.test(n)) return "tool";
+    if (/haul|truck|delivery|move|dispos/.test(n)) return "truck";
+    if (/fee|option|misc|permit|warranty/.test(n)) return "clipboard";
+    if (/deck|board|floor|surface|sq|area|material|paint|concrete/.test(n)) return "layers";
+    return "box";
+  };
+
+  const unitLabel = (unit?: string): string => {
+    switch (unit) {
+      case "sqft": return "sq ft";
+      case "lf": return "linear ft";
+      case "hr": return "hours";
+      case "each": return "units";
+      case "ton": return "tons";
+      case "room": return "rooms";
+      case "load": return "loads";
+      case "vehicle": return "vehicles";
+      default: return unit || "units";
+    }
+  };
+
+  // Dollar contribution of one section, from the same fieldValues/pricing computeTotals() uses.
+  const sectionSubtotal = (sec: any): number => {
+    const pricing = schema?.pricing || {};
+    if (sec.pattern === "MATERIAL_MEASUREMENT") {
+      const chosen = fieldValues[sec.materialFieldId];
+      if (!chosen) return 0;
+      const rate = optionPrice(chosen, pricing);
+      if (rate == null) return 0;
+      if (sec.quantityFieldId) return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
+      return rate; // flat pick-one tier (no quantity)
+    }
+    if (sec.pattern === "LABOR") {
+      const rate = sec.laborRate || pricing[`${sec.quantityFieldId}Rate`] || 0;
+      return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
+    }
+    if (sec.pattern === "FLAT_RATE") {
+      return (sec.itemFieldIds || []).reduce((sum: number, id: string) => sum + (fieldValues[id] ? (pricing[`${id}Rate`] || 0) : 0), 0);
+    }
+    return 0;
+  };
+
+  // Clear every field a section owns (used when the rep turns the section OFF).
+  const clearSectionFields = (sec: any) => {
+    setFieldValues(prev => {
+      const next = { ...prev };
+      if (sec.materialFieldId) next[sec.materialFieldId] = "";
+      if (sec.quantityFieldId) next[sec.quantityFieldId] = 0;
+      (sec.itemFieldIds || []).forEach((id: string) => { next[id] = false; });
+      return next;
+    });
+  };
+
+  // Tap a section card: ON → expand inline + scroll into view; OFF → collapse + clear its values.
+  const toggleSectionCard = (sec: any) => {
+    if (readOnly) return;
+    const willActivate = !activeSections[sec.id];
+    if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+    setActiveSections(p => ({ ...p, [sec.id]: willActivate }));
+    if (willActivate) {
+      if (Platform.OS !== "web") Haptics.selectionAsync();
+      setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, (sectionY.current[sec.id] || 0) - 12), animated: true }), 150);
+    } else {
+      clearSectionFields(sec);
+    }
+  };
+
+  // A large measurement input — big number, unit on the right, numeric keyboard, clear (×).
+  const renderMeasurement = (field: any, unit?: string) => {
+    const value = fieldValues[field.id];
+    const filled = !!value && Number(value) > 0;
+    return (
+      <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: pal.surface, borderColor: filled ? primaryColor : pal.border, borderWidth: 1, borderRadius: 14, paddingHorizontal: 16 }}>
+        <TextInput editable={!readOnly} style={{ flex: 1, color: pal.text, fontSize: 24, fontWeight: "800", fontFamily: "Syne_700Bold", paddingVertical: 14 }} placeholder="0" placeholderTextColor={pal.textMuted} value={value ? value.toString() : ""} onChangeText={v => setField(field.id, v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
+        <Text style={{ color: pal.textMuted, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold", marginLeft: 8 }}>{unitLabel(unit)}</Text>
+        {filled && !readOnly && (
+          <TouchableOpacity onPress={() => setField(field.id, 0)} style={{ marginLeft: 10, padding: 4 }}>
+            <Feather name="x" size={18} color={pal.textMuted} />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  // The running "qty × rate = $total" subtotal that fades in below a section's inputs.
+  const subtotalRow = (label: string | null, amount: number) => (
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+      <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{label || ""}</Text>
+      <Text style={{ color: primaryColor, fontSize: 22, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>{formatMoney(amount)}</Text>
+    </View>
+  );
+
+  // MATERIAL_MEASUREMENT: horizontal material pills → measurement input → live subtotal → compare.
+  const renderMaterialSection = (sec: any) => {
+    const sel = fieldById(sec.materialFieldId);
+    const pricing = schema?.pricing || {};
+    const chosen = fieldValues[sec.materialFieldId];
+    const qtyField = sec.quantityFieldId ? fieldById(sec.quantityFieldId) : null;
+    const rate = chosen ? optionPrice(chosen, pricing) : null;
+    const qty = sec.quantityFieldId ? Number(fieldValues[sec.quantityFieldId]) || 0 : 0;
+    const subtotal = sectionSubtotal(sec);
+    return (
+      <View style={{ gap: 14 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingRight: 20 }} keyboardShouldPersistTaps="handled">
+          {(sel?.options || []).map((opt: string) => {
+            const selected = chosen === opt;
+            const price = optionPrice(opt, pricing);
+            return (
+              <PressableScale key={opt} onPress={() => !readOnly && setField(sec.materialFieldId, opt)} style={{ minWidth: 100, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 16, borderWidth: 1, backgroundColor: selected ? primaryColor : pal.surface, borderColor: selected ? primaryColor : pal.border }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  {selected && <Feather name="check" size={14} color={onPrimary} />}
+                  <Text style={{ color: selected ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt}</Text>
+                </View>
+                {price != null && <Text style={{ color: selected ? onPrimary : pal.secondary, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 3 }}>{sec.quantityFieldId ? `$${price.toLocaleString()}/${unitLabel(sec.unit).replace(/s$/, "")}` : `$${price.toLocaleString()}`}</Text>}
+              </PressableScale>
+            );
+          })}
+        </ScrollView>
+        {chosen && qtyField && renderMeasurement(qtyField, sec.unit)}
+        {subtotal > 0 && subtotalRow(sec.quantityFieldId && rate != null ? `${qty.toLocaleString()} ${unitLabel(sec.unit)} × $${rate.toLocaleString()}` : null, subtotal)}
+        {chosen && sec.quantityFieldId && (sel?.options?.length || 0) > 1 && !readOnly && (
+          <TouchableOpacity onPress={() => setCompareSection(sec.id)} style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+            <Feather name="bar-chart-2" size={15} color={primaryColor} />
+            <Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Compare options</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  // LABOR: "$rate / unit" + an hours/quantity input + live subtotal.
+  const renderLaborSection = (sec: any) => {
+    const field = fieldById(sec.quantityFieldId);
+    const pricing = schema?.pricing || {};
+    const rate = sec.laborRate || pricing[`${sec.quantityFieldId}Rate`] || 0;
+    const qty = Number(fieldValues[sec.quantityFieldId]) || 0;
+    const subtotal = sectionSubtotal(sec);
+    return (
+      <View style={{ gap: 14 }}>
+        {rate > 0 && <Text style={{ color: pal.secondary, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>${rate.toLocaleString()} / {unitLabel(sec.unit).replace(/s$/, "")}</Text>}
+        {field && renderMeasurement(field, sec.unit)}
+        {subtotal > 0 && subtotalRow(`${qty.toLocaleString()} ${unitLabel(sec.unit)} × $${rate.toLocaleString()}`, subtotal)}
+      </View>
+    );
+  };
+
+  // FLAT_RATE: tap-to-include cards for fixed-price items.
+  const renderFlatSection = (sec: any) => {
+    const pricing = schema?.pricing || {};
+    return (
+      <View style={{ gap: 10 }}>
+        {(sec.itemFieldIds || []).map((id: string) => {
+          const f = fieldById(id);
+          if (!f) return null;
+          const on = !!fieldValues[id];
+          const price = pricing[`${id}Rate`] || 0;
+          return (
+            <PressableScale key={id} onPress={() => !readOnly && setField(id, !on)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: on ? primaryColor : pal.surface, borderColor: on ? primaryColor : pal.border, borderWidth: 1, borderRadius: 14, padding: 16 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                <Feather name={on ? "check-circle" : "circle"} size={20} color={on ? onPrimary : pal.textMuted} />
+                <Text style={{ color: on ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{f.label}</Text>
+              </View>
+              {price > 0 && <Text style={{ color: on ? onPrimary : primaryColor, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>${price.toLocaleString()}</Text>}
+            </PressableScale>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const renderSectionContent = (sec: any) => {
+    if (sec.pattern === "MATERIAL_MEASUREMENT") return renderMaterialSection(sec);
+    if (sec.pattern === "LABOR") return renderLaborSection(sec);
+    if (sec.pattern === "FLAT_RATE") return renderFlatSection(sec);
+    return null;
+  };
+
+  // The single-page body: a 2-column section checklist, then every active section expanded inline.
+  const renderNewBody = () => {
+    const activeList = quoteSections.filter((sec: any) => activeSections[sec.id] || readOnly);
+    return (
+      <>
+        {!readOnly && (
+          <View style={{ gap: 10 }}>
+            <Text style={[s.fieldLabel, { color: pal.textMuted }]}>WHAT&apos;S IN THIS JOB?</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+              {quoteSections.map((sec: any) => {
+                const on = !!activeSections[sec.id];
+                const sub = sectionSubtotal(sec);
+                return (
+                  <PressableScale key={sec.id} onPress={() => toggleSectionCard(sec)} style={{ width: "47.5%", flexGrow: 1, minWidth: 140, backgroundColor: on ? primaryColor : pal.surface, borderColor: on ? primaryColor : pal.border, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                      <Feather name={iconFor(sec.name)} size={20} color={on ? onPrimary : primaryColor} />
+                      <Feather name={on ? "check-circle" : "plus-circle"} size={18} color={on ? onPrimary : pal.textMuted} />
+                    </View>
+                    <Text numberOfLines={2} style={{ color: on ? onPrimary : pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{sec.name}</Text>
+                    {on && sub > 0 && <Text style={{ color: onPrimary, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}
+                  </PressableScale>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {activeList.map((sec: any) => (
+          <View key={sec.id} style={{ gap: 14, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 18, padding: 16 }} onLayout={e => { sectionY.current[sec.id] = e.nativeEvent.layout.y; }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Feather name={iconFor(sec.name)} size={18} color={primaryColor} />
+                <Text style={[s.qSectionTitle, { color: pal.text }]}>{sec.name}</Text>
+              </View>
+              {!readOnly && (
+                <TouchableOpacity onPress={() => toggleSectionCard(sec)} hitSlop={8}>
+                  <Feather name="x" size={20} color={pal.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {renderSectionContent(sec)}
+          </View>
+        ))}
+      </>
+    );
+  };
+
+  // Section subtotals for the negotiation overview when the single-page layout is active.
+  const newOverviewSections = useMemo(() => {
+    if (!useNewLayout) return [];
+    const pricing = schema?.pricing || {};
+    const groups = quoteSections
+      .filter((sec: any) => activeSections[sec.id] && sectionSubtotal(sec) > 0)
+      .map((sec: any) => {
+        const sub = sectionSubtotal(sec);
+        let lines: { label: string; amount: number }[];
+        if (sec.pattern === "FLAT_RATE") {
+          lines = (sec.itemFieldIds || []).filter((id: string) => fieldValues[id]).map((id: string) => ({ label: fieldById(id)?.label || id, amount: pricing[`${id}Rate`] || 0 }));
+        } else {
+          const chosen = sec.materialFieldId ? fieldValues[sec.materialFieldId] : null;
+          lines = [{ label: chosen ? String(chosen) : sec.name, amount: sub }];
+        }
+        return { key: sec.id, title: sec.name, icon: iconFor(sec.name), lines, subtotal: sub };
+      });
+    if (selectedAddOns.length) {
+      const lines = selectedAddOns.map(id => { const ao = schema?.addOns?.find((a: any) => a.id === id); return { label: ao?.label || id, amount: ao?.price || 0 }; });
+      groups.push({ key: "addons", title: "Add-ons", icon: "plus-circle", lines, subtotal: lines.reduce((sum, l) => sum + l.amount, 0) });
+    }
+    return groups;
+  }, [useNewLayout, quoteSections, activeSections, fieldValues, selectedAddOns, schema]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const displayOverviewSections = useNewLayout ? newOverviewSections : overviewSections;
+  const compareSec = quoteSections.find((sec: any) => sec.id === compareSection);
+
   return (
     <SafeAreaView style={[s.container, { backgroundColor: pal.background }]}>
       <BrandHeader business={business} right={
@@ -429,7 +706,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         ) : (
           <>
-            {sections.map(sec => {
+            {useNewLayout ? renderNewBody() : sections.map(sec => {
               // #2: a section gated by an "Include X" toggle collapses its other fields when that toggle is off.
               const controller = sec.fields.find((f: any) => f.type === "toggle" && /\b(include|includes|add|with|has)\b/i.test(`${f.id} ${f.label}`));
               const fieldsToRender = controller && !fieldValues[controller.id] ? [controller] : sec.fields;
@@ -543,8 +820,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             </View>
 
             <ScrollView contentContainerStyle={{ paddingHorizontal: 20, gap: 12, paddingBottom: 12 }}>
-              {overviewSections.length === 0 && <Text style={[s.body, { color: pal.textMuted }]}>Add some pricing to review.</Text>}
-              {overviewSections.map(g => (
+              {displayOverviewSections.length === 0 && <Text style={[s.body, { color: pal.textMuted }]}>Add some pricing to review.</Text>}
+              {displayOverviewSections.map(g => (
                 <View key={g.key} style={{ backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 14, padding: 14, gap: 8 }}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
@@ -606,6 +883,48 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                 <Text style={[s.btnText, { color: onPrimary }]}>Sign or Share →</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Compare options (single-page): every material × this section's measurement, tap to switch ── */}
+      <Modal visible={!!compareSec && !readOnly} transparent animationType="slide" onRequestClose={() => setCompareSection(null)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setCompareSection(null)} />
+          <View style={{ maxHeight: "80%", backgroundColor: pal.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: pal.border }}>
+            {compareSec && (() => {
+              const sel = fieldById(compareSec.materialFieldId);
+              const pricing = schema?.pricing || {};
+              const measure = compareSec.quantityFieldId ? Number(fieldValues[compareSec.quantityFieldId]) || 0 : 0;
+              const chosen = fieldValues[compareSec.materialFieldId];
+              return (
+                <>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, paddingBottom: 6 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.h2, { color: pal.text, fontSize: 20 }]}>Compare options</Text>
+                      <Text style={[s.qHint, { color: pal.textMuted }]}>{measure > 0 ? `${measure.toLocaleString()} ${unitLabel(compareSec.unit)} · tap a row to switch` : "Tap a row to switch the material"}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => setCompareSection(null)}><Feather name="chevron-down" size={26} color={pal.textMuted} /></TouchableOpacity>
+                  </View>
+                  <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 28, gap: 4 }}>
+                    {(sel?.options || []).map((opt: string) => {
+                      const rate = optionPrice(opt, pricing);
+                      const lineTotal = rate == null ? null : (measure > 0 ? rate * measure : rate);
+                      const selected = chosen === opt;
+                      return (
+                        <TouchableOpacity key={opt} onPress={() => { setField(compareSec.materialFieldId, opt); setCompareSection(null); }} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: pal.border }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                            {selected && <Feather name="check" size={16} color={primaryColor} />}
+                            <Text style={{ color: selected ? primaryColor : pal.text, fontSize: 16, fontWeight: selected ? "800" : "600", fontFamily: selected ? "Syne_700Bold" : "DMSans_600SemiBold" }}>{opt}</Text>
+                          </View>
+                          <Text style={{ color: selected ? primaryColor : pal.text, fontSize: 16, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{lineTotal == null ? "—" : formatMoney(lineTotal)}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </>
+              );
+            })()}
           </View>
         </View>
       </Modal>

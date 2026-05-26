@@ -1,4 +1,4 @@
-import { AddOn, FieldGroup, FieldUnit, QuoteSchema, SchemaField, SummaryLine } from "../types";
+import { AddOn, FieldGroup, FieldUnit, QuoteSchema, QuoteSection, SchemaField, SummaryLine } from "../types";
 
 // The unit choices the import editor / wizard offer the human. These are HUMAN-facing labels.
 export type VerifiedUnit = "sq ft" | "lf" | "hour" | "each" | "flat" | "section" | "other";
@@ -117,7 +117,28 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
     addOns,
     calculation: terms.length ? terms.join(" + ") : "0",
     summaryLines: lines,
+    sections: deriveSections(fields, pricing),
   };
+}
+
+// Derive the single-page render metadata from a built schema's fields. Deterministic and reusable
+// (also called by QuoteScreen after the in-quote Kit agent rewrites a schema, so the new UI persists).
+// Pairs each material selector with a same-unit quantity field (MATERIAL_MEASUREMENT), treats lone
+// number fields as rate × quantity (LABOR), and groups toggles into one FLAT_RATE section.
+export function deriveSections(fields: SchemaField[], pricing: Record<string, number>): QuoteSection[] {
+  const out: QuoteSection[] = [];
+  const usedQty = new Set<string>();
+  for (const sel of fields.filter(f => f.type === "selector")) {
+    const qty = fields.find(f => (f.type === "number" || f.type === "area") && f.unit === sel.unit && !usedQty.has(f.id));
+    if (qty) { usedQty.add(qty.id); out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit }); }
+    else out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit }); // pick-one tier, no quantity
+  }
+  for (const num of fields.filter(f => (f.type === "number" || f.type === "area") && !usedQty.has(f.id))) {
+    out.push({ id: num.id, name: num.label, pattern: "LABOR", quantityFieldId: num.id, unit: num.unit, laborRate: pricing[`${num.id}Rate`] ?? 0 });
+  }
+  const toggles = fields.filter(f => f.type === "toggle");
+  if (toggles.length) out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: toggles.map(f => f.id) });
+  return out;
 }
 
 export function verifiedItemCount(categories: VerifiedCategory[]): number {
