@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { useEffect, useMemo, useState } from "react";
-import { Alert, LayoutAnimation, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, LayoutAnimation, Modal, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
 import { AnimatedDollar } from "../components/AnimatedDollar";
 import { BrandHeader } from "../components/BrandHeader";
 import { ClosingCard } from "../components/ClosingCard";
@@ -18,6 +18,7 @@ import { Business, QuotePresentation, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
+import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { humanSchemaSummary } from "../utils/schemaExtractor";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -46,6 +47,10 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const [agentInput, setAgentInput] = useState("");
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentMessages, setAgentMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [showOverview, setShowOverview] = useState(false);       // section overview / negotiation screen
+  const [comparingField, setComparingField] = useState<string | null>(null); // selector with the comparison panel open
+  const scrollRef = useRef<ScrollView>(null);
+  const sectionY = useRef<Record<string, number>>({});           // section content offsets for "Edit" jumps
 
   const reduceMotion = useReduceMotion();
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
@@ -92,6 +97,46 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const t = computeTotals(schema, fieldValues, selectedAddOns, discount);
   const range = typicalRange(history);
   const outsideRange = !!range && t.total > 0 && (t.total > range.avg + 1.5 * range.std || t.total < Math.max(0, range.avg - 1.5 * range.std));
+
+  // Map a field id → the section it lives in (for the overview's "Edit" jumps).
+  const fieldSectionKey = (fieldId: string): string | undefined => sections.find(sec => sec.fields.some((f: any) => f.id === fieldId))?.key;
+
+  // Live, editable line items for the negotiation overview, grouped by section with running subtotals.
+  const overviewSections = useMemo(() => {
+    const pricing = schema?.pricing || {};
+    type Line = { label: string; amount: number };
+    const bySection: Record<string, { key: string; title: string; icon: any; lines: Line[]; subtotal: number }> = {};
+    const order: string[] = [];
+    const ensure = (key: string) => {
+      if (!bySection[key]) {
+        const sec = sections.find(x => x.key === key);
+        bySection[key] = { key, title: sec?.title || (key === "addons" ? "Add-ons" : "Other"), icon: sec?.icon || "plus-circle", lines: [], subtotal: 0 };
+        order.push(key);
+      }
+      return bySection[key];
+    };
+    for (const line of schema?.summaryLines || []) {
+      if (line.showIf && !evaluateCondition(line.showIf, t.ctx, pricing)) continue;
+      const value = evaluateFormula(line.value, t.ctx, pricing);
+      if (!value) continue;
+      const label = line.label.replace(/\{(\w+)\}/g, (_: string, k: string) => t.ctx[k] ?? pricing[k] ?? k);
+      const refField = (schema?.fields || []).find((f: any) => new RegExp(`(^|[^\\w])${f.id}([^\\w]|$)`).test(line.value));
+      const key = (refField && fieldSectionKey(refField.id)) || "details";
+      const g = ensure(key); g.lines.push({ label, amount: value }); g.subtotal += value;
+    }
+    for (const id of selectedAddOns) {
+      const ao = schema?.addOns?.find((a: any) => a.id === id); if (!ao) continue;
+      const g = ensure("addons"); g.lines.push({ label: ao.label, amount: ao.price || 0 }); g.subtotal += ao.price || 0;
+    }
+    return order.map(k => bySection[k]);
+  }, [schema, t, selectedAddOns, sections]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Edit" from the overview: jump straight to that section, expanded, and scroll it into view.
+  const editSection = (key: string) => {
+    setShowOverview(false);
+    setExpanded(p => ({ ...p, [key]: true }));
+    setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, (sectionY.current[key] || 0) - 12), animated: true }), 120);
+  };
 
   const toggleSection = (key: string) => {
     if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
@@ -238,14 +283,23 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
   const renderSelector = (field: any) => {
     const value = fieldValues[field.id];
+    const pricing = schema?.pricing || {};
+    // Find the measurement this material applies to (a number field sharing the selector's unit), so
+    // we can show every option's cost for THIS job without re-entering anything.
+    const measureField = (schema?.fields || []).find((f: any) => (f.type === "number" || f.type === "area") && f.unit === field.unit && Number(fieldValues[f.id]) > 0);
+    const measure = measureField ? Number(fieldValues[measureField.id]) || 0 : 0;
+    const hasPrices = (field.options || []).some((o: string) => optionPrice(o, pricing) != null);
+    const comparing = comparingField === field.id;
     return (
       <View key={field.id} style={{ gap: 8 }}>
         <Text style={[s.fieldLabel, { color: pal.textMuted }]}>{field.label.toUpperCase()}</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
           {field.options?.map((opt: string) => {
             const selected = value === opt;
-            const price = optionPrice(opt, schema?.pricing || {});
+            const price = optionPrice(opt, pricing);
             return (
+              // Quick swap: tapping a different option swaps the material instantly; the measurement
+              // stays and the grand total recalculates immediately.
               <PressableScale key={opt} onPress={() => setField(field.id, opt)} style={[s.qOptionCard, { borderColor: selected ? primaryColor : pal.border, backgroundColor: selected ? primaryColor : pal.surface }]}>
                 <Text style={[s.qOptionName, { color: selected ? onPrimary : pal.text }]}>{opt}</Text>
                 {price != null ? <Text style={[s.qOptionPrice, { color: selected ? onPrimary : primaryColor }]}>${price.toLocaleString()}</Text> : null}
@@ -253,6 +307,32 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             );
           })}
         </View>
+        {!readOnly && value && hasPrices && (
+          <TouchableOpacity onPress={() => setComparingField(comparing ? null : field.id)} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Feather name={comparing ? "chevron-up" : "bar-chart-2"} size={14} color={primaryColor} />
+            <Text style={{ color: primaryColor, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{comparing ? "Hide options" : "See all options for this measurement"}</Text>
+          </TouchableOpacity>
+        )}
+        {!readOnly && comparing && (
+          <View style={{ backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 12, padding: 12, gap: 8 }}>
+            {measure > 0 && measureField ? (
+              <Text style={[s.qHint, { color: pal.textMuted }]}>{measureField.label} {measure} {field.unit} · tap a row to switch</Text>
+            ) : (
+              <Text style={[s.qHint, { color: pal.textMuted }]}>Enter a {field.label.toLowerCase()} measurement to compare totals</Text>
+            )}
+            {(field.options || []).map((opt: string) => {
+              const rate = optionPrice(opt, pricing);
+              const lineTotal = rate == null ? null : (measure > 0 ? rate * measure : rate);
+              const selected = value === opt;
+              return (
+                <TouchableOpacity key={opt} onPress={() => setField(field.id, opt)} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 4 }}>
+                  <Text style={{ color: selected ? primaryColor : pal.text, fontSize: 14, fontWeight: selected ? "800" : "400", fontFamily: selected ? "DMSans_700Bold" : "DMSans_400Regular" }}>{opt}{selected ? "  ← current" : ""}</Text>
+                  <Text style={{ color: selected ? primaryColor : pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{lineTotal == null ? "—" : formatMoney(lineTotal)}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </View>
     );
   };
@@ -336,7 +416,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         </View>
       )}
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: readOnly ? 40 : 200 }} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ padding: 20, gap: 22, paddingBottom: readOnly ? 40 : 200 }} keyboardShouldPersistTaps="handled">
         <View style={{ gap: 6 }}>
           <Text style={[s.fieldLabel, { color: pal.textMuted }]}>CLIENT NAME</Text>
           <TextInput editable={!readOnly} style={[s.input, { backgroundColor: pal.surface, color: pal.text, borderColor: pal.border }]} placeholder="Who is this quote for?" placeholderTextColor={pal.textMuted} value={customerName} onChangeText={setCustomerName} />
@@ -354,7 +434,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
               const controller = sec.fields.find((f: any) => f.type === "toggle" && /\b(include|includes|add|with|has)\b/i.test(`${f.id} ${f.label}`));
               const fieldsToRender = controller && !fieldValues[controller.id] ? [controller] : sec.fields;
               return (
-                <View key={sec.key} style={{ gap: 14 }}>
+                <View key={sec.key} style={{ gap: 14 }} onLayout={e => { sectionY.current[sec.key] = e.nativeEvent.layout.y; }}>
                   {renderSectionHeader(sec.key, sec.title, sec.icon, sec.optional)}
                   {expanded[sec.key] && <View style={{ gap: 18 }}>{fieldsToRender.map(renderField)}</View>}
                 </View>
@@ -362,7 +442,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             })}
 
             {schema?.addOns?.length > 0 && (
-              <View style={{ gap: 14 }}>
+              <View style={{ gap: 14 }} onLayout={e => { sectionY.current["addons"] = e.nativeEvent.layout.y; }}>
                 {renderSectionHeader("addons", "Add-ons", "plus-circle", true)}
                 {expanded["addons"] && (
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
@@ -434,10 +514,10 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         )}
         <View style={s.qStickyRow}>
           <View>
-            <Text style={[s.qStickyLabel, { color: pal.textMuted }]}>ESTIMATED TOTAL</Text>
-            <AnimatedDollar value={t.total} style={[s.qStickyTotal, { color: pal.text }]} />
+            <Text style={[s.qStickyLabel, { color: pal.textMuted }]}>GRAND TOTAL</Text>
+            <AnimatedDollar value={t.total} style={[s.qStickyTotal, { color: primaryColor }]} />
           </View>
-          <PressableScale onPress={() => setShowTotal(true)} style={[s.qReviewBtn, { backgroundColor: primaryColor }]}>
+          <PressableScale onPress={() => setShowOverview(true)} style={[s.qReviewBtn, { backgroundColor: primaryColor }]}>
             <Text style={[s.qReviewText, { color: onPrimary }]}>Review</Text>
             <Feather name="chevron-up" size={18} color={onPrimary} />
           </PressableScale>
@@ -448,6 +528,87 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       {showTotal && !readOnly && (
         <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
       )}
+
+      {/* ── Section overview / negotiation screen — review subtotals, edit any section, see the live total ── */}
+      <Modal visible={showOverview && !readOnly} transparent animationType="slide" onRequestClose={() => setShowOverview(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setShowOverview(false)} />
+          <View style={{ maxHeight: "90%", backgroundColor: pal.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: pal.border }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20, paddingBottom: 10 }}>
+              <View>
+                <Text style={[s.h2, { color: pal.text, fontSize: 20 }]}>Review the quote</Text>
+                <Text style={[s.qHint, { color: pal.textMuted }]}>Tap any section to adjust — the total updates live.</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowOverview(false)}><Feather name="chevron-down" size={26} color={pal.textMuted} /></TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={{ paddingHorizontal: 20, gap: 12, paddingBottom: 12 }}>
+              {overviewSections.length === 0 && <Text style={[s.body, { color: pal.textMuted }]}>Add some pricing to review.</Text>}
+              {overviewSections.map(g => (
+                <View key={g.key} style={{ backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 14, padding: 14, gap: 8 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                      <Feather name={g.icon} size={16} color={primaryColor} />
+                      <Text style={{ color: pal.text, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{g.title}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => editSection(g.key)} style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+                      <Feather name="edit-2" size={13} color={primaryColor} />
+                      <Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {g.lines.map((ln, i) => (
+                    <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
+                      <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_400Regular", flexShrink: 1 }}>{ln.label}</Text>
+                      <Text style={{ color: pal.text, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{formatMoney(ln.amount)}</Text>
+                    </View>
+                  ))}
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: pal.border, paddingTop: 6 }}>
+                    <Text style={{ color: pal.textMuted, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>SUBTOTAL</Text>
+                    <Text style={{ color: primaryColor, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(g.subtotal)}</Text>
+                  </View>
+                </View>
+              ))}
+
+              {/* Discount — always accessible on the negotiation screen */}
+              {!discountOpen && t.discountAmount <= 0 ? (
+                <TouchableOpacity onPress={() => setDiscountOpen(true)} style={[s.qAddPill, { backgroundColor: pal.surface, borderColor: pal.border, alignSelf: "flex-start" }]}>
+                  <Feather name="tag" size={16} color={primaryColor} />
+                  <Text style={{ fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold", color: primaryColor }}>Apply Discount</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 14, padding: 14, gap: 10 }}>
+                  <Text style={{ color: pal.text, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Discount</Text>
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    {(["amount", "percent"] as const).map(m => {
+                      const active = discountMode === m;
+                      return (
+                        <PressableScale key={m} onPress={() => setDiscountMode(m)} style={[s.qPill, { borderColor: active ? primaryColor : pal.border, backgroundColor: active ? primaryColor : pal.background }]}>
+                          <Text style={[s.qPillText, { color: active ? onPrimary : pal.textMuted }]}>{m === "amount" ? "$ Amount" : "% Off"}</Text>
+                        </PressableScale>
+                      );
+                    })}
+                  </View>
+                  <TextInput style={[s.input, { backgroundColor: pal.background, color: pal.text, borderColor: pal.border }]} placeholder={discountMode === "amount" ? "Discount amount" : "Percent off (e.g. 10)"} placeholderTextColor={pal.textMuted} value={discountValue} onChangeText={v => setDiscountValue(v.replace(/[^0-9.]/g, ""))} keyboardType="numeric" />
+                  <TextInput style={[s.input, { backgroundColor: pal.background, color: pal.text, borderColor: pal.border }]} placeholder="Label (optional): Referral, Returning client…" placeholderTextColor={pal.textMuted} value={discountReason} onChangeText={setDiscountReason} />
+                  {t.discountAmount > 0 && <Text style={[s.qHint, { color: pal.textMuted }]}>Applied: -{formatMoney(t.discountAmount)}</Text>}
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Footer: live grand total + continue to the proposal */}
+            <View style={{ padding: 20, borderTopWidth: 1, borderTopColor: pal.border, gap: 12 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={{ color: pal.textMuted, fontSize: 13, fontWeight: "700", letterSpacing: 1, fontFamily: "DMSans_700Bold" }}>TOTAL</Text>
+                <Text style={{ color: primaryColor, fontSize: 30, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>{formatMoney(t.total)}</Text>
+              </View>
+              <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, flexDirection: "row", justifyContent: "center", gap: 8 }]} onPress={() => { setShowOverview(false); setShowTotal(true); }}>
+                <Feather name="arrow-right" size={18} color={onPrimary} />
+                <Text style={[s.btnText, { color: onPrimary }]}>Sign or Share →</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {isAdmin && !showTotal && !readOnly && (
         <TouchableOpacity style={[s.kitCircle, { bottom: 150, backgroundColor: primaryColor, shadowColor: primaryColor }]} onPress={() => setAgentOpen(true)}>
