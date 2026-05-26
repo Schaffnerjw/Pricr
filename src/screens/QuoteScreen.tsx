@@ -63,12 +63,16 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // Single-page job-walkthrough layout — only for schemas that carry section metadata (import/wizard).
   // Legacy/demo schemas (no sections) keep the classic flat field list below, unchanged.
   const useNewLayout = !!(schema?.sections?.length);
-  // Re-derive section metadata from the canonical fields on load so LEGACY schemas (built before
-  // option ids / the current multi-select rule) are upgraded in-memory. Deterministic + idempotent:
-  // a schema already built by the current builder re-derives to the same sections.
+  // Re-derive section metadata from the canonical fields whenever fields/pricing/sections change —
+  // NOT just on mount. Keyed on the stringified content so a Kit edit (which mutates fields/pricing)
+  // always re-runs deriveSections and the section cards reflect the change immediately, even if the
+  // schema object identity didn't change. Deterministic + idempotent.
+  const schemaFieldsKey = JSON.stringify(schema?.fields ?? null);
+  const schemaPricingKey = JSON.stringify(schema?.pricing ?? null);
+  const schemaSectionsKey = JSON.stringify(schema?.sections ?? null);
   const quoteSections: any[] = useMemo(
     () => (useNewLayout && schema?.fields?.length ? deriveSections(schema.fields, schema.pricing || {}) : (schema?.sections || [])),
-    [schema, useNewLayout],
+    [schemaFieldsKey, schemaPricingKey, schemaSectionsKey, useNewLayout], // eslint-disable-line react-hooks/exhaustive-deps
   );
   // Schema the pricing engine actually sees — carries the upgraded sections (with option ids + rates).
   const engineSchema = useMemo(() => (useNewLayout ? { ...schema, sections: quoteSections } : schema), [schema, quoteSections, useNewLayout]);
