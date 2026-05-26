@@ -24,13 +24,14 @@ import { SignupBrandScreen } from "../src/screens/SignupBrandScreen";
 import { SignupScreen } from "../src/screens/SignupScreen";
 import { StatsScreen } from "../src/screens/StatsScreen";
 import { SuperAdminAnalyticsScreen } from "../src/screens/SuperAdminAnalyticsScreen";
+import { ViewAsScreen } from "../src/screens/ViewAsScreen";
 import { UpgradePasswordScreen } from "../src/screens/UpgradePasswordScreen";
 import { UsersScreen } from "../src/screens/UsersScreen";
 import { WelcomeScreen } from "../src/screens/WelcomeScreen";
 import { s } from "../src/styles";
 import { isSupabaseConfigured } from "../src/lib/supabase";
 import { addQuote, clearCurrentUser, clearImportProgress, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
-import { BrandConfig, Business, DemoBusiness, QuoteSchema, Screen, User } from "../src/types";
+import { BrandConfig, Business, DemoBusiness, QuoteSchema, SavedQuote, Screen, User } from "../src/types";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
@@ -105,6 +106,7 @@ export default function Index() {
   const [setupPath, setSetupPath] = useState<"wizard" | "import" | "chat">("wizard"); // which path produced pendingSchema
   const [importText, setImportText] = useState(""); // preserved across import retries
   const [importResume, setImportResume] = useState(false); // resume an in-progress import
+  const [impersonated, setImpersonated] = useState<{ business: Business; quotes: SavedQuote[] } | null>(null); // super-admin "view as"
   const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); console.log("[Schema] updated:", JSON.stringify(next)); };
   const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
 
@@ -126,6 +128,8 @@ export default function Index() {
         }
         const biz = await getBusiness(user.businessCode);
         if (biz) {
+          // Suspended businesses can't auto-resume either — drop the session and bounce to welcome.
+          if (biz.suspended) { await clearCurrentUser(); setTimeout(() => setScreen("welcome"), 600); return; }
           setCurrentUser(user);
           setBusiness(biz);
           // Part 8: a business with a blank schema (no trade, no fields) should never land on an empty
@@ -228,6 +232,8 @@ export default function Index() {
       const biz = await getBusiness(code);
       console.log("[Login] business found:", biz ? "yes" : "no");
       if (!biz) { setAuthError("Account not found."); return; }
+      // Suspended accounts can't sign in (super admin can lift this from the master dashboard).
+      if (biz.suspended) { console.log("[Login] blocked — account suspended"); setAuthError("This account has been suspended. Contact support at pricr.veraa.io"); return; }
       const users = await getUsers(biz.code);
       let user: User | undefined;
       let ok = false;
@@ -554,12 +560,31 @@ export default function Index() {
 
   // ── MASTER DASHBOARD ──────────────────────────────────────────────────────────
   if (screen === "master") {
-    return <MasterDashboard onSignOut={handleSignOut} onStartDemo={startDemo} onOpenAnalytics={() => setScreen("super_analytics")} />;
+    return <MasterDashboard
+      onSignOut={handleSignOut} onStartDemo={startDemo} onOpenAnalytics={() => setScreen("super_analytics")}
+      onViewAs={(biz, rawQuotes) => {
+        // Map the proxy's relational quote rows → SavedQuote so the read-only dashboard stats are accurate.
+        const quotes: SavedQuote[] = (rawQuotes || []).map((q: any, i: number) => ({
+          id: String(i), timestamp: q.created_at ? new Date(q.created_at).getTime() : Date.now(),
+          customerName: q.customer_name || "", trade: biz.schema?.trade || "", total: Number(q.total) || 0, deposit: 0,
+          fieldValues: {}, userId: "", repName: "",
+          status: q.status === "accepted" ? "won" : q.status === "declined" ? "lost" : "open",
+          ...(q.signed_at ? { signedAt: new Date(q.signed_at).getTime() } : {}),
+        }));
+        setImpersonated({ business: biz, quotes });
+        setScreen("view_as");
+      }}
+    />;
   }
 
   // Hidden super-admin analytics (reached only by the 5-tap logo gesture on the master dashboard).
   if (screen === "super_analytics" && currentUser?.role === "superadmin") {
     return <SuperAdminAnalyticsScreen onBack={() => setScreen("master")} />;
+  }
+
+  // Super-admin read-only "View as [Business]".
+  if (screen === "view_as" && currentUser?.role === "superadmin" && impersonated) {
+    return <ViewAsScreen business={impersonated.business} quotes={impersonated.quotes} onBack={() => { setImpersonated(null); setScreen("master"); }} />;
   }
 
   // ── BUSINESS STATS (admin only — brag card + deep dive) ─────────────────────────

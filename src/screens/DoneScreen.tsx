@@ -34,25 +34,29 @@ function subtextFor(st: DashStats | null): string {
   return "You're all set — let's close some jobs.";
 }
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
   onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
   schemaWarning?: { ok: boolean; isPlaceholder: boolean; reason?: string } | null; onFixSchema?: () => void; onStats?: () => void;
+  // View-as (super admin, read-only): inject the business's quotes (cross-tenant fetch happens via the
+  // proxy, not the local RLS session) and hide the interactive Kit bubble.
+  quotesOverride?: SavedQuote[]; viewOnly?: boolean;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
   const onPrimary = ON_PRIMARY; // brand look: always white on the primary color
   const bg = pal.background;
-  const [stats, setStats] = useState<DashStats | null>(null);
+  const [stats, setStats] = useState<DashStats | null>(quotesOverride ? computeStats(quotesOverride) : null);
   const [dismissed, setDismissed] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
 
   useEffect(() => {
+    if (quotesOverride) { setStats(computeStats(quotesOverride)); return; }
     let mounted = true;
     getQuotes(business.code).then(qs => { if (mounted) setStats(computeStats(qs)); });
     return () => { mounted = false; };
-  }, [business.code]);
+  }, [business.code, quotesOverride]);
 
   // Onboarding summary card: visible only until the first quote exists, then hidden permanently (FIX 19).
   const showOnboardingCard = !!business.schema && !business.hasGeneratedQuote && (stats?.realCount ?? 0) === 0;
@@ -217,7 +221,7 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         )}
       </ScrollView>
 
-      {isAdmin && <KitIntroBubble business={business} onSetupTerms={onSetupTerms ?? onOpenSettings} />}
+      {isAdmin && !viewOnly && <KitIntroBubble business={business} onSetupTerms={onSetupTerms ?? onOpenSettings} />}
     </SafeAreaView>
   );
 }

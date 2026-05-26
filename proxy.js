@@ -995,9 +995,16 @@ async function handleAdminBusiness(res, body) {
   const r = await supabaseRequest('GET', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}&select=*`);
   const b = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
   if (!b) return sendJson(res, 404, { error: 'Business not found' });
-  const qr = await supabaseRequest('GET', `/rest/v1/quotes?business_id=eq.${encodeURIComponent(b.id)}&select=customer_name,total,status,signed_at,created_at&order=created_at.desc&limit=10`);
+  // Deep access: every quote ever (capped at 500), full config (settings/schema/brand), team, signing.
+  const qr = await supabaseRequest('GET', `/rest/v1/quotes?business_id=eq.${encodeURIComponent(b.id)}&select=customer_name,total,status,signed_at,created_at&order=created_at.desc&limit=500`);
+  const quotes = Array.isArray(qr.json) ? qr.json : [];
   const config = b.config || {};
-  return sendJson(res, 200, { code: b.code, name: b.name, schema: config.schema || null, schemaStatus: schemaStatus(config), members: config.members || [], recentQuotes: Array.isArray(qr.json) ? qr.json : [], suspended: !!config.suspended });
+  const signedCount = quotes.filter((q) => q.signed_at).length;
+  return sendJson(res, 200, {
+    code: b.code, name: b.name, config, schema: config.schema || null, brand: config.brand || null,
+    schemaStatus: schemaStatus(config), members: config.members || [],
+    quotes, recentQuotes: quotes.slice(0, 10), quoteCount: quotes.length, signedCount, suspended: !!config.suspended,
+  });
 }
 
 async function handleAdminResetPassword(res, body) {
@@ -1048,8 +1055,12 @@ async function handleAdminBusinessAction(res, body) {
   const b = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
   if (!b) return sendJson(res, 404, { error: 'Business not found' });
   if (p.action === 'delete') {
-    await supabaseRequest('DELETE', `/rest/v1/quotes?business_id=eq.${encodeURIComponent(b.id)}`);
-    const d = await supabaseRequest('DELETE', `/rest/v1/businesses?id=eq.${encodeURIComponent(b.id)}`);
+    // Full cascade cleanup (explicit, in FK-safe order): quotes → brand_configs → users → business.
+    const id = encodeURIComponent(b.id);
+    await supabaseRequest('DELETE', `/rest/v1/quotes?business_id=eq.${id}`);
+    await supabaseRequest('DELETE', `/rest/v1/brand_configs?business_id=eq.${id}`);
+    await supabaseRequest('DELETE', `/rest/v1/users?business_id=eq.${id}`);
+    const d = await supabaseRequest('DELETE', `/rest/v1/businesses?id=eq.${id}`);
     return sendJson(res, d.status < 300 ? 200 : 500, d.status < 300 ? { ok: true } : { error: 'Delete failed' });
   }
   if (p.action === 'suspend' || p.action === 'unsuspend') {

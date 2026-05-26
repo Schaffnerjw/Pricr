@@ -5,7 +5,7 @@ import { ActivityIndicator, Alert, Animated, Image, Platform, SafeAreaView, Scro
 import { DemoPickerModal } from "../components/DemoPickerModal";
 import { B, MASTER_CODE, SIGN_BASE } from "../constants/brand";
 import { s } from "../styles";
-import { DemoBusiness } from "../types";
+import { Business, DemoBusiness } from "../types";
 import { formatDate } from "../utils/helpers";
 
 // Cross-platform alert (web prompt() can't show multi-line nicely, so use window.alert there).
@@ -28,10 +28,10 @@ async function adminFetch(action: string, body?: any): Promise<any> {
 }
 
 interface SearchResult { code: string; name: string; trade: string; username: string; quoteCount: number; lastActive: number | null; schemaStatus: string; suspended: boolean; }
-interface BizDetail { code: string; name: string; schema: any; schemaStatus: string; members: any[]; recentQuotes: any[]; suspended: boolean; }
+interface BizDetail { code: string; name: string; config: any; brand: any; schema: any; schemaStatus: string; members: any[]; quotes: any[]; recentQuotes: any[]; quoteCount: number; signedCount: number; suspended: boolean; }
 interface Stats { businesses: number; quotes: number; signed: number; blankSchemas: number; zeroQuoteBusinesses: number; }
 
-export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics }: { onSignOut: () => void; onStartDemo: (demo: DemoBusiness) => void; onOpenAnalytics?: () => void }) {
+export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onViewAs }: { onSignOut: () => void; onStartDemo: (demo: DemoBusiness) => void; onOpenAnalytics?: () => void; onViewAs?: (business: Business, quotes: any[]) => void }) {
   const [showDemoPicker, setShowDemoPicker] = useState(false);
   // Hidden gesture: 5 taps on the logo within 3s opens the super-admin analytics. No UI hint.
   const tapTimes = useRef<number[]>([]);
@@ -58,6 +58,8 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics }: { o
   const [notifyMsg, setNotifyMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [deleteName, setDeleteName] = useState(""); // typed confirmation before delete
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => { loadStats(); }, []);
   const loadStats = async () => { try { setStats(await adminFetch("stats")); } catch (e) { setErr(e instanceof Error ? e.message : "stats failed"); } };
@@ -79,7 +81,7 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics }: { o
   };
 
   const openBusiness = async (code: string) => {
-    setBusy(true); setErr("");
+    setBusy(true); setErr(""); setConfirmingDelete(false); setDeleteName("");
     try { setDetail(await adminFetch("business", { code })); setSchemaOpen(false); }
     catch (e) { setErr(e instanceof Error ? e.message : "load failed"); }
     setBusy(false);
@@ -146,7 +148,25 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics }: { o
               {d.suspended && <View style={{ backgroundColor: B.red + "22", borderColor: B.red, borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}><Text style={{ color: B.red, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>SUSPENDED</Text></View>}
             </View>
             <Text style={[s.configValue, { marginTop: 8 }]}>Trade: {d.schema?.trade || "Not configured"}</Text>
+            <Text style={[s.configValue, { marginTop: 2 }]}>Quotes: {d.quoteCount} · Signed: {d.signedCount} · Team: {d.members.length}</Text>
+            {d.brand && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                {(["primaryColor", "secondaryColor", "backgroundColor"] as const).map(k => d.brand[k] ? (
+                  <View key={k} style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+                    <View style={{ width: 16, height: 16, borderRadius: 4, backgroundColor: d.brand[k], borderWidth: 1, borderColor: B.border }} />
+                    <Text style={{ color: B.gray2, fontSize: 11, fontFamily: "DMSans_400Regular" }}>{d.brand[k]}</Text>
+                  </View>
+                ) : null)}
+              </View>
+            )}
           </View>
+
+          {/* View as (read-only impersonation) */}
+          {onViewAs && (
+            <TouchableOpacity style={[s.btn, { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: B.blue }]} onPress={() => onViewAs(d.config, d.quotes)}>
+              <Feather name="eye" size={16} color={B.white} /><Text style={s.btnText}>View as {d.name}</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Schema debug */}
           <TouchableOpacity onPress={() => setSchemaOpen(o => !o)} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -176,17 +196,18 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics }: { o
             </View>
           ))}
 
-          {/* Recent quotes */}
-          <Text style={s.sectionTitle}>RECENT QUOTES ({d.recentQuotes.length})</Text>
-          {d.recentQuotes.map((q: any, i: number) => (
+          {/* All quotes */}
+          <Text style={s.sectionTitle}>QUOTES ({d.quoteCount})</Text>
+          {(d.quotes || []).slice(0, 100).map((q: any, i: number) => (
             <View key={i} style={s.historyCard}>
               <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
                 <Text style={s.historyName}>{q.customer_name || "No name"}</Text>
                 <Text style={[s.historyTotal, { color: B.blue }]}>${Number(q.total || 0).toLocaleString()}</Text>
               </View>
-              <Text style={s.historyMeta}>{formatDate(new Date(q.created_at).getTime())}{q.signed_at ? " · signed" : ""}</Text>
+              <Text style={s.historyMeta}>{formatDate(new Date(q.created_at).getTime())} · {q.status || "draft"}{q.signed_at ? " · signed" : ""}</Text>
             </View>
           ))}
+          {d.quoteCount > 100 && <Text style={[s.historyMeta, { textAlign: "center" }]}>Showing first 100 of {d.quoteCount}</Text>}
 
           {/* Actions */}
           <View style={s.masterActionCard}>
@@ -200,9 +221,23 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics }: { o
             <TouchableOpacity style={[s.btnSecondary, { marginTop: 10 }]} onPress={() => businessAction(d.code, d.suspended ? "unsuspend" : "suspend", () => openBusiness(d.code))}>
               <Text style={s.btnSecondaryText}>{d.suspended ? "Unsuspend Business" : "Suspend Business"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[s.btnSecondary, { marginTop: 10, borderColor: B.red }]} onPress={() => confirmAction("Delete business", `Permanently delete ${d.name} and all its quotes?`, () => businessAction(d.code, "delete", () => setDetail(null)))}>
-              <Text style={[s.btnSecondaryText, { color: B.red }]}>Delete Business</Text>
-            </TouchableOpacity>
+            {!confirmingDelete ? (
+              <TouchableOpacity style={[s.btnSecondary, { marginTop: 10, borderColor: B.red }]} onPress={() => { setConfirmingDelete(true); setDeleteName(""); }}>
+                <Text style={[s.btnSecondaryText, { color: B.red }]}>Delete Business</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={{ marginTop: 10, gap: 8, borderWidth: 1, borderColor: B.red, borderRadius: 12, padding: 12 }}>
+                <Text style={{ color: B.red, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Permanently deletes the business and ALL its quotes, team, and brand config. This cannot be undone.</Text>
+                <Text style={{ color: B.gray2, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Type the business name (<Text style={{ fontFamily: "DMSans_700Bold", color: B.gray1 }}>{d.name}</Text>) to confirm:</Text>
+                <TextInput style={s.input} value={deleteName} onChangeText={setDeleteName} placeholder={d.name} placeholderTextColor={B.gray3} autoCapitalize="none" autoCorrect={false} />
+                <View style={{ flexDirection: "row", gap: 10 }}>
+                  <TouchableOpacity style={[s.btnSecondary, { flex: 1 }]} onPress={() => { setConfirmingDelete(false); setDeleteName(""); }}><Text style={s.btnSecondaryText}>Cancel</Text></TouchableOpacity>
+                  <TouchableOpacity disabled={deleteName.trim() !== d.name} style={[s.btn, { flex: 1, backgroundColor: B.red }, deleteName.trim() !== d.name && { opacity: 0.4 }]} onPress={() => businessAction(d.code, "delete", () => { setConfirmingDelete(false); setDetail(null); setResults(rs => rs.filter(r => r.code !== d.code)); })}>
+                    <Text style={s.btnText}>Delete forever</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
             <View style={{ marginTop: 14, gap: 8 }}>
               <Text style={s.formLabel}>Send notification</Text>
               <TextInput style={[s.input, { minHeight: 60, textAlignVertical: "top" }]} value={notifyMsg} onChangeText={setNotifyMsg} placeholder="Message to send to this business…" placeholderTextColor={B.gray3} multiline />
