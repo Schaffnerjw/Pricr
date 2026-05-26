@@ -61,8 +61,11 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
   const [err, setErr] = useState("");
   const [deleteName, setDeleteName] = useState(""); // typed confirmation before delete
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [veraaName, setVeraaName] = useState("");
+  const [veraaCodes, setVeraaCodes] = useState<{ code: string; client_name?: string; created_at?: string; used_by?: string; revoked?: boolean }[]>([]);
+  const [veraaBusy, setVeraaBusy] = useState(false);
 
-  useEffect(() => { loadStats(); }, []);
+  useEffect(() => { loadStats(); loadVeraaCodes(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const loadStats = async () => { try { setStats(await adminFetch("stats")); } catch (e) { setErr(e instanceof Error ? e.message : "stats failed"); } };
 
   const ping = async () => {
@@ -112,6 +115,20 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
     try { const r = await adminFetch("notify", { code, message: notifyMsg.trim() }); setNotifyMsg(""); notify("Sent", `Message sent to ${r.sentTo}`); }
     catch (e) { notify("Couldn't send", e instanceof Error ? e.message : "failed"); }
   };
+
+  const loadVeraaCodes = async () => {
+    try { const r = await adminFetch("list-veraa-codes"); setVeraaCodes(r.codes || []); } catch { /* table may not exist yet */ }
+  };
+  const generateVeraa = async () => {
+    if (!veraaName.trim() || veraaBusy) return;
+    setVeraaBusy(true);
+    try { const r = await adminFetch("generate-veraa-code", { clientName: veraaName.trim() }); setVeraaName(""); notify("Code generated", r.code); await loadVeraaCodes(); }
+    catch (e) { notify("Couldn't generate", e instanceof Error ? e.message : "failed"); }
+    setVeraaBusy(false);
+  };
+  const revokeVeraa = (code: string) => confirmAction("Revoke code?", `${code} will stop working for new signups.`, async () => {
+    try { await adminFetch("revoke-veraa-code", { code }); await loadVeraaCodes(); } catch (e) { notify("Couldn't revoke", e instanceof Error ? e.message : "failed"); }
+  });
 
   const exportCsv = async () => {
     try {
@@ -308,6 +325,27 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
               <Feather name="chevron-right" size={18} color={B.blue} />
             </View>
           </TouchableOpacity>
+        ))}
+
+        {/* VERAA PARTNER CODES */}
+        <Text style={s.sectionTitle}>VERAA PARTNER CODES</Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <TextInput style={[s.input, { flex: 1 }]} placeholder="Client name (e.g. Hemma Decks)" placeholderTextColor={B.gray3} value={veraaName} onChangeText={setVeraaName} />
+          <TouchableOpacity style={[s.btn, { paddingHorizontal: 20, justifyContent: "center" }]} onPress={generateVeraa} disabled={veraaBusy}>
+            {veraaBusy ? <ActivityIndicator color={B.white} /> : <Text style={s.btnText}>Generate</Text>}
+          </TouchableOpacity>
+        </View>
+        {veraaCodes.length === 0 && <Text style={s.historyMeta}>No partner codes yet.</Text>}
+        {veraaCodes.map(c => (
+          <View key={c.code} style={[s.historyCard, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.historyName, c.revoked && { textDecorationLine: "line-through", color: B.gray3 }]}>{c.code}</Text>
+              <Text style={s.historyMeta}>{c.client_name || "—"}{c.used_by ? ` · used by ${c.used_by}` : " · unused"}{c.revoked ? " · revoked" : ""}</Text>
+            </View>
+            {!c.revoked && (
+              <TouchableOpacity onPress={() => revokeVeraa(c.code)}><Text style={{ color: B.red, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Revoke</Text></TouchableOpacity>
+            )}
+          </View>
         ))}
 
         {/* TOOLS */}

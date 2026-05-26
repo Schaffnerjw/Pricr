@@ -1,5 +1,5 @@
 export type Role = "admin" | "rep" | "superadmin";
-export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"choose_setup"|"wizard"|"import"|"meet_kit"|"building"|"confirm_schema"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"stats"|"master"|"super_analytics"|"view_as";
+export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"choose_setup"|"wizard"|"import"|"meet_kit"|"building"|"confirm_schema"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"stats"|"master"|"super_analytics"|"view_as"|"paywall";
 export interface User { id: string; name: string; role: Role; businessCode: string; username?: string; pinHash?: string; }
 export interface BrandConfig { primaryColor: string; secondaryColor: string; logoUri: string|null; tagline: string; phone: string; email: string; address: string; backgroundColor?: string; }
 // Controls what the customer sees on the quote document (PDF + in-app ClosingCard). Unset => detailed/all.
@@ -7,7 +7,12 @@ export interface DocPrefs { style: "detailed"|"summary"|"custom"; showLineItems:
 // Accepted payment methods (admin sets once in Settings, shown on every quote). `methods` holds the
 // selected built-in labels; `other` is free text for the "Other" option. Unset => nothing shown.
 export interface PaymentMethods { methods: string[]; other?: string; }
-export interface Business { code: string; name: string; ownerName: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; paymentMethods?: PaymentMethods; hasGeneratedQuote?: boolean; notificationEmail?: string; requireSmsVerification?: boolean; suspended?: boolean; }
+export type SubscriptionStatus = "active" | "veraa" | "trial" | "expired";
+export interface Business { code: string; name: string; ownerName: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; paymentMethods?: PaymentMethods; hasGeneratedQuote?: boolean; notificationEmail?: string; requireSmsVerification?: boolean; suspended?: boolean;
+  // Billing / partner (stored in config jsonb; subscription_status also mirrored to a column — migration 0007).
+  isVeraaClient?: boolean; promoCode?: string; subscriptionStatus?: SubscriptionStatus; stripeCustomerId?: string; trialStartedAt?: number; partnerCodeUsed?: string;
+  // Kit conversation history (per business; cross-device when cloud is configured).
+  kitChatHistory?: { role: "user" | "assistant"; content: string; timestamp: number }[]; }
 // Optional render metadata for the single-page job walkthrough. When absent (legacy/demo schemas),
 // QuoteScreen falls back to the classic flat field list. Field ids referenced here exist in fields[].
 export type SectionPattern = "MATERIAL_MEASUREMENT" | "SYSTEM_CONFIG_QUANTITY" | "FLAT_RATE" | "LABOR";

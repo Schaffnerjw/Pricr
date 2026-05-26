@@ -5,6 +5,10 @@ import PricrLogo from "../components/PricrLogo";
 import { PasswordField } from "../components/PasswordField";
 import { B } from "../constants/brand";
 import { s } from "../styles";
+import { resolveBusinessCodeByUsername } from "../storage";
+import { logger } from "../utils/logger";
+
+declare const __DEV__: boolean;
 
 // Primary login is Username + password. A Business-ID fallback covers legacy accounts created before
 // usernames existed (they're then prompted to set a username on the next screen).
@@ -63,6 +67,19 @@ export function LoginScreen({ username, code, pin, error, staySignedIn, onToggle
               {mode === "username" ? "Sign in with Business ID instead" : "Sign in with username instead"}
             </Text>
           </TouchableOpacity>
+
+          {/* Dev-only RPC diagnostic — logs the resolve result without exposing anything in the UI. */}
+          {__DEV__ && (
+            <TouchableOpacity
+              style={{ marginTop: 18, alignItems: "center" }}
+              onPress={async () => {
+                try { const r = await resolveBusinessCodeByUsername(username || ""); logger.debug("[Login] Test RPC result:", r ? "resolved" : "null"); }
+                catch (e) { logger.error("[Login] Test RPC error:", e instanceof Error ? e.message : String(e)); }
+              }}
+            >
+              <Text style={{ color: B.gray3, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Test RPC (dev)</Text>
+            </TouchableOpacity>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

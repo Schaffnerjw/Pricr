@@ -245,31 +245,32 @@ OUTPUT RULES:
 - For informational questions (answer / explain / suggest without a confirmed change), just reply naturally. Do NOT output any change block.
 - When adding a new field/service, ask layout first via LAYOUT_OPTIONS (see above) before building.
 
-MAKING A CHANGE (PREFERRED — use this for editing a rate, label, unit, type, or adding/removing a
-single field): reply with ONE short conversational sentence confirming the change, then append a JSON
-block exactly like this (real double quotes, NO markdown fences):
+MAKING A CHANGE: reply with ONE short conversational sentence confirming the change, then append a
+COMMAND block exactly like this (real double quotes, NO markdown fences). ALWAYS include a COMMAND
+block on any reply — use { "type": "NO_CHANGE" } when you are only answering/explaining:
 
-SCHEMA_UPDATE_START
-{
-  "action": "update_field" | "add_field" | "remove_field" | "update_rate" | "change_type",
-  "fieldId": "the field id to change (if known)",
-  "fieldName": "the human label of the field to change",
-  "changes": {
-    "type": "toggle" | "number" | "selector",
-    "rate": 0,
-    "label": "new label",
-    "unit": "sqft" | "lf" | "flat" | "each" | "hr"
-  }
-}
-SCHEMA_UPDATE_END
+COMMAND_START
+{ "type": "COMMAND_TYPE", ...fields for that type... }
+COMMAND_END
 
-Only include the keys you are actually changing inside "changes". Only include the SCHEMA_UPDATE block
-when you are truly making a change — never for informational replies. Identify the field by "fieldId"
-when you know it, otherwise by "fieldName" (the app matches case-insensitively).
+Command types and their required fields:
+- UPDATE_RATE:       { "type": "UPDATE_RATE", "fieldIdentifier": "Railing", "newRate": 25, "unit": "lf" }
+- RENAME_FIELD:      { "type": "RENAME_FIELD", "fieldIdentifier": "Railing", "newLabel": "Cable Railing" }
+- CHANGE_FIELD_TYPE: { "type": "CHANGE_FIELD_TYPE", "fieldIdentifier": "Frame Protection", "newType": "toggle" }
+- ADD_FIELD:         { "type": "ADD_FIELD", "sectionIdentifier": "Decking", "label": "Tigerwood", "rate": 30, "unit": "sqft", "fieldType": "select" }
+- REMOVE_FIELD:      { "type": "REMOVE_FIELD", "fieldIdentifier": "Sealant" }
+- ADD_SECTION:       { "type": "ADD_SECTION", "name": "Lighting", "pattern": "FLAT_RATE" }
+- REMOVE_SECTION:    { "type": "REMOVE_SECTION", "sectionIdentifier": "Lighting" }
+- UPDATE_DEPOSIT:    { "type": "UPDATE_DEPOSIT", "percent": 50 }
+- UPDATE_TRADE:      { "type": "UPDATE_TRADE", "trade": "Fencing" }
+- ADD_ADDON:         { "type": "ADD_ADDON", "label": "Permit", "price": 150 }
+- REMOVE_ADDON:      { "type": "REMOVE_ADDON", "addonIdentifier": "Permit" }
+- UPDATE_ADDON:      { "type": "UPDATE_ADDON", "addonIdentifier": "Permit", "newPrice": 200 }
+- NO_CHANGE:         { "type": "NO_CHANGE" }
 
-LARGE RESTRUCTURES ONLY (multiple fields at once, or rewriting the whole tool): instead output
-CONFIG_UPDATED on its own line followed by the complete updated schema as raw JSON (no markdown, no
-backticks). Prefer the small SCHEMA_UPDATE block whenever the change is a single field/rate.`;
+"fieldIdentifier" / "addonIdentifier" / "sectionIdentifier" must match a name from the current schema
+(matched case-insensitively). "fieldType" maps Number field/Counter → "number", Yes-No toggle →
+"toggle", Dropdown → "select". The COMMAND block is stripped before the user sees your reply.`;
 
 // Price-list import (Part 3): converts a pasted price sheet (any format) into a sections/fields schema.
 // {priceList} is replaced with the contractor's pasted text. Returns raw JSON only.

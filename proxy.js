@@ -1123,8 +1123,115 @@ async function handleAdminUser(res, body) {
   return sendJson(res, upd.status < 300 ? 200 : 500, upd.status < 300 ? { ok: true } : { error: 'Failed' });
 }
 
+// ── Stripe (lazy require; only touched when STRIPE_SECRET_KEY is set, so dev without it never errors) ──
+let _stripe = null;
+function getStripe() {
+  if (_stripe) return _stripe;
+  if (!process.env.STRIPE_SECRET_KEY) return null;
+  try { _stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); }
+  catch (e) { console.warn('[billing] stripe module unavailable:', e && e.message); _stripe = null; }
+  return _stripe;
+}
+
+// ── Veraa partner codes ──────────────────────────────────────────────────────────
+const VERAA_CODE_RE = /^VERAA-[A-Z]+-\d{4}$/;
+function envVeraaCodes() { try { const a = JSON.parse(process.env.VERAA_CODES || '[]'); return Array.isArray(a) ? a.map(String) : []; } catch (_) { return []; } }
+async function veraaCodeValid(code) {
+  if (envVeraaCodes().includes(code)) return true; // env-array fast path (works before the table exists)
+  try {
+    const r = await supabaseRequest('GET', `/rest/v1/veraa_codes?select=code,revoked&code=eq.${encodeURIComponent(code)}`);
+    if (Array.isArray(r.json) && r.json.length) return !r.json[0].revoked;
+  } catch (_) { /* table may not exist yet */ }
+  return false;
+}
+async function handleValidatePromo(res, buf) {
+  const code = String(parseJsonBody(buf).code || '').toUpperCase().trim();
+  if (VERAA_CODE_RE.test(code)) {
+    const valid = await veraaCodeValid(code);
+    return sendJson(res, 200, { valid, type: 'veraa', message: valid ? 'Veraa client code accepted' : 'Invalid code' });
+  }
+  return sendJson(res, 200, { valid: false, type: 'unknown', message: 'Invalid promo code' });
+}
+async function handleGenerateVeraaCode(res, buf) {
+  const clientName = String(parseJsonBody(buf).clientName || '').trim();
+  const slug = clientName.toUpperCase().replace(/[^A-Z]/g, '');
+  if (!slug) return sendJson(res, 400, { error: 'clientName must contain letters' });
+  const code = `VERAA-${slug}-${String(Math.floor(1000 + Math.random() * 9000))}`;
+  try { await supabaseRequest('POST', '/rest/v1/veraa_codes', { code, client_name: clientName }); }
+  catch (e) { console.warn('[admin] veraa code save failed:', e && e.message); }
+  return sendJson(res, 200, { code, clientName });
+}
+async function handleListVeraaCodes(res) {
+  try {
+    const r = await supabaseRequest('GET', '/rest/v1/veraa_codes?select=code,client_name,created_at,used_by,used_at,revoked&order=created_at.desc');
+    return sendJson(res, 200, { codes: Array.isArray(r.json) ? r.json : [] });
+  } catch (_) { return sendJson(res, 200, { codes: [] }); }
+}
+async function handleRevokeVeraaCode(res, buf) {
+  const code = String(parseJsonBody(buf).code || '').toUpperCase().trim();
+  if (!code) return sendJson(res, 400, { error: 'code required' });
+  try { await supabaseRequest('PATCH', `/rest/v1/veraa_codes?code=eq.${encodeURIComponent(code)}`, { revoked: true }); } catch (_) {}
+  return sendJson(res, 200, { ok: true });
+}
+
+// ── Billing (Stripe Checkout via browser; webhook updates subscription state) ──────
+async function updateBusinessSubscription(businessCode, fields) {
+  const sel = await supabaseRequest('GET', `/rest/v1/businesses?select=config&code=eq.${encodeURIComponent(businessCode)}`);
+  const config = (Array.isArray(sel.json) && sel.json[0] && sel.json[0].config) ? sel.json[0].config : {};
+  const colPatch = {};
+  if (fields.subscriptionStatus) colPatch.subscription_status = fields.subscriptionStatus;
+  if (fields.stripeCustomerId) colPatch.stripe_customer_id = fields.stripeCustomerId;
+  if (fields.partnerCodeUsed) colPatch.partner_code = fields.partnerCodeUsed;
+  await supabaseRequest('PATCH', `/rest/v1/businesses?code=eq.${encodeURIComponent(businessCode)}`, { config: { ...config, ...fields }, ...colPatch });
+}
+async function handleCreateCheckoutSession(res, buf) {
+  const stripe = getStripe();
+  if (!stripe) return sendJson(res, 503, { error: 'Billing not configured' });
+  const body = parseJsonBody(buf);
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'], mode: 'subscription',
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      success_url: (process.env.APP_URL || '') + '/billing-success?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: (process.env.APP_URL || '') + '/billing-cancel',
+      metadata: { businessCode: String(body.businessCode || '') },
+    });
+    return sendJson(res, 200, { url: session.url, sessionId: session.id });
+  } catch (e) { console.warn('[billing] checkout error:', e && e.message); return sendJson(res, 500, { error: 'checkout failed' }); }
+}
+async function handleStripeWebhook(req, res, rawBuf) {
+  const stripe = getStripe();
+  if (!stripe) return sendJson(res, 503, { error: 'Billing not configured' });
+  let event;
+  try { event = stripe.webhooks.constructEvent(rawBuf, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET); }
+  catch (e) { console.warn('[billing] webhook signature failed:', e && e.message); return sendJson(res, 400, { error: 'bad signature' }); }
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const businessCode = session.metadata && session.metadata.businessCode;
+      if (businessCode) await updateBusinessSubscription(businessCode, { subscriptionStatus: 'active', stripeCustomerId: session.customer });
+    }
+  } catch (e) { console.warn('[billing] webhook handler error:', e && e.message); }
+  return sendJson(res, 200, { received: true });
+}
+async function handleBillingStatus(res, businessCode) {
+  try {
+    const r = await supabaseRequest('GET', `/rest/v1/businesses?select=subscription_status,trial_started_at,config&code=eq.${encodeURIComponent(businessCode)}`);
+    const row = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+    const status = (row && (row.subscription_status || (row.config && row.config.subscriptionStatus))) || 'trial';
+    const startedRaw = row && (row.trial_started_at || (row.config && row.config.trialStartedAt));
+    const started = startedRaw ? new Date(startedRaw).getTime() : Date.now();
+    const trialDaysLeft = Math.max(0, 14 - Math.floor((Date.now() - started) / 86400000));
+    const isVeraaClient = !!(row && row.config && row.config.isVeraaClient) || status === 'veraa';
+    return sendJson(res, 200, { status, trialDaysLeft, isVeraaClient });
+  } catch (_) { return sendJson(res, 200, { status: 'trial', trialDaysLeft: 14, isVeraaClient: false }); }
+}
+
 const ADMIN_HANDLERS = {
   stats: (res) => handleAdminStats(res),
+  'generate-veraa-code': (res, buf) => handleGenerateVeraaCode(res, buf),
+  'list-veraa-codes': (res) => handleListVeraaCodes(res),
+  'revoke-veraa-code': (res, buf) => handleRevokeVeraaCode(res, buf),
   'platform-analytics': (res) => handleAdminPlatformAnalytics(res),
   search: (res, buf) => handleAdminSearch(res, buf),
   business: (res, buf) => handleAdminBusiness(res, buf),
@@ -1198,6 +1305,16 @@ const server = http.createServer((req, res) => {
       if (!handler) return sendJson(res, 404, { error: 'unknown admin action' });
       Promise.resolve(handler(res, buf)).catch((e) => { console.error('[admin] error:', e && e.message); sendJson(res, 500, { error: 'server error' }); });
     });
+    return;
+  }
+
+  // ── Billing (public — pre-signup / boot checks) ──
+  if (path === '/billing/validate-promo' && req.method === 'POST') { readBody((buf) => handleValidatePromo(res, buf).catch(() => sendJson(res, 500, { error: 'validate failed' }))); return; }
+  if (path === '/billing/create-checkout-session' && req.method === 'POST') { readBody((buf) => handleCreateCheckoutSession(res, buf).catch(() => sendJson(res, 500, { error: 'checkout failed' }))); return; }
+  if (path === '/billing/webhook' && req.method === 'POST') { readBody((buf) => handleStripeWebhook(req, res, buf).catch(() => sendJson(res, 500, { error: 'webhook failed' }))); return; }
+  if (path === '/billing/status' && req.method === 'GET') {
+    const code = new URLSearchParams((req.url || '').split('?')[1] || '').get('businessCode') || '';
+    handleBillingStatus(res, code).catch(() => sendJson(res, 200, { status: 'trial', trialDaysLeft: 14, isVeraaClient: false }));
     return;
   }
 

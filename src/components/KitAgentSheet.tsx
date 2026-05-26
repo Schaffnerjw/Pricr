@@ -33,6 +33,8 @@ export function KitAgentSheet({ primaryColor, messages, earlierCount = 0, input,
   const clean = (c: string) => parseSuggestedReplies(
     (c || "")
       .replace(/LAYOUT_OPTIONS/g, "")
+      .replace(/COMMAND_START[\s\S]*?COMMAND_END/g, "")
+      .replace(/COMMAND_START[\s\S]*$/g, "")
       .replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/g, "")
       .replace(/SCHEMA_UPDATE_START[\s\S]*$/g, "")
       .replace(/CONFIG_UPDATED[\s\S]*$/g, ""),

@@ -21,6 +21,8 @@ import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typi
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { defaultAllowMultiSelect, deriveSections } from "../utils/buildSchemaFromVerified";
 import { applyKitSchemaUpdate } from "../utils/kitSchemaUpdate";
+import { executeKitCommand } from "../utils/executeKitCommand";
+import { KitCommand } from "../utils/kitCommands";
 import { logger } from "../utils/logger";
 import { humanSchemaSummary } from "../utils/schemaExtractor";
 
@@ -360,7 +362,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       logger.debug("[KitAgent] sending message to Claude");
       // Send the LAST 20 messages for context (window management), grounding the latest turn with the
       // current schema. Strip any prior change-blocks from history so they don't confuse the model.
-      const stripBlocks = (c: string) => c.replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/g, "").replace(/CONFIG_UPDATED[\s\S]*$/g, "").trim();
+      const stripBlocks = (c: string) => c.replace(/COMMAND_START[\s\S]*?COMMAND_END/g, "").replace(/COMMAND_START[\s\S]*$/g, "").replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/g, "").replace(/CONFIG_UPDATED[\s\S]*$/g, "").trim();
       let recent = newMessages.slice(-20);
       while (recent.length && recent[0].role !== "user") recent = recent.slice(1); // Anthropic requires a leading user turn
       const apiMessages = recent.map((m, i) =>
@@ -381,14 +383,45 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       // What the user sees is ONLY the text before any machine block — strip from the first marker
       // onward (also covers a missing/garbled END marker). The raw block can never reach the chat UI.
       const markerIdx = (() => {
-        const a = reply.search(/SCHEMA_UPDATE_START/i);
-        const b = reply.search(/CONFIG_UPDATED/);
-        const found = [a, b].filter(i => i >= 0);
+        const found = [/COMMAND_START/i, /SCHEMA_UPDATE_START/i, /CONFIG_UPDATED/].map(r => reply.search(r)).filter(i => i >= 0);
         return found.length ? Math.min(...found) : -1;
       })();
       const displayMessage = (markerIdx >= 0 ? reply.slice(0, markerIdx) : reply).replace(/```json/gi, "").replace(/```/g, "").trim();
 
-      // 1) PREFERRED: a compact structured diff. Extract the JSON object after SCHEMA_UPDATE_START even
+      // 0) PREFERRED: a structured COMMAND block executed deterministically by executeKitCommand.
+      const cmdStart = reply.search(/COMMAND_START/i);
+      if (cmdStart >= 0) {
+        const afterCmd = reply.slice(cmdStart + "COMMAND_START".length);
+        const cmdEnd = afterCmd.search(/COMMAND_END/i);
+        const cmdRegion = (cmdEnd >= 0 ? afterCmd.slice(0, cmdEnd) : afterCmd).replace(/```json/gi, "").replace(/```/g, "").trim();
+        const cf = cmdRegion.indexOf("{"), cl = cmdRegion.lastIndexOf("}");
+        const cmdJson = (cf >= 0 && cl > cf) ? cmdRegion.slice(cf, cl + 1) : "";
+        logger.debug("[KitApply] raw command block:", cmdRegion.substring(0, 200));
+        let command: any = null;
+        try { command = cmdJson ? JSON.parse(cmdJson) : null; }
+        catch (e) { logger.error("[KitApply] command JSON parse failed:", e instanceof Error ? e.message : String(e), "raw:", cmdJson.substring(0, 200)); }
+        if (command && command.type) {
+          logger.debug("[KitApply] parsed command:", command.type);
+          if (command.type === "NO_CHANGE") { finish(displayMessage || "Done."); }
+          else {
+            const { schema: nextSchema, result } = executeKitCommand(schema, command as KitCommand);
+            if (result.success) {
+              logger.debug("[KitApply] command applied — calling setSchema");
+              await applyKitSchema(nextSchema, "command");
+              finish(displayMessage || `✓ ${result.description}.`);
+            } else {
+              logger.debug("[KitApply] command failed:", result.error);
+              finish(`${displayMessage ? displayMessage + " " : ""}⚠️ ${result.error || "Couldn't apply that"}. Try describing it differently.`);
+            }
+          }
+        } else {
+          finish(displayMessage || "I tried to make that change but couldn't read it — tell me again and I'll retry.");
+        }
+        setAgentLoading(false);
+        return;
+      }
+
+      // 1) FALLBACK: legacy compact diff (SCHEMA_UPDATE). Extract the JSON object after the marker even
       // when the END marker is missing or has trailing characters.
       const startIdx = reply.search(/SCHEMA_UPDATE_START/i);
       if (startIdx >= 0) {

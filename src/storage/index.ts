@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import supabase, { isSupabaseConfigured } from "../lib/supabase";
 import { Business, SavedQuote, User } from "../types";
+import { logger } from "../utils/logger";
 
 export const KEYS = { currentUser:"pricr_current_user", business:(c:string)=>`pricr_business_${c}`, users:(c:string)=>`pricr_users_${c}`, quotes:(c:string)=>`pricr_quotes_${c}` };
 
@@ -86,18 +87,33 @@ export async function saveImportProgress(data: any): Promise<void> { try { await
 export async function getImportProgress<T = any>(): Promise<T | null> { try { const r = await AsyncStorage.getItem(IMPORT_PROGRESS_KEY); return r ? JSON.parse(r) as T : null; } catch { return null; } }
 export async function clearImportProgress(): Promise<void> { try { await AsyncStorage.removeItem(IMPORT_PROGRESS_KEY); } catch { } }
 
-// ── Kit in-quote chat history (per business) ────────────────────────────────────
-// Persisted so Kit remembers context across sessions. Per-device (AsyncStorage) keyed by business
-// code; capped at 50 messages (oldest trimmed). Cross-device cloud sync is out of scope here (it would
-// need a new Supabase table/migration) — local-per-business persistence covers the rep's own device.
+// ── Kit chat history (per business; cross-device when cloud is configured) ──────
+// Cloud mode: stored in businesses.config.kitChatHistory (piggybacks on saveBusiness — no new
+// endpoint), so the contractor sees the same history on any device they log into. Local/demo:
+// AsyncStorage. Capped at 50 messages and the last 30 days.
 export interface KitChatMessage { role: "user" | "assistant"; content: string; timestamp: number; }
 const KIT_CHAT_KEY = (code: string) => `pricr_kit_chat_${code}`;
 const KIT_CHAT_MAX = 50;
+const KIT_CHAT_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
+const trimHistory = (msgs: KitChatMessage[]): KitChatMessage[] => {
+  const cutoff = Date.now() - KIT_CHAT_MAX_AGE;
+  return (msgs || []).filter(m => !m.timestamp || m.timestamp >= cutoff).slice(-KIT_CHAT_MAX);
+};
 export async function getKitChatHistory(code: string): Promise<KitChatMessage[]> {
-  try { const r = await AsyncStorage.getItem(KIT_CHAT_KEY(code)); const a = r ? JSON.parse(r) : []; return Array.isArray(a) ? a : []; } catch { return []; }
+  if (isCloudEnabled(code)) {
+    try { const biz = await getBusiness(code); return trimHistory((biz?.kitChatHistory as KitChatMessage[]) || []); } catch { return []; }
+  }
+  try { const r = await AsyncStorage.getItem(KIT_CHAT_KEY(code)); const a = r ? JSON.parse(r) : []; return Array.isArray(a) ? trimHistory(a) : []; } catch { return []; }
 }
 export async function saveKitChatHistory(code: string, messages: KitChatMessage[]): Promise<void> {
-  try { await AsyncStorage.setItem(KIT_CHAT_KEY(code), JSON.stringify((messages || []).slice(-KIT_CHAT_MAX))); } catch { }
+  const trimmed = trimHistory(messages);
+  if (isCloudEnabled(code)) {
+    // Read the freshest business, then write back with the updated history (minimizes the
+    // last-write-wins window with concurrent schema saves).
+    try { const biz = await getBusiness(code); if (biz) await saveBusiness({ ...biz, kitChatHistory: trimmed }); } catch { }
+    return;
+  }
+  try { await AsyncStorage.setItem(KIT_CHAT_KEY(code), JSON.stringify(trimmed)); } catch { }
 }
 export async function clearKitChatHistory(code: string): Promise<void> { try { await AsyncStorage.removeItem(KIT_CHAT_KEY(code)); } catch { } }
 
@@ -284,12 +300,24 @@ export async function saveSignature(code: string, appId: string, signatureData: 
 export async function resolveBusinessCodeByUsername(username: string): Promise<string | null> {
   const uname = username.trim().toLowerCase();
   if (!uname) return null;
+  // Cloud mode: the RPC is the only way to map username → code before membership exists. Don't fall
+  // through to the local scan on an RPC ERROR (a new device has no local data → false "not found").
+  // Surface a connection error instead, after one retry. A clean null (no error) means "not found".
   if (isSupabaseConfigured && supabase) {
+    const callRpc = async (): Promise<string | null> => {
+      const { data, error } = await supabase!.rpc("resolve_business_code", { p_username: uname });
+      if (error) { logger.error("[Login] RPC error:", error.message || String(error)); throw error; }
+      return typeof data === "string" && data ? data : null;
+    };
     try {
-      const { data, error } = await supabase.rpc("resolve_business_code", { p_username: uname });
-      if (!error && typeof data === "string" && data) return data;
-    } catch { /* fall through to local */ }
+      return await callRpc();
+    } catch {
+      await new Promise(r => setTimeout(r, 1000)); // brief backoff, then one retry
+      try { return await callRpc(); }
+      catch { throw new Error("LOGIN_RPC_FAILED"); }
+    }
   }
+  // Local/demo only (no cloud configured): scan AsyncStorage.
   try {
     const { businesses } = await scanAllData();
     const b = businesses.find(biz =>

@@ -11,6 +11,7 @@ import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { LoginScreen } from "../src/screens/LoginScreen";
 import { MasterDashboard } from "../src/screens/MasterDashboard";
 import { MeetKitScreen } from "../src/screens/MeetKitScreen";
+import { PaywallScreen } from "../src/screens/PaywallScreen";
 import { PriceListImportScreen } from "../src/screens/PriceListImportScreen";
 import { SetupChoiceScreen } from "../src/components/SetupChoiceScreen";
 import { SchemaWizard } from "../src/components/SchemaWizard";
@@ -37,6 +38,7 @@ import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
 import { logger } from "../src/utils/logger";
 import { authenticateMaster } from "../src/utils/masterAuth";
+import { trialDaysLeft } from "../src/utils/billing";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
 import { applySchemaUpdate, BLANK_SCHEMA, extractFromMessage, isBlankSchema, quoteSchemaFromWizard, summarizeUpdate, updateMeaningful, WizardData } from "../src/utils/schemaExtractor";
 import { validateSchema, ValidationResult } from "../src/utils/validateSchema";
@@ -73,6 +75,7 @@ export default function Index() {
   const [masterInput, setMasterInput] = useState("");
   const [masterError, setMasterError] = useState("");
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [paywallMode, setPaywallMode] = useState<"signup" | "expired">("signup"); // how the paywall was reached
   const [settingsFocusTerms, setSettingsFocusTerms] = useState(false);
 
   const [setupServices, setSetupServices] = useState("");
@@ -137,6 +140,20 @@ export default function Index() {
           if (biz.suspended) { await clearCurrentUser(); setTimeout(() => setScreen("welcome"), 600); return; }
           setCurrentUser(user);
           setBusiness(biz);
+          // Grandfather clause: a business created before billing has no subscriptionStatus → mark it
+          // 'active' (one-time, best-effort) so it's never paywalled.
+          let bizWithSub = biz;
+          if (biz.code !== "DEMO" && !biz.subscriptionStatus) {
+            bizWithSub = { ...biz, subscriptionStatus: "active" };
+            setBusiness(bizWithSub);
+            try { await saveBusiness(bizWithSub); } catch { /* best-effort; gate treats undefined as active anyway */ }
+          }
+          // Billing gate (admins only; demo + grandfathered + active/veraa bypass). A business with
+          // undefined subscriptionStatus predates billing → grandfathered (treated as active).
+          const sub = bizWithSub.subscriptionStatus;
+          const billingGated = biz.code !== "DEMO" && user.role === "admin"
+            && (sub === "expired" || (sub === "trial" && trialDaysLeft(biz.trialStartedAt) <= 0));
+          if (billingGated) { setPaywallMode("expired"); setTimeout(() => setScreen("paywall"), 600); return; }
           // Part 8: a business with a blank schema (no trade, no fields) should never land on an empty
           // quote tool — route straight into onboarding to build it.
           if (isBlankSchema(biz.schema)) {
@@ -206,6 +223,7 @@ export default function Index() {
         code, name: signupBizName, ownerName: authName, adminPin: "", username, adminPinHash,
         brand: { ...signupBrand, primaryColor: finalColor },
         schema: null, createdAt: Date.now(), brandConfigured,
+        subscriptionStatus: "trial", trialStartedAt: Date.now(), // 14-day trial; paywall gates after
       };
       await saveBusiness(biz);
       await saveUsers(code, [user]);
@@ -216,7 +234,8 @@ export default function Index() {
       setAuthError("");
       setIsReconfiguring(false);
       resetKitBuild(); setPendingSchema(null);
-      setScreen("choose_setup"); // new flow: choice screen → wizard | import → confirm
+      setPaywallMode("signup");
+      setScreen("paywall"); // trial start / promo / subscribe → then choose_setup
     } catch { setAuthError("Something went wrong. Try again."); }
   };
 
@@ -226,16 +245,18 @@ export default function Index() {
     setAuthError("");
     try {
       let code: string | null;
-      logger.debug("[Login] attempting login...");
+      logger.debug("[Login] attempting username login");
       if (mode === "username") {
         if (!authUsername.trim() || !authPin) { setAuthError("Enter your username and password."); return; }
         code = await resolveBusinessCodeByUsername(authUsername);
+        logger.debug("[Login] RPC result received:", !!code);
         if (!code) { setAuthError("No account found for that username."); return; }
       } else {
         if (!authCode.trim() || !authPin) { setAuthError("Enter your Business ID and password."); return; }
         code = authCode.toUpperCase();
       }
       const biz = await getBusiness(code);
+      logger.debug("[Login] business found:", !!biz);
       if (!biz) { setAuthError("Account not found."); return; }
       // Suspended accounts can't sign in (super admin can lift this from the master dashboard).
       if (biz.suspended) { logger.debug("[Login] blocked — account suspended"); setAuthError("This account has been suspended. Contact support at pricr.veraa.io"); return; }
@@ -254,8 +275,8 @@ export default function Index() {
         else if (biz.adminPin) ok = biz.adminPin === authPin; // legacy plaintext
         user = users.find(u => u.role === "admin") ?? { id: Date.now().toString(), name: biz.ownerName, role: "admin", businessCode: biz.code, username: biz.username };
       }
+      logger.debug("[Login] password check:", ok);
       if (!ok || !user) { setAuthError("Incorrect username or password."); return; }
-      logger.debug("[Login] success");
       const legacyShortPin = authPin.length < 8; // signed in with an old short PIN → must upgrade
       await saveCurrentUser(user);
       await setStaySignedIn(staySignedIn); setStayLocal(staySignedIn);
@@ -263,11 +284,15 @@ export default function Index() {
       setBusiness(biz);
       setAuthError("");
       // Legacy account with no username yet → prompt to create one (+ password) now.
-      if (!biz.username) { setAuthUsername(""); setAuthPin(""); setAuthPinConfirm(""); setScreen("set_username"); return; }
+      if (!biz.username) { logger.debug("[Login] routing to: set_username"); setAuthUsername(""); setAuthPin(""); setAuthPinConfirm(""); setScreen("set_username"); return; }
       // Existing PIN users: prompt to upgrade to a proper password on next login (FIX 9).
-      if (legacyShortPin) { setAuthPin(""); setAuthPinConfirm(""); setScreen("upgrade_password"); return; }
+      if (legacyShortPin) { logger.debug("[Login] routing to: upgrade_password"); setAuthPin(""); setAuthPinConfirm(""); setScreen("upgrade_password"); return; }
+      logger.debug("[Login] routing to: done");
       setScreen("done");
-    } catch { setAuthError("Something went wrong. Try again."); }
+    } catch (e) {
+      if (e instanceof Error && e.message === "LOGIN_RPC_FAILED") setAuthError("Having trouble connecting. Check your connection and try again.");
+      else setAuthError("Something went wrong. Try again.");
+    }
   };
 
   // Legacy migration: a logged-in admin without a username picks one (+ password) here.
@@ -627,6 +652,23 @@ export default function Index() {
       onDismissTestPrompt={() => setJustBuilt(false)}
       onOpenSettings={() => { setJustBuilt(false); setSettingsFocusTerms(false); setScreen("settings"); }}
       onSetupTerms={() => { setJustBuilt(false); setSettingsFocusTerms(true); setScreen("settings"); }}
+    />
+  );
+
+  if (screen === "paywall" && business) return (
+    <PaywallScreen
+      businessCode={business.code}
+      primaryColor={primaryColor}
+      mode={paywallMode}
+      trialDays={business.subscriptionStatus === "trial" ? trialDaysLeft(business.trialStartedAt) : undefined}
+      onStartTrial={() => setScreen("choose_setup")}
+      onContinue={paywallMode === "signup" ? () => setScreen("choose_setup") : undefined}
+      onVeraaApplied={async (code) => {
+        const updated: Business = { ...business, isVeraaClient: true, subscriptionStatus: "veraa", partnerCodeUsed: code };
+        try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }
+        setBusiness(updated);
+        setScreen(paywallMode === "expired" ? "done" : "choose_setup");
+      }}
     />
   );
 
