@@ -29,7 +29,7 @@ import { UsersScreen } from "../src/screens/UsersScreen";
 import { WelcomeScreen } from "../src/screens/WelcomeScreen";
 import { s } from "../src/styles";
 import { isSupabaseConfigured } from "../src/lib/supabase";
-import { addQuote, clearCurrentUser, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
+import { addQuote, clearCurrentUser, clearImportProgress, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
 import { BrandConfig, Business, DemoBusiness, QuoteSchema, Screen, User } from "../src/types";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
@@ -104,6 +104,7 @@ export default function Index() {
   const [schemaWarning, setSchemaWarning] = useState<ValidationResult | null>(null); // dashboard validation banner
   const [setupPath, setSetupPath] = useState<"wizard" | "import" | "chat">("wizard"); // which path produced pendingSchema
   const [importText, setImportText] = useState(""); // preserved across import retries
+  const [importResume, setImportResume] = useState(false); // resume an in-progress import
   const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); console.log("[Schema] updated:", JSON.stringify(next)); };
   const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
 
@@ -461,6 +462,7 @@ export default function Index() {
     setIsReconfiguring(false);
     if (!isBlankSchema(schemaToSave)) { try { for (const q of sampleQuotes(schemaToSave)) await addQuote(updatedBiz.code, q); } catch { } }
     setPendingSchema(null);
+    clearImportProgress();
     setJustBuilt(true);
     setScreen("done");
   };
@@ -601,7 +603,8 @@ export default function Index() {
     <SetupChoiceScreen
       primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor}
       onChooseWizard={() => setScreen("wizard")}
-      onChooseImport={() => setScreen("import")}
+      onChooseImport={() => { clearImportProgress(); setImportText(""); setImportResume(false); setScreen("import"); }}
+      onResume={() => { setImportResume(true); setScreen("import"); }}
       isReconfiguring={isReconfiguring}
       onCancel={() => { setIsReconfiguring(false); setScreen("done"); }}
     />
@@ -626,8 +629,9 @@ export default function Index() {
   if (screen === "import") return (
     <PriceListImportScreen
       primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor}
-      initialText={importText}
+      initialText={importText} resume={importResume}
       onBack={() => setScreen("choose_setup")}
+      onEnterManually={() => { setImportResume(false); setScreen("wizard"); }}
       onComplete={(schema, rawText) => {
         console.log("[Schema] built from import:", JSON.stringify(schema));
         setSetupPath("import");

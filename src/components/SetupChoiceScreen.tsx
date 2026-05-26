@@ -1,17 +1,25 @@
 import { Feather } from "@expo/vector-icons";
+import { useEffect, useState } from "react";
 import { SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
+import { getImportProgress } from "../storage";
 import { s } from "../styles";
 import { getContrastColor, ON_PRIMARY } from "../utils/colorUtils";
 
 // First onboarding/rebuild screen: route the contractor to the right setup path for their pricing.
-export function SetupChoiceScreen({ primaryColor, backgroundColor, onChooseWizard, onChooseImport, isReconfiguring, onCancel }: {
+export function SetupChoiceScreen({ primaryColor, backgroundColor, onChooseWizard, onChooseImport, onResume, isReconfiguring, onCancel }: {
   primaryColor: string; backgroundColor?: string;
-  onChooseWizard: () => void; onChooseImport: () => void;
+  onChooseWizard: () => void; onChooseImport: () => void; onResume?: () => void;
   isReconfiguring?: boolean; onCancel?: () => void;
 }) {
   const txt = getContrastColor(backgroundColor || "#0A0E1A");
   const onPrimary = ON_PRIMARY;
+  const [hasProgress, setHasProgress] = useState(false);
+
+  // Surface a "Resume setup" option if a half-finished import exists.
+  useEffect(() => {
+    getImportProgress<any>().then(p => setHasProgress(!!(p && p.phase && p.phase !== "paste")));
+  }, []);
 
   const Card = ({ icon, title, subtitle, tag, onPress }: { icon: any; title: string; subtitle: string; tag: string; onPress: () => void }) => (
     <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={{ backgroundColor: B.card, borderRadius: 18, borderWidth: 1.5, borderColor: primaryColor + "55", padding: 20, gap: 10 }}>
@@ -43,6 +51,14 @@ export function SetupChoiceScreen({ primaryColor, backgroundColor, onChooseWizar
             Let&apos;s build your quote tool. How would you like to set it up?
           </Text>
         </View>
+
+        {hasProgress && onResume && (
+          <TouchableOpacity onPress={onResume} style={{ flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: primaryColor + "1A", borderColor: primaryColor, borderWidth: 1, borderRadius: 14, padding: 14 }}>
+            <Feather name="rotate-ccw" size={18} color={primaryColor} />
+            <Text style={{ flex: 1, color: txt, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Resume setup where you left off</Text>
+            <Feather name="chevron-right" size={18} color={primaryColor} />
+          </TouchableOpacity>
+        )}
 
         <View style={{ gap: 14 }}>
           <Card icon="message-circle" title="Chat with Kit" subtitle="Answer a few quick questions and I'll build it for you" tag="~2 min" onPress={onChooseWizard} />

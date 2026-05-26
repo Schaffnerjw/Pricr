@@ -1,6 +1,7 @@
 import { API_URL } from "../constants/brand";
 import { SCHEMA_EXTRACTION_PROMPT } from "../constants/prompts";
 import { AddOn, FieldGroup, FieldUnit, QuoteSchema, SchemaField } from "../types";
+import { buildSchemaFromVerified, VerifiedAddOn, VerifiedItem, VerifiedSelector, VerifiedUnit } from "./buildSchemaFromVerified";
 
 // ── Types for the incremental extraction ────────────────────────────────────────
 export type Confidence = "high" | "medium" | "low";
@@ -181,63 +182,44 @@ export interface WizardData {
   depositPercent: number;
 }
 
-// Builds a per-unit "quantity" field, optionally driven by a material/variant selector that supplies
-// the rate per option (the deck case: square footage × selected material rate). Returns the calc
-// term + a matching summary line.
-function buildUnitGroup(next: QuoteSchema, ids: Set<string>, label: string, unit: FieldUnit, primary: number, variants: WizardVariant[]): { term: string; line: { label: string; value: string } } {
-  const qtyId = slugId(label, ids);
-  next.fields.push({ id: qtyId, label, type: "number", unit, group: "dimensions", placeholder: `Enter ${label.toLowerCase()}` });
-  const real = (variants || []).filter(v => v.name && typeof v.rate === "number");
-  if (real.length === 0) {
-    next.pricing[`${qtyId}Rate`] = primary || 0;
-    const term = `(${qtyId} || 0) * ${qtyId}Rate`;
-    return { term, line: { label: `${label} ({${qtyId}})`, value: term } };
-  }
-  // Material selector → per-option rate keys, calc picks the rate by selected option.
-  const selId = slugId("Material", ids);
-  const optionRateKeys: { opt: string; key: string }[] = [];
-  for (const v of real) {
-    const key = slugId(v.name, ids) + "Rate"; // unique pricing key per variant
-    next.pricing[key] = v.rate;
-    optionRateKeys.push({ opt: v.name, key });
-  }
-  next.fields.push({ id: selId, label: "Material", type: "selector", unit, group: "materials", options: real.map(v => v.name) });
-  const ternary = optionRateKeys.map(o => `${selId} == ${JSON.stringify(o.opt)} ? ${o.key}`).join(" : ") + ` : ${optionRateKeys[0].key}`;
-  const term = `(${qtyId} || 0) * (${ternary})`;
-  return { term, line: { label: `${label} ({${qtyId}})`, value: term } };
-}
-
+// Converts the wizard's collected data into the shared VerifiedData shape, then builds the schema
+// through the SAME deterministic builder the import flow uses (buildSchemaFromVerified) — one source
+// of truth, identical reliability guarantee. Variant-priced methods (material × sqft/lf) become
+// selectors; everything else becomes verified items.
 export function quoteSchemaFromWizard(data: WizardData): QuoteSchema {
-  const schema: QuoteSchema = { trade: data.trade || "", fields: [], pricing: { depositPercent: data.depositPercent || 0, taxRate: 0, minimumCharge: 0 }, addOns: [], calculation: "", summaryLines: [] };
-  const ids = new Set<string>();
-  const terms: string[] = [];
-  const lines: { label: string; value: string }[] = [];
-  const addField = (label: string, unit: FieldUnit, group: FieldGroup, rate: number) => {
-    const id = slugId(label, ids);
-    schema.fields.push({ id, label, type: "number", unit, group, placeholder: `Enter ${label.toLowerCase()}` });
-    schema.pricing[`${id}Rate`] = rate || 0;
-    const term = `(${id} || 0) * ${id}Rate`;
-    terms.push(term); lines.push({ label: `${label} ({${id}})`, value: term });
+  const items: VerifiedItem[] = [];
+  const selectors: VerifiedSelector[] = [];
+  let minimumCharge = 0;
+
+  const unitGroup = (label: string, unit: VerifiedUnit, primary: number, variants: WizardVariant[]) => {
+    const real = (variants || []).filter(v => v.name && typeof v.rate === "number");
+    if (real.length === 0) items.push({ id: "", name: label, price: primary || 0, unit });
+    else selectors.push({ quantityLabel: label, unit, options: real.map(v => ({ name: v.name, rate: v.rate })) });
   };
-  if (data.methods.includes("sqft") && data.sqft) { const g = buildUnitGroup(schema, ids, "Square Footage", "sqft", data.sqft.primary, data.sqft.variants); terms.push(g.term); lines.push(g.line); }
-  if (data.methods.includes("lf") && data.lf) { const g = buildUnitGroup(schema, ids, "Linear Feet", "lf", data.lf.primary, data.lf.variants); terms.push(g.term); lines.push(g.line); }
+  if (data.methods.includes("sqft") && data.sqft) unitGroup("Square Footage", "sq ft", data.sqft.primary, data.sqft.variants);
+  if (data.methods.includes("lf") && data.lf) unitGroup("Linear Feet", "lf", data.lf.primary, data.lf.variants);
   if (data.methods.includes("hour") && data.hour) {
-    addField("Hours", "hr", "dimensions", data.hour.rate);
-    if (data.hour.minHours && data.hour.rate) schema.pricing.minimumCharge = data.hour.minHours * data.hour.rate;
+    items.push({ id: "", name: "Hours", price: data.hour.rate || 0, unit: "hour" });
+    if (data.hour.minHours && data.hour.rate) minimumCharge = data.hour.minHours * data.hour.rate;
   }
-  if (data.methods.includes("flat") && data.flat) addField("Quantity", "each", "dimensions", data.flat.starting);
-  if (data.methods.includes("item") && data.item) {
-    for (const it of data.item.items || []) { if (it.name) addField(it.name, "each", "extras", it.price); }
-  }
-  const addOnIds = new Set<string>();
+  if (data.methods.includes("flat") && data.flat) items.push({ id: "", name: "Quantity", price: data.flat.starting || 0, unit: "each" });
+  if (data.methods.includes("item") && data.item) for (const it of data.item.items || []) if (it.name) items.push({ id: "", name: it.name, price: it.price || 0, unit: "each" });
+
+  const addOns: VerifiedAddOn[] = [];
   for (const a of data.addOns || []) {
     if (!a.name) continue;
-    if (a.perUnit) addField(a.name, "each", "extras", a.price);
-    else schema.addOns.push({ id: slugId(a.name, addOnIds), label: a.name, price: a.price || 0 });
+    if (a.perUnit) items.push({ id: "", name: a.name, price: a.price || 0, unit: "each" });
+    else addOns.push({ id: "", name: a.name, price: a.price || 0 });
   }
-  schema.calculation = terms.length ? terms.join(" + ") : "0";
-  schema.summaryLines = lines;
-  return schema;
+
+  return buildSchemaFromVerified({
+    trade: data.trade || "",
+    categories: [{ id: "services", name: "Services", items }],
+    selectors,
+    addOns,
+    depositPercent: data.depositPercent || 0,
+    minimumCharge,
+  });
 }
 
 // ── Imported price-list schema → QuoteSchema (Part 3) ───────────────────────────

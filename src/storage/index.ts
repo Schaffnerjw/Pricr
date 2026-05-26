@@ -78,6 +78,14 @@ const STAY_SIGNED_IN_KEY = "pricr_stay_signed_in";
 export async function setStaySignedIn(v: boolean): Promise<void> { try { await AsyncStorage.setItem(STAY_SIGNED_IN_KEY, v ? "1" : "0"); } catch { } }
 export async function getStaySignedIn(): Promise<boolean> { try { return (await AsyncStorage.getItem(STAY_SIGNED_IN_KEY)) !== "0"; } catch { return true; } }
 
+// ── In-progress price-list import (resumable setup) ─────────────────────────────
+// Stores the verified categories + phase so a half-finished import can be resumed from the choice
+// screen. Per-device/local only. Cleared on completion or when the user starts over.
+const IMPORT_PROGRESS_KEY = "pricr_import_progress";
+export async function saveImportProgress(data: any): Promise<void> { try { await AsyncStorage.setItem(IMPORT_PROGRESS_KEY, JSON.stringify(data)); } catch { } }
+export async function getImportProgress<T = any>(): Promise<T | null> { try { const r = await AsyncStorage.getItem(IMPORT_PROGRESS_KEY); return r ? JSON.parse(r) as T : null; } catch { return null; } }
+export async function clearImportProgress(): Promise<void> { try { await AsyncStorage.removeItem(IMPORT_PROGRESS_KEY); } catch { } }
+
 // ── businesses ────────────────────────────────────────────────────────────────
 export async function getBusiness(code: string): Promise<Business|null> {
   if (!isCloudEnabled(code)) { try { const r=await AsyncStorage.getItem(KEYS.business(code)); return r?JSON.parse(r):null; } catch { return null; } }

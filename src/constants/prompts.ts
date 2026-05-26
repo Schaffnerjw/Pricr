@@ -271,6 +271,42 @@ Return ONLY valid JSON, no markdown fences, no explanation text:
   "depositPercent": 50
 }`;
 
+// Phase 1 of the import flow: AI READS/UNDERSTANDS the pasted price list and returns structured
+// categories for a human to verify (it does NOT build the schema — a deterministic function does that).
+export const PRICE_LIST_UNDERSTAND_PROMPT = `A contractor has pasted their price list. Read it carefully and extract all pricing information.
+
+Return ONLY this JSON — no markdown, no explanation:
+{
+  "trade": "detected business type",
+  "businessName": "business name if found, else empty string",
+  "categories": [
+    {
+      "id": "unique_id",
+      "name": "Category Name",
+      "description": "one sentence describing what this category covers",
+      "items": [
+        {
+          "id": "unique_id",
+          "name": "exact product or service name from the list",
+          "price": 20.00,
+          "unit": "sq ft|lf|hour|each|flat|section",
+          "notes": "any size/color/variant info, or empty string"
+        }
+      ]
+    }
+  ],
+  "depositPercent": 0,
+  "summary": "Plain English: I found X categories with Y total items. [brief description of what was found]"
+}
+
+Rules:
+- Extract EVERY item and price from the list
+- Use exact prices — never approximate or change numbers
+- Detect the unit from context (per sf = sq ft, per lf = linear foot, /hr = hour, flat fee = flat)
+- Group items into logical categories matching the contractor's own section headers
+- If deposit percentage is mentioned capture it, otherwise 0
+- The summary field is shown to the user to confirm you understood their list correctly`;
+
 // Real-time incremental extraction: run after EACH user message during onboarding. Pulls out only
 // the pricing/service facts EXPLICITLY stated in that one message, as a structured SchemaUpdate.
 export const SCHEMA_EXTRACTION_PROMPT = `You extract structured pricing data from a single message in a contractor's quote-tool setup conversation.
