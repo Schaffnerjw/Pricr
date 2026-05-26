@@ -34,11 +34,11 @@ function subtextFor(st: DashStats | null): string {
   return "You're all set — let's close some jobs.";
 }
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
   onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
-  schemaWarning?: { ok: boolean; isPlaceholder: boolean; reason?: string } | null; onFixSchema?: () => void;
+  schemaWarning?: { ok: boolean; isPlaceholder: boolean; reason?: string } | null; onFixSchema?: () => void; onStats?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
@@ -173,6 +173,14 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={onOpenQuoteTool}>
           <Text style={[s.btnText, { color: onPrimary }]}>Open My Quote Tool</Text>
         </TouchableOpacity>
+
+        {/* My Stats — prominent, admin only (shareable brag card + deep dive). */}
+        {isAdmin && onStats && (
+          <TouchableOpacity style={[s.btnSecondary, { borderColor: primaryColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }]} onPress={onStats}>
+            <Feather name="award" size={17} color={primaryColor} />
+            <Text style={[s.btnSecondaryText, { color: primaryColor }]}>My Stats</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Secondary actions — medium, outlined */}
         <View style={{ gap: 12 }}>

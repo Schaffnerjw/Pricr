@@ -1,6 +1,7 @@
 import { Feather } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import * as Haptics from "expo-haptics";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Animated, Image, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { DemoPickerModal } from "../components/DemoPickerModal";
 import { B, MASTER_CODE, SIGN_BASE } from "../constants/brand";
 import { s } from "../styles";
@@ -30,8 +31,23 @@ interface SearchResult { code: string; name: string; trade: string; username: st
 interface BizDetail { code: string; name: string; schema: any; schemaStatus: string; members: any[]; recentQuotes: any[]; suspended: boolean; }
 interface Stats { businesses: number; quotes: number; signed: number; blankSchemas: number; zeroQuoteBusinesses: number; }
 
-export function MasterDashboard({ onSignOut, onStartDemo }: { onSignOut: () => void; onStartDemo: (demo: DemoBusiness) => void }) {
+export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics }: { onSignOut: () => void; onStartDemo: (demo: DemoBusiness) => void; onOpenAnalytics?: () => void }) {
   const [showDemoPicker, setShowDemoPicker] = useState(false);
+  // Hidden gesture: 5 taps on the logo within 3s opens the super-admin analytics. No UI hint.
+  const tapTimes = useRef<number[]>([]);
+  const flash = useRef(new Animated.Value(0)).current;
+  const handleLogoTap = () => {
+    const now = Date.now();
+    tapTimes.current = [...tapTimes.current.filter(t => now - t < 3000), now];
+    if (tapTimes.current.length >= 5) {
+      tapTimes.current = [];
+      if (Platform.OS !== "web") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Animated.sequence([
+        Animated.timing(flash, { toValue: 0.7, duration: 120, useNativeDriver: true }),
+        Animated.timing(flash, { toValue: 0, duration: 220, useNativeDriver: true }),
+      ]).start(() => onOpenAnalytics?.());
+    }
+  };
   const [stats, setStats] = useState<Stats | null>(null);
   const [pingMs, setPingMs] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -205,7 +221,9 @@ export function MasterDashboard({ onSignOut, onStartDemo }: { onSignOut: () => v
       <View style={s.navBar}>
         <View style={{ width: 60 }} />
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Image source={require("../../assets/images/logo-horizontal.png")} style={{ width: 73, height: 22 }} resizeMode="contain" />
+          <TouchableOpacity activeOpacity={1} onPress={handleLogoTap}>
+            <Image source={require("../../assets/images/logo-horizontal.png")} style={{ width: 73, height: 22 }} resizeMode="contain" />
+          </TouchableOpacity>
           <Text style={s.navTitle}>Support</Text>
         </View>
         <TouchableOpacity onPress={onSignOut} style={{ width: 60, alignItems: "flex-end" }}>
@@ -264,6 +282,7 @@ export function MasterDashboard({ onSignOut, onStartDemo }: { onSignOut: () => v
       </ScrollView>
 
       <DemoPickerModal visible={showDemoPicker} onClose={() => setShowDemoPicker(false)} onSelect={demo => { setShowDemoPicker(false); onStartDemo(demo); }} />
+      <Animated.View pointerEvents="none" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: B.white, opacity: flash }} />
     </SafeAreaView>
   );
 }

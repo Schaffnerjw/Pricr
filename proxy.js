@@ -897,6 +897,72 @@ function schemaStatus(config) {
   return 'ok';
 }
 
+async function fetchAllQuotesFull() {
+  const r = await supabaseRequest('GET', '/rest/v1/quotes?select=business_id,total,status,signed_at,created_at');
+  return Array.isArray(r.json) ? r.json : [];
+}
+
+// Comprehensive cross-tenant analytics for the hidden super-admin screen.
+async function handleAdminPlatformAnalytics(res) {
+  const now = new Date();
+  const thisMonth = (ts) => { const d = new Date(ts); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); };
+  const lastM = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const inLastMonth = (ts) => { const d = new Date(ts); return d.getMonth() === lastM.getMonth() && d.getFullYear() === lastM.getFullYear(); };
+  const DAY = 86400000;
+  const [biz, quotes] = await Promise.all([fetchAllBusinesses(), fetchAllQuotesFull()]);
+
+  const byBiz = {};
+  biz.forEach(b => { byBiz[b.id] = { code: b.code, name: b.name, trade: (b.config && b.config.schema && b.config.schema.trade) || '', joined: b.created_at, total: 0, month: 0, last: 0, schemaStatus: schemaStatus(b.config) }; });
+  let totalSigned = 0, signedThisMonth = 0, acceptedCount = 0, sentCount = 0, contractValue = 0, highest = 0;
+  const signTimes = []; const totalsPos = [];
+  quotes.forEach(q => {
+    const e = byBiz[q.business_id];
+    const t = new Date(q.created_at).getTime();
+    if (e) { e.total++; if (thisMonth(t)) e.month++; if (t > e.last) e.last = t; }
+    if (q.signed_at) { totalSigned++; if (thisMonth(new Date(q.signed_at).getTime())) signedThisMonth++; const st = (new Date(q.signed_at).getTime() - t) / 3600000; if (st >= 0) signTimes.push(st); }
+    if (q.status === 'accepted') { acceptedCount++; contractValue += Number(q.total) || 0; }
+    if (['sent', 'accepted', 'declined'].includes(q.status)) sentCount++;
+    if (typeof q.total === 'number' && q.total > 0) { totalsPos.push(q.total); if (q.total > highest) highest = q.total; }
+  });
+  const list = Object.values(byBiz);
+  const round1 = (n) => Math.round(n * 10) / 10;
+  const avgTimeToSign = signTimes.length ? round1(signTimes.reduce((a, b) => a + b, 0) / signTimes.length) : 0;
+  const avgQuoteValue = totalsPos.length ? Math.round(totalsPos.reduce((a, b) => a + b, 0) / totalsPos.length) : 0;
+
+  // Trade breakdown.
+  const tradeCount = {};
+  list.forEach(b => { const tr = (b.trade || '').trim() || 'Unset'; tradeCount[tr] = (tradeCount[tr] || 0) + 1; });
+  const tradeBreakdown = Object.entries(tradeCount).map(([trade, count]) => ({ trade, count })).sort((a, b) => b.count - a.count);
+  const popular = tradeBreakdown.find(t => t.trade !== 'Unset') || tradeBreakdown[0] || { trade: 'None', count: 0 };
+
+  const newThisMonth = list.filter(b => thisMonth(new Date(b.joined).getTime())).length;
+  const newLastMonth = list.filter(b => inLastMonth(new Date(b.joined).getTime())).length;
+  const activeThisMonth = list.filter(b => b.month > 0).length;
+  const mapItem = (b) => ({ code: b.code, name: b.name, trade: b.trade, joined: b.joined, lastActive: b.last || null, quotesThisMonth: b.month, totalQuotes: b.total });
+
+  return sendJson(res, 200, {
+    totalBusinesses: list.length,
+    totalQuotes: quotes.length,
+    totalSigned,
+    platformCloseRate: sentCount > 0 ? round1((acceptedCount / sentCount) * 100) : 0,
+    contractValue: Math.round(contractValue),
+    activeThisMonth,
+    newThisMonth, newLastMonth,
+    growthPct: newLastMonth > 0 ? Math.round(((newThisMonth - newLastMonth) / newLastMonth) * 100) : (newThisMonth > 0 ? 100 : 0),
+    avgQuotesPerBizPerMonth: activeThisMonth > 0 ? round1(list.reduce((s, b) => s + b.month, 0) / activeThisMonth) : 0,
+    mostActive: list.filter(b => b.total > 0).sort((a, b) => b.month - a.month || b.total - a.total).slice(0, 5).map(mapItem),
+    atRisk: list.filter(b => b.total > 0 && b.last && (Date.now() - b.last > 14 * DAY)).sort((a, b) => a.last - b.last).slice(0, 10).map(mapItem),
+    neverUsed: list.filter(b => b.total === 0).slice(0, 20).map(mapItem),
+    brokenSchema: list.filter(b => ['blank', 'placeholder', 'no-trade'].includes(b.schemaStatus)).slice(0, 20).map(mapItem),
+    signaturesThisMonth: signedThisMonth,
+    avgTimeToSignHours: avgTimeToSign,
+    avgQuoteValue,
+    highestQuote: Math.round(highest),
+    popularTrade: popular,
+    tradeBreakdown,
+  });
+}
+
 async function handleAdminStats(res) {
   const [biz, quotes] = await Promise.all([fetchAllBusinesses(), fetchAllQuotesMeta()]);
   const cnt = {};
@@ -1015,6 +1081,7 @@ async function handleAdminUser(res, body) {
 
 const ADMIN_HANDLERS = {
   stats: (res) => handleAdminStats(res),
+  'platform-analytics': (res) => handleAdminPlatformAnalytics(res),
   search: (res, buf) => handleAdminSearch(res, buf),
   business: (res, buf) => handleAdminBusiness(res, buf),
   'reset-password': (res, buf) => handleAdminResetPassword(res, buf),

@@ -22,6 +22,8 @@ import { SetUsernameScreen } from "../src/screens/SetUsernameScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
 import { SignupBrandScreen } from "../src/screens/SignupBrandScreen";
 import { SignupScreen } from "../src/screens/SignupScreen";
+import { StatsScreen } from "../src/screens/StatsScreen";
+import { SuperAdminAnalyticsScreen } from "../src/screens/SuperAdminAnalyticsScreen";
 import { UpgradePasswordScreen } from "../src/screens/UpgradePasswordScreen";
 import { UsersScreen } from "../src/screens/UsersScreen";
 import { WelcomeScreen } from "../src/screens/WelcomeScreen";
@@ -550,7 +552,17 @@ export default function Index() {
 
   // ── MASTER DASHBOARD ──────────────────────────────────────────────────────────
   if (screen === "master") {
-    return <MasterDashboard onSignOut={handleSignOut} onStartDemo={startDemo} />;
+    return <MasterDashboard onSignOut={handleSignOut} onStartDemo={startDemo} onOpenAnalytics={() => setScreen("super_analytics")} />;
+  }
+
+  // Hidden super-admin analytics (reached only by the 5-tap logo gesture on the master dashboard).
+  if (screen === "super_analytics" && currentUser?.role === "superadmin") {
+    return <SuperAdminAnalyticsScreen onBack={() => setScreen("master")} />;
+  }
+
+  // ── BUSINESS STATS (admin only — brag card + deep dive) ─────────────────────────
+  if (screen === "stats" && business && currentUser && isAdmin) {
+    return <StatsScreen business={business} onBack={() => setScreen("done")} />;
   }
 
   if (screen === "splash") {
@@ -572,6 +584,7 @@ export default function Index() {
       showTestPrompt={justBuilt} isDemoMode={isDemoMode}
       onOpenQuoteTool={() => { setJustBuilt(false); setQuoteInitialValues(undefined); setScreen("quote"); }}
       onQuoteHistory={() => { setJustBuilt(false); setScreen("history"); }}
+      onStats={() => { setJustBuilt(false); setScreen("stats"); }}
       onQuotePipeline={isSupabaseConfigured && !isDemoMode ? () => { setJustBuilt(false); setScreen("pipeline"); } : undefined}
       onManageTeam={() => { setJustBuilt(false); setScreen("users"); }}
       schemaWarning={schemaWarning}
