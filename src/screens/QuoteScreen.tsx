@@ -70,6 +70,81 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const setField = (id: string, value: any) => { if (readOnly) return; setFieldValues(p => ({ ...p, [id]: value })); };
   const toggleAddOn = (id: string) => { if (readOnly) return; setSelectedAddOns(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]); };
 
+  // ── Single-page layout data helpers (defined early so the section-driven total can use them) ──
+  const fieldById = (id?: string): any => (schema?.fields || []).find((f: any) => f.id === id);
+
+  const unitLabel = (unit?: string): string => {
+    switch (unit) {
+      case "sqft": return "sq ft";
+      case "lf": return "linear ft";
+      case "hr": return "hours";
+      case "each": return "units";
+      case "ton": return "tons";
+      case "room": return "rooms";
+      case "load": return "loads";
+      case "vehicle": return "vehicles";
+      default: return unit || "units";
+    }
+  };
+
+  // Dollar contribution of one section — zero until the rep makes a selection / enters a measurement.
+  const sectionSubtotal = (sec: any): number => {
+    const pricing = schema?.pricing || {};
+    if (sec.pattern === "MATERIAL_MEASUREMENT") {
+      const chosen = fieldValues[sec.materialFieldId];
+      if (!chosen) return 0;
+      const rate = optionPrice(chosen, pricing);
+      if (rate == null) return 0;
+      if (sec.quantityFieldId) return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
+      return rate; // flat pick-one tier (no quantity)
+    }
+    if (sec.pattern === "LABOR") {
+      const rate = sec.laborRate || pricing[`${sec.quantityFieldId}Rate`] || 0;
+      return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
+    }
+    if (sec.pattern === "FLAT_RATE") {
+      return (sec.itemFieldIds || []).reduce((sum: number, id: string) => sum + (fieldValues[id] ? (pricing[`${id}Rate`] || 0) : 0), 0);
+    }
+    return 0;
+  };
+
+  // Line items for the single-page layout, derived from what the rep actually selected (NOT from the
+  // schema formula, whose fallback would charge the first option of every unselected selector). This is
+  // what makes the grand total start at $0 and stay honest, and it feeds ClosingCard + the PDF too.
+  const newLineItems = useMemo(() => {
+    if (!useNewLayout) return [] as { label: string; amount: number }[];
+    const pricing = schema?.pricing || {};
+    const items: { label: string; amount: number }[] = [];
+    for (const sec of quoteSections) {
+      if (sec.pattern === "FLAT_RATE") {
+        for (const id of sec.itemFieldIds || []) {
+          if (!fieldValues[id]) continue;
+          const amt = pricing[`${id}Rate`] || 0;
+          if (amt) items.push({ label: fieldById(id)?.label || id, amount: amt });
+        }
+        continue;
+      }
+      const sub = sectionSubtotal(sec);
+      if (sub <= 0) continue;
+      const chosen = sec.materialFieldId ? fieldValues[sec.materialFieldId] : null;
+      const qty = sec.quantityFieldId ? Number(fieldValues[sec.quantityFieldId]) || 0 : 0;
+      const unit = unitLabel(sec.unit);
+      let label = sec.name;
+      if (chosen && sec.quantityFieldId) label = `${chosen} (${qty.toLocaleString()} ${unit})`;
+      else if (chosen) label = `${sec.name}: ${chosen}`;
+      else if (sec.quantityFieldId) label = `${sec.name} (${qty.toLocaleString()} ${unit})`;
+      items.push({ label, amount: sub });
+    }
+    return items;
+  }, [useNewLayout, quoteSections, fieldValues, schema]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const newBase = newLineItems.reduce((sum, l) => sum + l.amount, 0);
+  // For the single-page layout, feed computeTotals/ClosingCard a schema whose total + line items come
+  // from the rep's actual selections (zero by default) instead of the formula's first-option fallback.
+  const computeSchema = useNewLayout
+    ? { ...schema, calculation: String(newBase), summaryLines: newLineItems.map(li => ({ label: li.label, value: String(li.amount) })) }
+    : schema;
+
   useEffect(() => {
     if (reduceMotion) { setReady(true); return; }
     const timer = setTimeout(() => setReady(true), 450);
@@ -104,7 +179,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   }, [schema, business.code]);
 
   const discount = { mode: discountMode, value: Number(discountValue) || 0, reason: discountReason.trim() };
-  const t = computeTotals(schema, fieldValues, selectedAddOns, discount);
+  const t = computeTotals(computeSchema, fieldValues, selectedAddOns, discount);
   const range = typicalRange(history);
   const outsideRange = !!range && t.total > 0 && (t.total > range.avg + 1.5 * range.std || t.total < Math.max(0, range.avg - 1.5 * range.std));
 
@@ -404,8 +479,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     );
   };
 
-  // ── Single-page job-walkthrough helpers (new layout only) ──
-  const fieldById = (id?: string): any => (schema?.fields || []).find((f: any) => f.id === id);
+  // ── Single-page job-walkthrough helpers (new layout only); fieldById/unitLabel/sectionSubtotal live above ──
 
   // Auto-pick a Feather icon from a section name so the checklist reads at a glance.
   const iconFor = (name: string): any => {
@@ -420,63 +494,65 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     return "box";
   };
 
-  const unitLabel = (unit?: string): string => {
-    switch (unit) {
-      case "sqft": return "sq ft";
-      case "lf": return "linear ft";
-      case "hr": return "hours";
-      case "each": return "units";
-      case "ton": return "tons";
-      case "room": return "rooms";
-      case "load": return "loads";
-      case "vehicle": return "vehicles";
-      default: return unit || "units";
-    }
+  // ── Bug 1 fix: dedupe sections into one card per logical group ──
+  // deriveSections() emits one section per priced selector, so a category split across units
+  // ("Deck Components (per lf)" + "(per sq ft)") becomes several cards with the same base name.
+  // Group by the base name (parenthetical suffix stripped, case/space-insensitive) so each base
+  // name is ONE card holding all its members. Industry-agnostic — no trade-specific keywords.
+  const stripParen = (n: string) => String(n || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const normName = (n: string) => stripParen(n).toLowerCase().replace(/\s+/g, " ").trim();
+  // Sub-label shown for each member when a group holds more than one (e.g. the "(per lf)" qualifier).
+  const memberSubLabel = (sec: any): string => {
+    const m = String(sec.name || "").match(/\(([^)]+)\)\s*$/);
+    return (m ? m[1] : unitLabel(sec.unit)).replace(/^\w/, c => c.toUpperCase());
   };
 
-  // Dollar contribution of one section, from the same fieldValues/pricing computeTotals() uses.
-  const sectionSubtotal = (sec: any): number => {
-    const pricing = schema?.pricing || {};
-    if (sec.pattern === "MATERIAL_MEASUREMENT") {
-      const chosen = fieldValues[sec.materialFieldId];
-      if (!chosen) return 0;
-      const rate = optionPrice(chosen, pricing);
-      if (rate == null) return 0;
-      if (sec.quantityFieldId) return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
-      return rate; // flat pick-one tier (no quantity)
+  const displaySections = useMemo(() => {
+    if (!useNewLayout) return [] as { id: string; name: string; members: any[] }[];
+    const byKey: Record<string, { id: string; name: string; members: any[] }> = {};
+    const order: string[] = [];
+    for (const sec of quoteSections) {
+      const key = normName(sec.name) || sec.id;
+      if (!byKey[key]) { byKey[key] = { id: key, name: stripParen(sec.name) || sec.name, members: [] }; order.push(key); }
+      byKey[key].members.push(sec);
     }
-    if (sec.pattern === "LABOR") {
-      const rate = sec.laborRate || pricing[`${sec.quantityFieldId}Rate`] || 0;
-      return rate * (Number(fieldValues[sec.quantityFieldId]) || 0);
+    let groups = order.map(k => byKey[k]);
+    // Cap at 8 cards — fold the smallest groups into a single "Other" so the checklist stays scannable.
+    if (groups.length > 8) {
+      const keep = [...groups].sort((a, b) => b.members.length - a.members.length).slice(0, 7);
+      const other = { id: "_other", name: "Other", members: groups.filter(g => !keep.includes(g)).flatMap(g => g.members) };
+      groups = groups.filter(g => keep.includes(g));
+      groups.push(other);
     }
-    if (sec.pattern === "FLAT_RATE") {
-      return (sec.itemFieldIds || []).reduce((sum: number, id: string) => sum + (fieldValues[id] ? (pricing[`${id}Rate`] || 0) : 0), 0);
-    }
-    return 0;
-  };
+    return groups;
+  }, [useNewLayout, quoteSections]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear every field a section owns (used when the rep turns the section OFF).
-  const clearSectionFields = (sec: any) => {
+  const groupSubtotal = (group: any): number => (group.members || []).reduce((sum: number, sec: any) => sum + sectionSubtotal(sec), 0);
+
+  // Clear every field a group's member sections own (used when the rep turns the group OFF).
+  const clearGroupFields = (group: any) => {
     setFieldValues(prev => {
       const next = { ...prev };
-      if (sec.materialFieldId) next[sec.materialFieldId] = "";
-      if (sec.quantityFieldId) next[sec.quantityFieldId] = 0;
-      (sec.itemFieldIds || []).forEach((id: string) => { next[id] = false; });
+      for (const sec of group.members || []) {
+        if (sec.materialFieldId) next[sec.materialFieldId] = "";
+        if (sec.quantityFieldId) next[sec.quantityFieldId] = 0;
+        (sec.itemFieldIds || []).forEach((id: string) => { next[id] = false; });
+      }
       return next;
     });
   };
 
   // Tap a section card: ON → expand inline + scroll into view; OFF → collapse + clear its values.
-  const toggleSectionCard = (sec: any) => {
+  const toggleGroup = (group: any) => {
     if (readOnly) return;
-    const willActivate = !activeSections[sec.id];
+    const willActivate = !activeSections[group.id];
     if (!reduceMotion) LayoutAnimation.configureNext(LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
-    setActiveSections(p => ({ ...p, [sec.id]: willActivate }));
+    setActiveSections(p => ({ ...p, [group.id]: willActivate }));
     if (willActivate) {
       if (Platform.OS !== "web") Haptics.selectionAsync();
-      setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, (sectionY.current[sec.id] || 0) - 12), animated: true }), 150);
+      setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, (sectionY.current[group.id] || 0) - 12), animated: true }), 150);
     } else {
-      clearSectionFields(sec);
+      clearGroupFields(group);
     }
   };
 
@@ -590,25 +666,26 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     return null;
   };
 
-  // The single-page body: a 2-column section checklist, then every active section expanded inline.
+  // The single-page body: a 2-column section checklist (one card per group), then every active
+  // group expanded inline with each of its member sections stacked.
   const renderNewBody = () => {
-    const activeList = quoteSections.filter((sec: any) => activeSections[sec.id] || readOnly);
+    const activeGroups = displaySections.filter((g) => activeSections[g.id] || readOnly);
     return (
       <>
         {!readOnly && (
           <View style={{ gap: 10 }}>
             <Text style={[s.fieldLabel, { color: pal.textMuted }]}>WHAT&apos;S IN THIS JOB?</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-              {quoteSections.map((sec: any) => {
-                const on = !!activeSections[sec.id];
-                const sub = sectionSubtotal(sec);
+              {displaySections.map((g) => {
+                const on = !!activeSections[g.id];
+                const sub = groupSubtotal(g);
                 return (
-                  <PressableScale key={sec.id} onPress={() => toggleSectionCard(sec)} style={{ width: "47.5%", flexGrow: 1, minWidth: 140, backgroundColor: on ? primaryColor : pal.surface, borderColor: on ? primaryColor : pal.border, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }}>
+                  <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ width: "47.5%", flexGrow: 1, minWidth: 140, backgroundColor: on ? primaryColor : pal.surface, borderColor: on ? primaryColor : pal.border, borderWidth: 1, borderRadius: 16, padding: 14, gap: 8 }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                      <Feather name={iconFor(sec.name)} size={20} color={on ? onPrimary : primaryColor} />
+                      <Feather name={iconFor(g.name)} size={20} color={on ? onPrimary : primaryColor} />
                       <Feather name={on ? "check-circle" : "plus-circle"} size={18} color={on ? onPrimary : pal.textMuted} />
                     </View>
-                    <Text numberOfLines={2} style={{ color: on ? onPrimary : pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{sec.name}</Text>
+                    <Text numberOfLines={2} style={{ color: on ? onPrimary : pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{g.name}</Text>
                     {on && sub > 0 && <Text style={{ color: onPrimary, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}
                   </PressableScale>
                 );
@@ -617,49 +694,58 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         )}
 
-        {activeList.map((sec: any) => (
-          <View key={sec.id} style={{ gap: 14, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 18, padding: 16 }} onLayout={e => { sectionY.current[sec.id] = e.nativeEvent.layout.y; }}>
+        {activeGroups.map((g) => (
+          <View key={g.id} style={{ gap: 16, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 18, padding: 16 }} onLayout={e => { sectionY.current[g.id] = e.nativeEvent.layout.y; }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <Feather name={iconFor(sec.name)} size={18} color={primaryColor} />
-                <Text style={[s.qSectionTitle, { color: pal.text }]}>{sec.name}</Text>
+                <Feather name={iconFor(g.name)} size={18} color={primaryColor} />
+                <Text style={[s.qSectionTitle, { color: pal.text }]}>{g.name}</Text>
               </View>
               {!readOnly && (
-                <TouchableOpacity onPress={() => toggleSectionCard(sec)} hitSlop={8}>
+                <TouchableOpacity onPress={() => toggleGroup(g)} hitSlop={8}>
                   <Feather name="x" size={20} color={pal.textMuted} />
                 </TouchableOpacity>
               )}
             </View>
-            {renderSectionContent(sec)}
+            {g.members.map((sec: any) => (
+              <View key={sec.id} style={{ gap: 10 }}>
+                {g.members.length > 1 && <Text style={[s.fieldLabel, { color: pal.textMuted }]}>{memberSubLabel(sec)}</Text>}
+                {renderSectionContent(sec)}
+              </View>
+            ))}
           </View>
         ))}
       </>
     );
   };
 
-  // Section subtotals for the negotiation overview when the single-page layout is active.
+  // Group subtotals for the negotiation overview when the single-page layout is active.
   const newOverviewSections = useMemo(() => {
     if (!useNewLayout) return [];
     const pricing = schema?.pricing || {};
-    const groups = quoteSections
-      .filter((sec: any) => activeSections[sec.id] && sectionSubtotal(sec) > 0)
-      .map((sec: any) => {
-        const sub = sectionSubtotal(sec);
-        let lines: { label: string; amount: number }[];
-        if (sec.pattern === "FLAT_RATE") {
-          lines = (sec.itemFieldIds || []).filter((id: string) => fieldValues[id]).map((id: string) => ({ label: fieldById(id)?.label || id, amount: pricing[`${id}Rate`] || 0 }));
-        } else {
-          const chosen = sec.materialFieldId ? fieldValues[sec.materialFieldId] : null;
-          lines = [{ label: chosen ? String(chosen) : sec.name, amount: sub }];
+    const groups = displaySections
+      .filter((g) => activeSections[g.id] && groupSubtotal(g) > 0)
+      .map((g) => {
+        const lines: { label: string; amount: number }[] = [];
+        for (const sec of g.members) {
+          if (sec.pattern === "FLAT_RATE") {
+            (sec.itemFieldIds || []).filter((id: string) => fieldValues[id]).forEach((id: string) => lines.push({ label: fieldById(id)?.label || id, amount: pricing[`${id}Rate`] || 0 }));
+          } else {
+            const sub = sectionSubtotal(sec);
+            if (sub <= 0) continue;
+            const chosen = sec.materialFieldId ? fieldValues[sec.materialFieldId] : null;
+            const prefix = g.members.length > 1 ? `${memberSubLabel(sec)}: ` : "";
+            lines.push({ label: `${prefix}${chosen ? String(chosen) : sec.name}`, amount: sub });
+          }
         }
-        return { key: sec.id, title: sec.name, icon: iconFor(sec.name), lines, subtotal: sub };
+        return { key: g.id, title: g.name, icon: iconFor(g.name), lines, subtotal: groupSubtotal(g) };
       });
     if (selectedAddOns.length) {
       const lines = selectedAddOns.map(id => { const ao = schema?.addOns?.find((a: any) => a.id === id); return { label: ao?.label || id, amount: ao?.price || 0 }; });
       groups.push({ key: "addons", title: "Add-ons", icon: "plus-circle", lines, subtotal: lines.reduce((sum, l) => sum + l.amount, 0) });
     }
     return groups;
-  }, [useNewLayout, quoteSections, activeSections, fieldValues, selectedAddOns, schema]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useNewLayout, displaySections, activeSections, fieldValues, selectedAddOns, schema]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const displayOverviewSections = useNewLayout ? newOverviewSections : overviewSections;
   const compareSec = quoteSections.find((sec: any) => sec.id === compareSection);
@@ -794,16 +880,22 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             <Text style={[s.qStickyLabel, { color: pal.textMuted }]}>GRAND TOTAL</Text>
             <AnimatedDollar value={t.total} style={[s.qStickyTotal, { color: primaryColor }]} />
           </View>
-          <PressableScale onPress={() => setShowOverview(true)} style={[s.qReviewBtn, { backgroundColor: primaryColor }]}>
-            <Text style={[s.qReviewText, { color: onPrimary }]}>Review</Text>
-            <Feather name="chevron-up" size={18} color={onPrimary} />
-          </PressableScale>
+          {t.total > 0 ? (
+            <PressableScale onPress={() => setShowOverview(true)} style={[s.qReviewBtn, { backgroundColor: primaryColor }]}>
+              <Text style={[s.qReviewText, { color: onPrimary }]}>Review</Text>
+              <Feather name="chevron-up" size={18} color={onPrimary} />
+            </PressableScale>
+          ) : (
+            <View style={[s.qReviewBtn, { backgroundColor: primaryColor, opacity: 0.4 }]}>
+              <Text style={[s.qReviewText, { color: onPrimary }]}>Add items to quote</Text>
+            </View>
+          )}
         </View>
       </View>
       )}
 
       {showTotal && !readOnly && (
-        <ClosingCard schema={schema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
+        <ClosingCard schema={computeSchema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
       )}
 
       {/* ── Section overview / negotiation screen — review subtotals, edit any section, see the live total ── */}
