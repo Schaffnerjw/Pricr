@@ -12,7 +12,7 @@ import { SkeletonCard } from "../components/SkeletonCard";
 import { API_URL, B, SIGN_BASE } from "../constants/brand";
 import { AGENT_PROMPT } from "../constants/prompts";
 import { useReduceMotion } from "../hooks/useReduceMotion";
-import { addQuote, attachQuotePresentation, getQuoteSigningToken, getQuotes, markQuoteSent, saveBusiness, saveSignature } from "../storage";
+import { addQuote, attachQuotePresentation, getKitChatHistory, getQuoteSigningToken, getQuotes, markQuoteSent, saveBusiness, saveKitChatHistory, saveSignature } from "../storage";
 import { s } from "../styles";
 import { Business, QuotePresentation, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
@@ -20,6 +20,7 @@ import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { defaultAllowMultiSelect, deriveSections } from "../utils/buildSchemaFromVerified";
+import { applyKitSchemaUpdate } from "../utils/kitSchemaUpdate";
 import { logger } from "../utils/logger";
 import { humanSchemaSummary } from "../utils/schemaExtractor";
 
@@ -49,6 +50,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const [agentInput, setAgentInput] = useState("");
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentMessages, setAgentMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [kitEarlierCount, setKitEarlierCount] = useState(0); // how many leading messages are from prior sessions
   const [showOverview, setShowOverview] = useState(false);       // section overview / negotiation screen
   const [comparingField, setComparingField] = useState<string | null>(null); // selector with the comparison panel open
   const [activeSections, setActiveSections] = useState<Record<string, boolean>>({}); // single-page: which sections are ON
@@ -152,6 +154,14 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       setCollapsedGroups({});
     });
   }, [schema, business.code]);
+
+  // Kit remembers context per business: load the saved conversation when the sheet is opened fresh.
+  useEffect(() => {
+    if (!agentOpen || agentMessages.length > 0) return;
+    getKitChatHistory(business.code).then(hist => {
+      if (hist.length) { setAgentMessages(hist.map(h => ({ role: h.role, content: h.content }))); setKitEarlierCount(hist.length); }
+    });
+  }, [agentOpen, business.code]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const discount = { mode: discountMode, value: Number(discountValue) || 0, reason: discountReason.trim() };
   // ALL pricing flows through computeTotals → the pricing engine (exact rate-by-ID for real schemas,
@@ -307,6 +317,29 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     await saveSignature(business.code, id, signatureData, customerName || undefined);
   };
 
+  // Persist the in-quote Kit conversation per business so it survives reopen/restart.
+  const persistKitHistory = (msgs: { role: "user" | "assistant"; content: string }[]) => {
+    const now = Date.now();
+    saveKitChatHistory(business.code, msgs.map((m, i) => ({ role: m.role, content: m.content, timestamp: now - (msgs.length - i) })));
+  };
+
+  // Apply a new schema to live state + persist + re-derive sections (so the quote tool re-renders).
+  const applyKitSchema = async (next: any, source: string) => {
+    if (useNewLayout || (next?.fields && Array.isArray(next.fields))) {
+      try { next.sections = deriveSections(next.fields || [], next.pricing || {}); }
+      catch (e) { logger.error(`[KitAgent] deriveSections failed (${source})`, e instanceof Error ? e.message : String(e)); }
+    }
+    logger.debug("[KitAgent] calling schema update with:", JSON.stringify(next).substring(0, 200));
+    setSchema(next);
+    try {
+      await saveBusiness({ ...business, schema: next, kitUpdates: (business.kitUpdates || 0) + 1 });
+      logger.debug("[KitAgent] schema update result: saved");
+    } catch (e) {
+      logger.error("[KitAgent] saveBusiness failed", e instanceof Error ? e.message : String(e));
+      Alert.alert("Couldn't save", "Failed to save — your changes are applied here but won't sync until you reconnect.");
+    }
+  };
+
   const sendAgentMessage = async (textArg?: string) => {
     const text = (typeof textArg === "string" ? textArg : agentInput).trim();
     if (!text || agentLoading) return;
@@ -314,15 +347,23 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setAgentMessages(newMessages);
     setAgentInput("");
     setAgentLoading(true);
+    const finish = (assistantText: string) => {
+      const all = [...newMessages, { role: "assistant" as const, content: assistantText }];
+      setAgentMessages(all);
+      persistKitHistory(all);
+    };
     try {
-      // Send the conversation for context (so the layout-pill follow-up remembers what to build),
-      // grounding the latest turn with the current schema.
-      const apiMessages = newMessages.map((m, i) =>
-        i === newMessages.length - 1
-          ? { role: "user" as const, content: `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nRequest: ${m.content}` }
-          : m,
+      logger.debug("[KitAgent] sending message to Claude");
+      // Send the LAST 20 messages for context (window management), grounding the latest turn with the
+      // current schema. Strip any prior change-blocks from history so they don't confuse the model.
+      const stripBlocks = (c: string) => c.replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/g, "").replace(/CONFIG_UPDATED[\s\S]*$/g, "").trim();
+      let recent = newMessages.slice(-20);
+      while (recent.length && recent[0].role !== "user") recent = recent.slice(1); // Anthropic requires a leading user turn
+      const apiMessages = recent.map((m, i) =>
+        i === recent.length - 1
+          ? { role: m.role, content: `Current schema:\n${JSON.stringify(schema, null, 2)}\n\nRequest: ${m.content}` }
+          : { role: m.role, content: m.role === "assistant" ? stripBlocks(m.content) : m.content },
       );
-      // Give Kit the full, human-readable quote tool as context so it answers about pricing specifically.
       const agentSystem = `${AGENT_PROMPT}\n\nYou are Kit, the AI assistant for ${business.name}${schema?.trade ? `, a ${schema.trade} business` : ""}.\n\nYOUR CURRENT QUOTE TOOL:\n${humanSchemaSummary(schema)}`;
       const response = await fetch(API_URL, {
         method: "POST",
@@ -330,32 +371,63 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1500, system: agentSystem, messages: apiMessages }),
       });
       const data = await response.json();
-      const reply = data.content[0].text.trim();
+      const reply = (data?.content?.[0]?.text || "").trim();
+      logger.debug("[KitAgent] raw response:", reply.substring(0, 300));
+
+      // 1) PREFERRED: a compact structured diff. Reliable to parse + apply deterministically.
+      const blockMatch = reply.match(/SCHEMA_UPDATE_START([\s\S]*?)SCHEMA_UPDATE_END/);
+      if (blockMatch) {
+        const conversational = reply.replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/, "").trim();
+        try {
+          const raw = blockMatch[1].trim().replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+          const update = JSON.parse(raw);
+          logger.debug("[KitAgent] extracted schema change:", JSON.stringify(update));
+          const result = applyKitSchemaUpdate(schema, update);
+          if (result.changed) {
+            await applyKitSchema(result.schema, "diff");
+            finish(`✓ ${result.summary}.${conversational ? " " + conversational : ""}`);
+          } else {
+            logger.debug("[KitAgent] schema update result: no matching field");
+            finish(conversational || "I couldn't find that field to change — which one did you mean?");
+          }
+        } catch (e) {
+          logger.error("[KitAgent] schema update parse failed", e instanceof Error ? e.message : String(e));
+          finish(conversational || "I tried to make that change but something went wrong — tell me again and I'll retry.");
+        }
+        setAgentLoading(false);
+        return;
+      }
+
+      // 2) FALLBACK: a full-schema CONFIG_UPDATED rewrite (large restructures).
       if (reply.includes("CONFIG_UPDATED")) {
         const jsonStart = reply.indexOf("\n{");
         if (jsonStart !== -1) {
           try {
             const updated = JSON.parse(reply.substring(jsonStart).trim().replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
-            // Keep the single-page layout alive across Kit edits: re-derive section metadata when the
-            // schema was using it (the agent returns plain fields/pricing without it).
-            if (useNewLayout && updated && Array.isArray(updated.fields)) {
-              try { updated.sections = deriveSections(updated.fields, updated.pricing || {}); }
-              catch (e) { logger.error("[Kit] deriveSections failed", e instanceof Error ? e.message : String(e)); Alert.alert("Quote tool needs attention", "We updated your tool but couldn't refresh its layout. Reopen the quote tool to retry."); }
+            logger.debug("[KitAgent] extracted full-schema rewrite");
+            if (updated && Array.isArray(updated.fields)) {
+              await applyKitSchema(updated, "full");
+              const msg = reply.substring(0, jsonStart).replace("CONFIG_UPDATED", "").trim();
+              finish(`✓ Updated.${msg ? " " + msg : ""}`);
+            } else {
+              finish("That didn't come through as a valid change — tell me again and I'll retry.");
             }
-            setSchema(updated);
-            try { await saveBusiness({ ...business, schema: updated, kitUpdates: (business.kitUpdates || 0) + 1 }); }
-            catch (e) { logger.error("[Kit] saveBusiness failed", e instanceof Error ? e.message : String(e)); Alert.alert("Couldn't save", "Failed to save — your changes are local only until you reconnect."); }
-            const msg = reply.substring(0, jsonStart).replace("CONFIG_UPDATED", "").trim();
-            setAgentMessages([...newMessages, { role: "assistant", content: msg || "Done. Your tool is updated." }]);
-          } catch {
-            setAgentMessages([...newMessages, { role: "assistant", content: "Made the change. If something looks off just tell me." }]);
+          } catch (e) {
+            logger.error("[KitAgent] full-schema parse failed", e instanceof Error ? e.message : String(e));
+            finish("I couldn't apply that change cleanly — tell me the specific field and value and I'll fix it.");
           }
+        } else {
+          finish("I couldn't read that change — tell me the specific field and value and I'll fix it.");
         }
-      } else {
-        setAgentMessages([...newMessages, { role: "assistant", content: reply }]);
+        setAgentLoading(false);
+        return;
       }
-    } catch {
-      setAgentMessages([...newMessages, { role: "assistant", content: "Something went wrong. Give it another shot." }]);
+
+      // 3) Informational reply.
+      finish(reply);
+    } catch (e) {
+      logger.error("[KitAgent] request failed", e instanceof Error ? e.message : String(e));
+      finish("Something went wrong. Give it another shot.");
     }
     setAgentLoading(false);
   };
@@ -1167,7 +1239,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       )}
 
       {agentOpen && isAdmin && !readOnly && (
-        <KitAgentSheet primaryColor={primaryColor} messages={agentMessages} input={agentInput} loading={agentLoading} onInputChange={setAgentInput} onSend={sendAgentMessage} onClose={() => { setAgentOpen(false); setAgentMessages([]); }} />
+        <KitAgentSheet primaryColor={primaryColor} messages={agentMessages} earlierCount={kitEarlierCount} input={agentInput} loading={agentLoading} onInputChange={setAgentInput} onSend={sendAgentMessage} onClose={() => { setAgentOpen(false); setAgentMessages([]); setKitEarlierCount(0); }} />
       )}
 
       {showCelebration && !readOnly && <ConfettiOverlay message="First quote saved!" />}

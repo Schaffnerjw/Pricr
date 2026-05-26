@@ -17,9 +17,10 @@ const LAYOUT_GROUPS = [
 ];
 
 // In-quote Kit assistant sheet: answers questions, explains line items, and makes schema changes.
-export function KitAgentSheet({ primaryColor, messages, input, loading, onInputChange, onSend, onClose }: {
+export function KitAgentSheet({ primaryColor, messages, earlierCount = 0, input, loading, onInputChange, onSend, onClose }: {
   primaryColor: string;
   messages: { role: "user" | "assistant"; content: string }[];
+  earlierCount?: number; // leading messages restored from a prior session (shown under an "earlier" divider)
   input: string; loading: boolean;
   onInputChange: (v: string) => void; onSend: (text?: string) => void; onClose: () => void;
 }) {
@@ -59,9 +60,25 @@ export function KitAgentSheet({ primaryColor, messages, input, loading, onInputC
             ))}
           </View>
         )}
+        {earlierCount > 0 && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 2 }}>
+            <View style={{ flex: 1, height: 1, backgroundColor: B.border }} />
+            <Text style={{ fontSize: 11, color: B.muted, fontWeight: "700", letterSpacing: 0.5, fontFamily: "DMSans_700Bold" }}>EARLIER CONVERSATION</Text>
+            <View style={{ flex: 1, height: 1, backgroundColor: B.border }} />
+          </View>
+        )}
         {messages.map((msg, i) => (
-          <View key={i} style={[s.bubble, msg.role === "user" ? [s.bubbleUser, { backgroundColor: primaryColor }] : s.bubbleKit]}>
-            <Text style={[s.bubbleText, msg.role === "user" && { color: ON_PRIMARY }]}>{clean(msg.content)}</Text>
+          <View key={i}>
+            {earlierCount > 0 && i === earlierCount && (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 6 }}>
+                <View style={{ flex: 1, height: 1, backgroundColor: B.border }} />
+                <Text style={{ fontSize: 11, color: B.muted, fontWeight: "700", letterSpacing: 0.5, fontFamily: "DMSans_700Bold" }}>NOW</Text>
+                <View style={{ flex: 1, height: 1, backgroundColor: B.border }} />
+              </View>
+            )}
+            <View style={[s.bubble, msg.role === "user" ? [s.bubbleUser, { backgroundColor: primaryColor }] : s.bubbleKit, i < earlierCount && { opacity: 0.6 }]}>
+              <Text style={[s.bubbleText, msg.role === "user" && { color: ON_PRIMARY }]}>{clean(msg.content)}</Text>
+            </View>
           </View>
         ))}
         {loading && <View style={s.bubbleKit}><TypingDots color={B.gray2} /></View>}

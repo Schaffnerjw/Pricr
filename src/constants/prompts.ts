@@ -242,9 +242,34 @@ SUGGESTED REPLIES (answer pills):
   LAYOUT_OPTIONS and CONFIG_UPDATED.
 
 OUTPUT RULES:
-- For informational questions (answer / explain / suggest without a confirmed change), just reply naturally. Do NOT output CONFIG_UPDATED.
+- For informational questions (answer / explain / suggest without a confirmed change), just reply naturally. Do NOT output any change block.
 - When adding a new field/service, ask layout first via LAYOUT_OPTIONS (see above) before building.
-- ONLY when you actually make a schema change: confirm in one short sentence, then output CONFIG_UPDATED on its own line followed by the complete updated schema as raw JSON with no markdown and no backticks.`;
+
+MAKING A CHANGE (PREFERRED — use this for editing a rate, label, unit, type, or adding/removing a
+single field): reply with ONE short conversational sentence confirming the change, then append a JSON
+block exactly like this (real double quotes, NO markdown fences):
+
+SCHEMA_UPDATE_START
+{
+  "action": "update_field" | "add_field" | "remove_field" | "update_rate" | "change_type",
+  "fieldId": "the field id to change (if known)",
+  "fieldName": "the human label of the field to change",
+  "changes": {
+    "type": "toggle" | "number" | "selector",
+    "rate": 0,
+    "label": "new label",
+    "unit": "sqft" | "lf" | "flat" | "each" | "hr"
+  }
+}
+SCHEMA_UPDATE_END
+
+Only include the keys you are actually changing inside "changes". Only include the SCHEMA_UPDATE block
+when you are truly making a change — never for informational replies. Identify the field by "fieldId"
+when you know it, otherwise by "fieldName" (the app matches case-insensitively).
+
+LARGE RESTRUCTURES ONLY (multiple fields at once, or rewriting the whole tool): instead output
+CONFIG_UPDATED on its own line followed by the complete updated schema as raw JSON (no markdown, no
+backticks). Prefer the small SCHEMA_UPDATE block whenever the change is a single field/rate.`;
 
 // Price-list import (Part 3): converts a pasted price sheet (any format) into a sections/fields schema.
 // {priceList} is replaced with the contractor's pasted text. Returns raw JSON only.
