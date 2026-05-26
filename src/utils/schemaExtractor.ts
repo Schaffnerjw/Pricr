@@ -167,6 +167,119 @@ function rebuildCalculation(schema: QuoteSchema): void {
   schema.summaryLines = lines;
 }
 
+// ── Wizard → QuoteSchema (Part 2) ───────────────────────────────────────────────
+export interface WizardVariant { name: string; rate: number; }
+export interface WizardData {
+  trade: string;
+  methods: string[]; // any of: "sqft" | "lf" | "hour" | "flat" | "item"
+  sqft?: { primary: number; variants: WizardVariant[] };
+  lf?: { primary: number; variants: WizardVariant[] };
+  hour?: { rate: number; minHours?: number };
+  flat?: { starting: number };
+  item?: { items: { name: string; price: number }[] };
+  addOns: { name: string; price: number; perUnit: boolean }[];
+  depositPercent: number;
+}
+
+// Builds a per-unit "quantity" field, optionally driven by a material/variant selector that supplies
+// the rate per option (the deck case: square footage × selected material rate). Returns the calc
+// term + a matching summary line.
+function buildUnitGroup(next: QuoteSchema, ids: Set<string>, label: string, unit: FieldUnit, primary: number, variants: WizardVariant[]): { term: string; line: { label: string; value: string } } {
+  const qtyId = slugId(label, ids);
+  next.fields.push({ id: qtyId, label, type: "number", unit, group: "dimensions", placeholder: `Enter ${label.toLowerCase()}` });
+  const real = (variants || []).filter(v => v.name && typeof v.rate === "number");
+  if (real.length === 0) {
+    next.pricing[`${qtyId}Rate`] = primary || 0;
+    const term = `(${qtyId} || 0) * ${qtyId}Rate`;
+    return { term, line: { label: `${label} ({${qtyId}})`, value: term } };
+  }
+  // Material selector → per-option rate keys, calc picks the rate by selected option.
+  const selId = slugId("Material", ids);
+  const optionRateKeys: { opt: string; key: string }[] = [];
+  for (const v of real) {
+    const key = slugId(v.name, ids) + "Rate"; // unique pricing key per variant
+    next.pricing[key] = v.rate;
+    optionRateKeys.push({ opt: v.name, key });
+  }
+  next.fields.push({ id: selId, label: "Material", type: "selector", unit, group: "materials", options: real.map(v => v.name) });
+  const ternary = optionRateKeys.map(o => `${selId} == ${JSON.stringify(o.opt)} ? ${o.key}`).join(" : ") + ` : ${optionRateKeys[0].key}`;
+  const term = `(${qtyId} || 0) * (${ternary})`;
+  return { term, line: { label: `${label} ({${qtyId}})`, value: term } };
+}
+
+export function quoteSchemaFromWizard(data: WizardData): QuoteSchema {
+  const schema: QuoteSchema = { trade: data.trade || "", fields: [], pricing: { depositPercent: data.depositPercent || 0, taxRate: 0, minimumCharge: 0 }, addOns: [], calculation: "", summaryLines: [] };
+  const ids = new Set<string>();
+  const terms: string[] = [];
+  const lines: { label: string; value: string }[] = [];
+  const addField = (label: string, unit: FieldUnit, group: FieldGroup, rate: number) => {
+    const id = slugId(label, ids);
+    schema.fields.push({ id, label, type: "number", unit, group, placeholder: `Enter ${label.toLowerCase()}` });
+    schema.pricing[`${id}Rate`] = rate || 0;
+    const term = `(${id} || 0) * ${id}Rate`;
+    terms.push(term); lines.push({ label: `${label} ({${id}})`, value: term });
+  };
+  if (data.methods.includes("sqft") && data.sqft) { const g = buildUnitGroup(schema, ids, "Square Footage", "sqft", data.sqft.primary, data.sqft.variants); terms.push(g.term); lines.push(g.line); }
+  if (data.methods.includes("lf") && data.lf) { const g = buildUnitGroup(schema, ids, "Linear Feet", "lf", data.lf.primary, data.lf.variants); terms.push(g.term); lines.push(g.line); }
+  if (data.methods.includes("hour") && data.hour) {
+    addField("Hours", "hr", "dimensions", data.hour.rate);
+    if (data.hour.minHours && data.hour.rate) schema.pricing.minimumCharge = data.hour.minHours * data.hour.rate;
+  }
+  if (data.methods.includes("flat") && data.flat) addField("Quantity", "each", "dimensions", data.flat.starting);
+  if (data.methods.includes("item") && data.item) {
+    for (const it of data.item.items || []) { if (it.name) addField(it.name, "each", "extras", it.price); }
+  }
+  const addOnIds = new Set<string>();
+  for (const a of data.addOns || []) {
+    if (!a.name) continue;
+    if (a.perUnit) addField(a.name, "each", "extras", a.price);
+    else schema.addOns.push({ id: slugId(a.name, addOnIds), label: a.name, price: a.price || 0 });
+  }
+  schema.calculation = terms.length ? terms.join(" + ") : "0";
+  schema.summaryLines = lines;
+  return schema;
+}
+
+// ── Imported price-list schema → QuoteSchema (Part 3) ───────────────────────────
+const IMPORT_UNIT_MAP: Record<string, FieldUnit> = {
+  "sq ft": "sqft", "sqft": "sqft", "square foot": "sqft", "square feet": "sqft", "sf": "sqft",
+  "lf": "lf", "linear foot": "lf", "linear feet": "lf", "ln ft": "lf",
+  "hour": "hr", "hr": "hr", "hourly": "hr", "each": "each", "item": "each", "unit": "each",
+  "room": "room", "load": "load", "ton": "ton", "vehicle": "vehicle",
+};
+function coerceImportUnit(u: any): FieldUnit { const k = String(u || "").toLowerCase().trim(); return IMPORT_UNIT_MAP[k] || coerceUnit(k); }
+
+// Converts the AI's {trade, sections, addOns, depositPercent} into the app's flat QuoteSchema.
+// Section titles are flattened into the app's fixed field groups (the app renders by group).
+export function quoteSchemaFromImport(raw: any): QuoteSchema | null {
+  if (!raw || !Array.isArray(raw.sections)) return null;
+  const schema: QuoteSchema = { trade: String(raw.trade || "").trim(), fields: [], pricing: { depositPercent: Number(raw.depositPercent) || 0, taxRate: 0, minimumCharge: 0 }, addOns: [], calculation: "", summaryLines: [] };
+  const ids = new Set<string>();
+  for (const sec of raw.sections) {
+    for (const f of (sec.fields || [])) {
+      if (!f || !f.label) continue;
+      const rawType = String(f.type || "number").toLowerCase();
+      const type: SchemaField["type"] = rawType === "toggle" || rawType === "flat" ? "toggle" : rawType === "select" || rawType === "selector" ? "selector" : "number";
+      const unit = coerceImportUnit(f.unit);
+      const id = slugId(f.label, ids);
+      const field: SchemaField = { id, label: f.label, type, unit, group: type === "toggle" ? "fees" : type === "selector" ? "materials" : (GROUP_FOR_UNIT[unit] || "dimensions") };
+      if (type === "selector" && Array.isArray(f.options) && f.options.length) field.options = f.options.map((o: any) => String(o));
+      if (type === "number") field.placeholder = `Enter ${f.label.toLowerCase()}`;
+      schema.fields.push(field);
+      if ((type === "number" || type === "toggle") && typeof f.rate === "number") schema.pricing[`${id}Rate`] = f.rate;
+    }
+  }
+  const addOnIds = new Set<string>();
+  for (const a of (raw.addOns || [])) {
+    if (!a || !a.label) continue;
+    schema.addOns.push({ id: slugId(a.label, addOnIds), label: a.label, price: Number(a.price) || 0 });
+  }
+  // Validate: must have at least one section with at least one field.
+  if (schema.fields.length === 0) return null;
+  rebuildCalculation(schema);
+  return schema;
+}
+
 // Short human confirmations for the chat, e.g. ["Added Pressure Treated — $20/sq ft", "Deposit set to 50%"].
 export function summarizeUpdate(u: SchemaUpdate): string[] {
   const out: string[] = [];

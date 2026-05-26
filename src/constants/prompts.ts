@@ -246,6 +246,31 @@ OUTPUT RULES:
 - When adding a new field/service, ask layout first via LAYOUT_OPTIONS (see above) before building.
 - ONLY when you actually make a schema change: confirm in one short sentence, then output CONFIG_UPDATED on its own line followed by the complete updated schema as raw JSON with no markdown and no backticks.`;
 
+// Price-list import (Part 3): converts a pasted price sheet (any format) into a sections/fields schema.
+// {priceList} is replaced with the contractor's pasted text. Returns raw JSON only.
+export const PRICE_LIST_IMPORT_PROMPT = `You are converting a contractor's price list into a quote tool schema.
+
+Convert the price list into a JSON schema. Rules:
+- Capture EVERY product, service, and price mentioned
+- Group related items into logical sections
+- For per-unit pricing (sq ft, lf, hour, each): type 'number', include unit and rate
+- For flat-rate items: type 'toggle' with the flat price as rate
+- For items with size/color/material variants: type 'select' with options array
+- Use EXACT prices from the list — never change or approximate numbers
+- If you see a table, capture every row
+- section titles should match the contractor's own category names
+
+Return ONLY valid JSON, no markdown fences, no explanation text:
+{
+  "trade": "detected trade type",
+  "businessName": "business name if found or empty string",
+  "sections": [
+    { "id": "section_id", "title": "Section Name", "fields": [ { "id": "field_id", "label": "Field Label", "type": "number", "unit": "sq ft", "rate": 20, "hint": "$20 per sq ft", "options": [] } ] }
+  ],
+  "addOns": [ { "id": "addon_id", "label": "Add-on name", "price": 200, "type": "flat" } ],
+  "depositPercent": 50
+}`;
+
 // Real-time incremental extraction: run after EACH user message during onboarding. Pulls out only
 // the pricing/service facts EXPLICITLY stated in that one message, as a structured SchemaUpdate.
 export const SCHEMA_EXTRACTION_PROMPT = `You extract structured pricing data from a single message in a contractor's quote-tool setup conversation.

@@ -1,128 +1,205 @@
 import { Feather } from "@expo/vector-icons";
-import { useState } from "react";
-import { Image, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Image, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { DemoPickerModal } from "../components/DemoPickerModal";
-import { MasterAnalytics } from "../components/MasterAnalytics";
-import { B } from "../constants/brand";
-import { getBusiness, getQuotes, getUsers, saveBusiness } from "../storage";
+import { B, MASTER_CODE, SIGN_BASE } from "../constants/brand";
 import { s } from "../styles";
-import { Business, DemoBusiness, User } from "../types";
+import { DemoBusiness } from "../types";
 import { formatDate } from "../utils/helpers";
 
+// Cross-platform alert (web prompt() can't show multi-line nicely, so use window.alert there).
+const notify = (title: string, msg: string) => { if (Platform.OS === "web") window.alert(`${title}\n\n${msg}`); else Alert.alert(title, msg); };
+const confirmAction = (title: string, msg: string, onYes: () => void) => {
+  if (Platform.OS === "web") { if (window.confirm(`${title}\n\n${msg}`)) onYes(); }
+  else Alert.alert(title, msg, [{ text: "Cancel", style: "cancel" }, { text: "Confirm", style: "destructive", onPress: onYes }]);
+};
+
+// All cross-tenant reads/writes go through the Railway proxy (service role) — never the anon key.
+async function adminFetch(action: string, body?: any): Promise<any> {
+  const res = await fetch(`${SIGN_BASE}/admin/${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-master-code": MASTER_CODE },
+    body: JSON.stringify(body || {}),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json?.error || "Request failed");
+  return json;
+}
+
+interface SearchResult { code: string; name: string; trade: string; username: string; quoteCount: number; lastActive: number | null; schemaStatus: string; suspended: boolean; }
+interface BizDetail { code: string; name: string; schema: any; schemaStatus: string; members: any[]; recentQuotes: any[]; suspended: boolean; }
+interface Stats { businesses: number; quotes: number; signed: number; blankSchemas: number; zeroQuoteBusinesses: number; }
+
 export function MasterDashboard({ onSignOut, onStartDemo }: { onSignOut: () => void; onStartDemo: (demo: DemoBusiness) => void }) {
-  const [searchCode, setSearchCode] = useState("");
-  const [foundBiz, setFoundBiz] = useState<Business | null>(null);
-  const [searchError, setSearchError] = useState("");
-  const [viewingBiz, setViewingBiz] = useState<Business | null>(null);
-  const [viewingUsers, setViewingUsers] = useState<User[]>([]);
-  const [viewingQuotes, setViewingQuotes] = useState<any[]>([]);
   const [showDemoPicker, setShowDemoPicker] = useState(false);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [detail, setDetail] = useState<BizDetail | null>(null);
+  const [schemaOpen, setSchemaOpen] = useState(false);
+  const [notifyMsg, setNotifyMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
-  const searchBusiness = async () => {
-    if (!searchCode.trim()) return;
+  useEffect(() => { loadStats(); }, []);
+  const loadStats = async () => { try { setStats(await adminFetch("stats")); } catch (e) { setErr(e instanceof Error ? e.message : "stats failed"); } };
+
+  const ping = async () => {
     try {
-      const biz = await getBusiness(searchCode.toUpperCase());
-      if (!biz) { setSearchError("No business found with that code."); setFoundBiz(null); return; }
-      setFoundBiz(biz);
-      setSearchError("");
-    } catch { setSearchError("Something went wrong."); }
+      const t0 = Date.now();
+      const r = await fetch(`${SIGN_BASE}/health`);
+      await r.json();
+      setPingMs(Date.now() - t0);
+    } catch { setPingMs(-1); }
   };
 
-  const viewBusiness = async (biz: Business) => {
+  const search = async () => {
+    setSearching(true); setErr("");
+    try { setResults((await adminFetch("search", { query })).results || []); }
+    catch (e) { setErr(e instanceof Error ? e.message : "search failed"); }
+    setSearching(false);
+  };
+
+  const openBusiness = async (code: string) => {
+    setBusy(true); setErr("");
+    try { setDetail(await adminFetch("business", { code })); setSchemaOpen(false); }
+    catch (e) { setErr(e instanceof Error ? e.message : "load failed"); }
+    setBusy(false);
+  };
+
+  const resetPassword = async (code: string, username?: string) => {
+    try { const r = await adminFetch("reset-password", { code, username }); notify("Temp password generated", `Username: ${r.username}\nTemporary password: ${r.tempPassword}\n\nShare this with them. They can change it after signing in.`); }
+    catch (e) { notify("Couldn't reset", e instanceof Error ? e.message : "failed"); }
+  };
+
+  const businessAction = async (code: string, action: string, after?: () => void) => {
+    setBusy(true);
+    try { await adminFetch("business-action", { code, action }); after?.(); }
+    catch (e) { notify("Action failed", e instanceof Error ? e.message : "failed"); }
+    setBusy(false);
+  };
+
+  const userAction = async (code: string, userId: string, action: string, role?: string) => {
+    setBusy(true);
+    try { await adminFetch("user", { code, userId, action, role }); await openBusiness(code); }
+    catch (e) { notify("Action failed", e instanceof Error ? e.message : "failed"); }
+    setBusy(false);
+  };
+
+  const sendNotification = async (code: string) => {
+    if (!notifyMsg.trim()) return;
+    try { const r = await adminFetch("notify", { code, message: notifyMsg.trim() }); setNotifyMsg(""); notify("Sent", `Message sent to ${r.sentTo}`); }
+    catch (e) { notify("Couldn't send", e instanceof Error ? e.message : "failed"); }
+  };
+
+  const exportCsv = async () => {
     try {
-      setViewingUsers(await getUsers(biz.code));
-      setViewingQuotes(await getQuotes(biz.code));
-      setViewingBiz(biz);
-    } catch { }
+      const res = await fetch(`${SIGN_BASE}/admin/export`, { method: "POST", headers: { "x-master-code": MASTER_CODE } });
+      const csv = await res.text();
+      if (Platform.OS === "web") {
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = "pricr-businesses.csv"; a.click(); URL.revokeObjectURL(url);
+      } else { notify("Export ready", "CSV export downloads on the web app."); }
+    } catch (e) { notify("Export failed", e instanceof Error ? e.message : "failed"); }
   };
 
-  const resetPin = async (newPin: string) => {
-    if (!viewingBiz) return;
-    const updated = { ...viewingBiz, adminPin: newPin };
-    await saveBusiness(updated);
-    setViewingBiz(updated);
-    setFoundBiz(updated);
-  };
-
-  if (viewingBiz) {
+  // ── BUSINESS DETAIL ──
+  if (detail) {
+    const d = detail;
+    const statusColor = d.schemaStatus === "ok" ? B.green : d.schemaStatus === "blank" || d.schemaStatus === "placeholder" ? B.red : "#F59E0B";
     return (
       <SafeAreaView style={s.container}>
         <View style={s.navBar}>
-          <TouchableOpacity onPress={() => setViewingBiz(null)} style={[s.navBack, { flexDirection: "row", alignItems: "center", gap: 2 }]}>
-            <Feather name="chevron-left" size={18} color={B.blue} />
-            <Text style={s.navBackText}>Back</Text>
+          <TouchableOpacity onPress={() => setDetail(null)} style={[s.navBack, { flexDirection: "row", alignItems: "center", gap: 2 }]}>
+            <Feather name="chevron-left" size={18} color={B.blue} /><Text style={s.navBackText}>Back</Text>
           </TouchableOpacity>
-          <Text style={s.navTitle}>{viewingBiz.name}</Text>
+          <Text style={s.navTitle}>{d.name}</Text>
           <View style={{ width: 60 }} />
         </View>
         <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
           <View style={s.infoCard}>
             <Text style={s.infoLabel}>BUSINESS ID</Text>
-            <Text style={[s.infoCode, { color: viewingBiz.brand?.primaryColor || B.cyan }]}>{viewingBiz.code}</Text>
-            <Text style={s.infoLabel}>OWNER</Text>
-            <Text style={[s.configValue, { marginTop: 2 }]}>{viewingBiz.ownerName}</Text>
-            <Text style={s.infoLabel}>CREATED</Text>
-            <Text style={[s.configValue, { marginTop: 2 }]}>{formatDate(viewingBiz.createdAt)}</Text>
-            <Text style={s.infoLabel}>BRAND COLOR</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 }}>
-              <View style={{ width: 20, height: 20, borderRadius: 4, backgroundColor: viewingBiz.brand?.primaryColor || B.blue }} />
-              <Text style={s.configValue}>{viewingBiz.brand?.primaryColor || "#2979FF"}</Text>
+            <Text style={[s.infoCode, { color: B.cyan }]}>{d.code}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 }}>
+              <View style={{ backgroundColor: statusColor + "22", borderColor: statusColor, borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ color: statusColor, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>SCHEMA: {d.schemaStatus.toUpperCase()}</Text>
+              </View>
+              {d.suspended && <View style={{ backgroundColor: B.red + "22", borderColor: B.red, borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}><Text style={{ color: B.red, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>SUSPENDED</Text></View>}
             </View>
+            <Text style={[s.configValue, { marginTop: 8 }]}>Trade: {d.schema?.trade || "Not configured"}</Text>
           </View>
 
-          <Text style={s.sectionTitle}>TRADE CONFIG</Text>
-          {viewingBiz.schema ? (
-            <View style={s.configCard}>
-              <Text style={s.configLabel}>TRADE</Text>
-              <Text style={s.configValue}>{viewingBiz.schema.trade}</Text>
-              <View style={s.sep} />
-              <Text style={s.configLabel}>FIELDS</Text>
-              <Text style={s.configValue}>{viewingBiz.schema.fields?.length} custom inputs</Text>
-              <View style={s.sep} />
-              <Text style={s.configLabel}>ADD-ONS</Text>
-              <Text style={s.configValue}>{viewingBiz.schema.addOns?.map((a: any) => a.label).join(", ") || "None"}</Text>
-            </View>
-          ) : <Text style={s.emptyText}>No schema configured yet.</Text>}
+          {/* Schema debug */}
+          <TouchableOpacity onPress={() => setSchemaOpen(o => !o)} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <Text style={s.sectionTitle}>SCHEMA (DEBUG)</Text>
+            <Feather name={schemaOpen ? "chevron-up" : "chevron-down"} size={18} color={B.gray2} />
+          </TouchableOpacity>
+          {schemaOpen && (
+            <ScrollView horizontal style={{ maxHeight: 240, backgroundColor: B.card, borderRadius: 12, borderWidth: 1, borderColor: B.border, padding: 12 }}>
+              <Text style={{ color: B.gray2, fontSize: 11, fontFamily: "DMSans_400Regular" }}>{JSON.stringify(d.schema, null, 2)}</Text>
+            </ScrollView>
+          )}
 
-          <Text style={s.sectionTitle}>TEAM ({viewingUsers.length})</Text>
-          {viewingUsers.map(u => (
-            <View key={u.id} style={s.userCard}>
-              <View style={[s.userAvatar, { backgroundColor: viewingBiz.brand?.primaryColor || B.blue }]}>
-                <Text style={s.userAvatarText}>{u.name.charAt(0).toUpperCase()}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.userName}>{u.name}</Text>
+          {/* Users */}
+          <Text style={s.sectionTitle}>USERS ({d.members.length})</Text>
+          {d.members.map((u: any) => (
+            <View key={u.id} style={[s.userCard, { flexWrap: "wrap" }]}>
+              <View style={[s.userAvatar, { backgroundColor: B.blue }]}><Text style={s.userAvatarText}>{(u.name || "?").charAt(0).toUpperCase()}</Text></View>
+              <View style={{ flex: 1, minWidth: 120 }}>
+                <Text style={s.userName}>{u.name} {u.username ? `· ${u.username}` : ""}</Text>
                 <Text style={s.userRole}>{u.role}</Text>
               </View>
-            </View>
-          ))}
-
-          <Text style={s.sectionTitle}>RECENT QUOTES ({viewingQuotes.length})</Text>
-          {viewingQuotes.slice(0, 5).map(q => (
-            <View key={q.id} style={s.historyCard}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={s.historyName}>{q.customerName || "No name"}</Text>
-                <Text style={[s.historyTotal, { color: viewingBiz.brand?.primaryColor || B.blue }]}>${q.total?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</Text>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                {u.username && <TouchableOpacity onPress={() => resetPassword(d.code, u.username)}><Text style={{ color: B.blue, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>Reset PW</Text></TouchableOpacity>}
+                {u.role !== "admin" && <TouchableOpacity onPress={() => userAction(d.code, u.id, "role", u.role === "rep" ? "admin" : "rep")}><Text style={{ color: B.blue, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>{u.role === "rep" ? "Make admin" : "Make rep"}</Text></TouchableOpacity>}
+                {u.role !== "admin" && <TouchableOpacity onPress={() => confirmAction("Remove user", `Remove ${u.name}?`, () => userAction(d.code, u.id, "remove"))}><Text style={{ color: B.red, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>Remove</Text></TouchableOpacity>}
               </View>
-              <Text style={s.historyMeta}>{formatDate(q.timestamp)} · {q.repName}</Text>
             </View>
           ))}
 
+          {/* Recent quotes */}
+          <Text style={s.sectionTitle}>RECENT QUOTES ({d.recentQuotes.length})</Text>
+          {d.recentQuotes.map((q: any, i: number) => (
+            <View key={i} style={s.historyCard}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={s.historyName}>{q.customer_name || "No name"}</Text>
+                <Text style={[s.historyTotal, { color: B.blue }]}>${Number(q.total || 0).toLocaleString()}</Text>
+              </View>
+              <Text style={s.historyMeta}>{formatDate(new Date(q.created_at).getTime())}{q.signed_at ? " · signed" : ""}</Text>
+            </View>
+          ))}
+
+          {/* Actions */}
           <View style={s.masterActionCard}>
-            <Text style={s.sectionTitle}>SUPPORT ACTIONS</Text>
-            <TouchableOpacity style={[s.btn, { marginTop: 12, backgroundColor: B.red }]} onPress={() => {
-              const newPin = Math.floor(1000 + Math.random() * 9000).toString();
-              resetPin(newPin);
-              alert(`PIN reset to: ${newPin}\nShare this with the admin.`);
-            }}>
-              <Text style={s.btnText}>Reset Admin PIN</Text>
+            <Text style={s.sectionTitle}>ACTIONS</Text>
+            <TouchableOpacity style={[s.btn, { marginTop: 12 }]} onPress={() => resetPassword(d.code)}>
+              <Text style={s.btnText}>Reset Admin Password</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={[s.btnSecondary, { marginTop: 10, borderColor: "#F59E0B" }]} onPress={() => confirmAction("Force rebuild", "Clear this schema so they re-onboard? Their pricing will be wiped.", () => businessAction(d.code, "clear-schema", () => openBusiness(d.code)))}>
+              <Text style={[s.btnSecondaryText, { color: "#F59E0B" }]}>Force Schema Rebuild</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btnSecondary, { marginTop: 10 }]} onPress={() => businessAction(d.code, d.suspended ? "unsuspend" : "suspend", () => openBusiness(d.code))}>
+              <Text style={s.btnSecondaryText}>{d.suspended ? "Unsuspend Business" : "Suspend Business"}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btnSecondary, { marginTop: 10, borderColor: B.red }]} onPress={() => confirmAction("Delete business", `Permanently delete ${d.name} and all its quotes?`, () => businessAction(d.code, "delete", () => setDetail(null)))}>
+              <Text style={[s.btnSecondaryText, { color: B.red }]}>Delete Business</Text>
+            </TouchableOpacity>
+            <View style={{ marginTop: 14, gap: 8 }}>
+              <Text style={s.formLabel}>Send notification</Text>
+              <TextInput style={[s.input, { minHeight: 60, textAlignVertical: "top" }]} value={notifyMsg} onChangeText={setNotifyMsg} placeholder="Message to send to this business…" placeholderTextColor={B.gray3} multiline />
+              <TouchableOpacity style={[s.btnSecondary, { borderColor: B.blue }]} onPress={() => sendNotification(d.code)}><Text style={[s.btnSecondaryText, { color: B.blue }]}>Send</Text></TouchableOpacity>
+            </View>
           </View>
+          {busy && <ActivityIndicator color={B.blue} />}
         </ScrollView>
       </SafeAreaView>
     );
   }
 
+  // ── HOME ──
   return (
     <SafeAreaView style={s.container}>
       <View style={s.navBar}>
@@ -137,58 +214,65 @@ export function MasterDashboard({ onSignOut, onStartDemo }: { onSignOut: () => v
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
-        <View style={s.infoCard}>
-          <Text style={[s.h2, { marginBottom: 4 }]}>Master Dashboard</Text>
-          <Text style={s.body}>Search any business by their Business ID to view their account, schema, team, and quotes.</Text>
-        </View>
-
         <TouchableOpacity style={[s.btn, { backgroundColor: B.cyan }]} onPress={() => setShowDemoPicker(true)}>
           <Text style={[s.btnText, { color: B.midnight }]}>Demo Mode</Text>
         </TouchableOpacity>
 
-        <View style={{ gap: 10 }}>
-          <Text style={s.formLabel}>Business ID</Text>
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <TextInput
-              style={[s.input, { flex: 1 }]}
-              placeholder="Enter Business ID"
-              placeholderTextColor={B.gray3}
-              value={searchCode}
-              onChangeText={v => setSearchCode(v.toUpperCase())}
-              autoCapitalize="characters"
-            />
-            <TouchableOpacity style={[s.btn, { paddingHorizontal: 20 }]} onPress={searchBusiness}>
-              <Text style={s.btnText}>Search</Text>
-            </TouchableOpacity>
-          </View>
-          {searchError ? <Text style={{ color: B.red, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{searchError}</Text> : null}
+        {/* PLATFORM HEALTH */}
+        <Text style={s.sectionTitle}>PLATFORM HEALTH</Text>
+        <View style={s.infoCard}>
+          {stats ? (
+            <View style={{ gap: 6 }}>
+              <Stat label="Total businesses" value={stats.businesses} />
+              <Stat label="Total quotes" value={stats.quotes} />
+              <Stat label="Signed quotes" value={stats.signed} />
+              <Stat label="Blank / broken schemas" value={stats.blankSchemas} warn={stats.blankSchemas > 0} />
+              <Stat label="Businesses with 0 quotes" value={stats.zeroQuoteBusinesses} />
+            </View>
+          ) : <Text style={s.emptyText}>{err || "Loading platform stats…"}</Text>}
+          <TouchableOpacity style={[s.btnSecondary, { marginTop: 12, borderColor: B.blue }]} onPress={ping}>
+            <Text style={[s.btnSecondaryText, { color: B.blue }]}>{pingMs == null ? "Ping proxy" : pingMs < 0 ? "Proxy unreachable" : `Proxy OK · ${pingMs}ms`}</Text>
+          </TouchableOpacity>
         </View>
 
-        {foundBiz && (
-          <TouchableOpacity style={s.historyCard} onPress={() => viewBusiness(foundBiz)}>
+        {/* BUSINESS MANAGEMENT */}
+        <Text style={s.sectionTitle}>BUSINESS MANAGEMENT</Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <TextInput style={[s.input, { flex: 1 }]} placeholder="Search name, username, or ID" placeholderTextColor={B.gray3} value={query} onChangeText={setQuery} onSubmitEditing={search} autoCapitalize="none" />
+          <TouchableOpacity style={[s.btn, { paddingHorizontal: 20, justifyContent: "center" }]} onPress={search}>
+            {searching ? <ActivityIndicator color={B.white} /> : <Text style={s.btnText}>Search</Text>}
+          </TouchableOpacity>
+        </View>
+        {results.map(r => (
+          <TouchableOpacity key={r.code} style={s.historyCard} onPress={() => openBusiness(r.code)}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <View>
-                <Text style={s.historyName}>{foundBiz.name}</Text>
-                <Text style={s.historyMeta}>{foundBiz.ownerName} · {foundBiz.code}</Text>
-                <Text style={[s.historyMeta, { marginTop: 2 }]}>Trade: {foundBiz.schema?.trade || "Not configured"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.historyName}>{r.name}{r.suspended ? " (suspended)" : ""}</Text>
+                <Text style={s.historyMeta}>{r.code} · {r.trade || "no trade"} · {r.quoteCount} quotes</Text>
+                <Text style={[s.historyMeta, { marginTop: 2 }]}>{r.lastActive ? `Last active ${formatDate(r.lastActive)}` : "No activity"} · schema: {r.schemaStatus}</Text>
               </View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <View style={{ width: 16, height: 16, borderRadius: 4, backgroundColor: foundBiz.brand?.primaryColor || B.blue }} />
-                <Text style={{ color: B.blue, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>View</Text>
-                <Feather name="chevron-right" size={16} color={B.blue} />
-              </View>
+              <Feather name="chevron-right" size={18} color={B.blue} />
             </View>
           </TouchableOpacity>
-        )}
+        ))}
 
-        <MasterAnalytics />
+        {/* TOOLS */}
+        <Text style={s.sectionTitle}>TOOLS</Text>
+        <TouchableOpacity style={s.btnSecondary} onPress={exportCsv}>
+          <Text style={s.btnSecondaryText}>Export All Businesses (CSV)</Text>
+        </TouchableOpacity>
       </ScrollView>
 
-      <DemoPickerModal
-        visible={showDemoPicker}
-        onClose={() => setShowDemoPicker(false)}
-        onSelect={demo => { setShowDemoPicker(false); onStartDemo(demo); }}
-      />
+      <DemoPickerModal visible={showDemoPicker} onClose={() => setShowDemoPicker(false)} onSelect={demo => { setShowDemoPicker(false); onStartDemo(demo); }} />
     </SafeAreaView>
+  );
+}
+
+function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
+  return (
+    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+      <Text style={{ color: B.gray2, fontSize: 14, fontFamily: "DMSans_400Regular" }}>{label}</Text>
+      <Text style={{ color: warn ? B.red : B.white, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{value}</Text>
+    </View>
   );
 }

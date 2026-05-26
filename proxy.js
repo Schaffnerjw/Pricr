@@ -872,6 +872,157 @@ async function handleCertificate(res, token) {
   }
 }
 
+// ── Super-admin cross-tenant endpoints (service role; guarded by the master code) ──
+// These are the ONLY way the app reads/writes across tenants — the app's anon key is RLS-limited.
+const MASTER_CODE = process.env.MASTER_CODE || 'CB101919';
+const adminAuthed = (req) => ((req.headers['x-master-code'] || '') === MASTER_CODE);
+const parseJsonBody = (buf) => { try { return JSON.parse(buf.toString() || '{}'); } catch (_) { return {}; } };
+
+async function fetchAllBusinesses() {
+  const r = await supabaseRequest('GET', '/rest/v1/businesses?select=id,code,name,config,created_at');
+  return Array.isArray(r.json) ? r.json : [];
+}
+async function fetchAllQuotesMeta() {
+  const r = await supabaseRequest('GET', '/rest/v1/quotes?select=business_id,signed_at,status,created_at');
+  return Array.isArray(r.json) ? r.json : [];
+}
+// Classify a business's schema for the platform-health view.
+function schemaStatus(config) {
+  const sc = config && config.schema;
+  if (!sc || !Array.isArray(sc.fields) || sc.fields.length === 0) return 'blank';
+  const pricing = sc.pricing || {};
+  const jobSize = sc.fields.some((f) => /\bjob size\b/i.test(f.label || '')) && Object.values(pricing).some((v) => v === 100);
+  if (jobSize) return 'placeholder';
+  if (!(sc.trade || '').trim()) return 'no-trade';
+  return 'ok';
+}
+
+async function handleAdminStats(res) {
+  const [biz, quotes] = await Promise.all([fetchAllBusinesses(), fetchAllQuotesMeta()]);
+  const cnt = {};
+  quotes.forEach((q) => { cnt[q.business_id] = (cnt[q.business_id] || 0) + 1; });
+  const signed = quotes.filter((q) => q.signed_at || q.status === 'accepted').length;
+  const blank = biz.filter((b) => ['blank', 'placeholder', 'no-trade'].includes(schemaStatus(b.config))).length;
+  const zeroQuote = biz.filter((b) => !cnt[b.id]).length;
+  return sendJson(res, 200, { businesses: biz.length, quotes: quotes.length, signed, blankSchemas: blank, zeroQuoteBusinesses: zeroQuote });
+}
+
+async function handleAdminSearch(res, body) {
+  const q = (parseJsonBody(body).query || '').toString().trim().toLowerCase();
+  const [biz, quotes] = await Promise.all([fetchAllBusinesses(), fetchAllQuotesMeta()]);
+  const cnt = {}, last = {};
+  quotes.forEach((x) => { cnt[x.business_id] = (cnt[x.business_id] || 0) + 1; const t = new Date(x.created_at).getTime(); if (!last[x.business_id] || t > last[x.business_id]) last[x.business_id] = t; });
+  const results = biz.filter((b) => {
+    if (!q) return true;
+    const c = b.config || {};
+    return (b.name || '').toLowerCase().includes(q) || (b.code || '').toLowerCase().includes(q) || (c.username || '').toLowerCase().includes(q);
+  }).slice(0, 50).map((b) => ({
+    code: b.code, name: b.name, trade: (b.config && b.config.schema && b.config.schema.trade) || '',
+    username: (b.config && b.config.username) || '', quoteCount: cnt[b.id] || 0, lastActive: last[b.id] || null,
+    schemaStatus: schemaStatus(b.config), suspended: !!(b.config && b.config.suspended),
+  }));
+  return sendJson(res, 200, { results });
+}
+
+async function handleAdminBusiness(res, body) {
+  const code = (parseJsonBody(body).code || '').toString().toUpperCase();
+  const r = await supabaseRequest('GET', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}&select=*`);
+  const b = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+  if (!b) return sendJson(res, 404, { error: 'Business not found' });
+  const qr = await supabaseRequest('GET', `/rest/v1/quotes?business_id=eq.${encodeURIComponent(b.id)}&select=customer_name,total,status,signed_at,created_at&order=created_at.desc&limit=10`);
+  const config = b.config || {};
+  return sendJson(res, 200, { code: b.code, name: b.name, schema: config.schema || null, schemaStatus: schemaStatus(config), members: config.members || [], recentQuotes: Array.isArray(qr.json) ? qr.json : [], suspended: !!config.suspended });
+}
+
+async function handleAdminResetPassword(res, body) {
+  const p = parseJsonBody(body); const code = (p.code || '').toString().toUpperCase();
+  const r = await supabaseRequest('GET', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}&select=*`);
+  const b = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+  if (!b) return sendJson(res, 404, { error: 'Business not found' });
+  const config = b.config || {};
+  const username = (p.username || config.username || '').toString().toLowerCase();
+  if (!username) return sendJson(res, 400, { error: 'No username on file for this business' });
+  const temp = 'pricr-' + Math.random().toString(36).slice(2, 8);
+  // Hash matches the app's hashPin: SHA-256 of `pricr:<username-lowercased>:<password>`.
+  const hash = crypto.createHash('sha256').update(`pricr:${username}:${temp}`).digest('hex');
+  const isAdmin = (config.username || '').toLowerCase() === username;
+  const newConfig = Object.assign({}, config, isAdmin ? { adminPinHash: hash, adminPin: '' } : {});
+  if (Array.isArray(newConfig.members)) newConfig.members = newConfig.members.map((m) => ((m.username || '').toLowerCase() === username ? Object.assign({}, m, { pinHash: hash }) : m));
+  const upd = await supabaseRequest('PATCH', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}`, { config: newConfig });
+  if (!(upd.status >= 200 && upd.status < 300)) return sendJson(res, 500, { error: 'Could not reset password' });
+  return sendJson(res, 200, { ok: true, tempPassword: temp, username });
+}
+
+async function handleAdminExport(res) {
+  const [biz, quotes] = await Promise.all([fetchAllBusinesses(), fetchAllQuotesMeta()]);
+  const cnt = {}, signed = {};
+  quotes.forEach((q) => { cnt[q.business_id] = (cnt[q.business_id] || 0) + 1; if (q.signed_at || q.status === 'accepted') signed[q.business_id] = (signed[q.business_id] || 0) + 1; });
+  const cell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const rows = [['Code', 'Name', 'Trade', 'Quotes', 'Signed', 'Schema', 'Created']];
+  biz.forEach((b) => rows.push([b.code, b.name, (b.config && b.config.schema && b.config.schema.trade) || '', cnt[b.id] || 0, signed[b.id] || 0, schemaStatus(b.config), b.created_at]));
+  const csv = rows.map((r) => r.map(cell).join(',')).join('\n');
+  res.writeHead(200, { 'Content-Type': 'text/csv', 'Access-Control-Allow-Origin': '*', 'Content-Disposition': 'attachment; filename="pricr-businesses.csv"' });
+  res.end(csv);
+}
+
+async function handleAdminNotify(res, body) {
+  const p = parseJsonBody(body); const code = (p.code || '').toString().toUpperCase();
+  const r = await supabaseRequest('GET', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}&select=name,config`);
+  const b = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+  if (!b) return sendJson(res, 404, { error: 'Business not found' });
+  const email = contractorEmail({ config: b.config });
+  if (!email) return sendJson(res, 400, { error: 'No email on file for this business' });
+  sendEmail({ to: email, subject: 'A message from Pricr', html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:520px;margin:0 auto;color:#0A0E1A;padding:8px;"><p style="font-size:15px;line-height:1.6;white-space:pre-wrap;">${esc(p.message || '')}</p><p style="color:#94A3B8;font-size:12px;margin-top:18px;">Sent via Pricr</p></div>` });
+  return sendJson(res, 200, { ok: true, sentTo: email });
+}
+
+async function handleAdminBusinessAction(res, body) {
+  const p = parseJsonBody(body); const code = (p.code || '').toString().toUpperCase();
+  const r = await supabaseRequest('GET', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}&select=*`);
+  const b = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+  if (!b) return sendJson(res, 404, { error: 'Business not found' });
+  if (p.action === 'delete') {
+    await supabaseRequest('DELETE', `/rest/v1/quotes?business_id=eq.${encodeURIComponent(b.id)}`);
+    const d = await supabaseRequest('DELETE', `/rest/v1/businesses?id=eq.${encodeURIComponent(b.id)}`);
+    return sendJson(res, d.status < 300 ? 200 : 500, d.status < 300 ? { ok: true } : { error: 'Delete failed' });
+  }
+  if (p.action === 'suspend' || p.action === 'unsuspend') {
+    const config = Object.assign({}, b.config, { suspended: p.action === 'suspend' });
+    const upd = await supabaseRequest('PATCH', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}`, { config });
+    return sendJson(res, upd.status < 300 ? 200 : 500, upd.status < 300 ? { ok: true, suspended: p.action === 'suspend' } : { error: 'Failed' });
+  }
+  if (p.action === 'clear-schema') {
+    // Force a rebuild: blank the schema so the business is routed back into onboarding on next load.
+    const config = Object.assign({}, b.config, { schema: null });
+    const upd = await supabaseRequest('PATCH', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}`, { config });
+    return sendJson(res, upd.status < 300 ? 200 : 500, upd.status < 300 ? { ok: true } : { error: 'Failed' });
+  }
+  return sendJson(res, 400, { error: 'Unknown action' });
+}
+
+async function handleAdminUser(res, body) {
+  const p = parseJsonBody(body); const code = (p.code || '').toString().toUpperCase();
+  const r = await supabaseRequest('GET', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}&select=*`);
+  const b = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+  if (!b) return sendJson(res, 404, { error: 'Business not found' });
+  const config = b.config || {};
+  let members = Array.isArray(config.members) ? config.members : [];
+  if (p.action === 'remove') members = members.filter((m) => m.id !== p.userId);
+  else if (p.action === 'role') members = members.map((m) => (m.id === p.userId ? Object.assign({}, m, { role: p.role }) : m));
+  const upd = await supabaseRequest('PATCH', `/rest/v1/businesses?code=eq.${encodeURIComponent(code)}`, { config: Object.assign({}, config, { members }) });
+  return sendJson(res, upd.status < 300 ? 200 : 500, upd.status < 300 ? { ok: true } : { error: 'Failed' });
+}
+
+const ADMIN_HANDLERS = {
+  stats: (res) => handleAdminStats(res),
+  search: (res, buf) => handleAdminSearch(res, buf),
+  business: (res, buf) => handleAdminBusiness(res, buf),
+  'reset-password': (res, buf) => handleAdminResetPassword(res, buf),
+  notify: (res, buf) => handleAdminNotify(res, buf),
+  'business-action': (res, buf) => handleAdminBusinessAction(res, buf),
+  user: (res, buf) => handleAdminUser(res, buf),
+};
+
 // ── Anthropic proxy (unchanged behaviour for /v1/messages and anything else) ────
 function proxyToAnthropic(req, res, bodyBuf) {
   const apiKey = process.env.ANTHROPIC_KEY;
@@ -909,6 +1060,23 @@ const server = http.createServer((req, res) => {
   const pageMatch = path.match(/^\/sign\/([^/]+)\/?$/);
 
   const readBody = (cb) => { const body = []; req.on('data', (c) => body.push(c)); req.on('end', () => cb(Buffer.concat(body))); };
+
+  // Health check (public) — used by the super-admin "proxy ping" + uptime checks.
+  if (path === '/health' && req.method === 'GET') { return sendJson(res, 200, { ok: true, ts: Date.now() }); }
+
+  // Super-admin endpoints (POST /admin/<action>) — service role, guarded by the master code header.
+  const adminMatch = path.match(/^\/admin\/([a-z-]+)\/?$/);
+  if (adminMatch && req.method === 'POST') {
+    if (!adminAuthed(req)) return sendJson(res, 403, { error: 'forbidden' });
+    const action = adminMatch[1];
+    if (action === 'export') { handleAdminExport(res).catch(() => sendJson(res, 500, { error: 'export failed' })); return; }
+    readBody((buf) => {
+      const handler = ADMIN_HANDLERS[action];
+      if (!handler) return sendJson(res, 404, { error: 'unknown admin action' });
+      Promise.resolve(handler(res, buf)).catch((e) => { console.error('[admin] error:', e && e.message); sendJson(res, 500, { error: 'server error' }); });
+    });
+    return;
+  }
 
   if (requestCodeMatch && req.method === 'POST') {
     readBody((buf) => handleRequestCode(req, res, decodeURIComponent(requestCodeMatch[1]), buf));

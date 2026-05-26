@@ -1,5 +1,5 @@
 export type Role = "admin" | "rep" | "superadmin";
-export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"meet_kit"|"building"|"confirm_schema"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"master";
+export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"choose_setup"|"wizard"|"import"|"meet_kit"|"building"|"confirm_schema"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"master";
 export interface User { id: string; name: string; role: Role; businessCode: string; username?: string; pinHash?: string; }
 export interface BrandConfig { primaryColor: string; secondaryColor: string; logoUri: string|null; tagline: string; phone: string; email: string; address: string; backgroundColor?: string; }
 // Controls what the customer sees on the quote document (PDF + in-app ClosingCard). Unset => detailed/all.

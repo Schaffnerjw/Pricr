@@ -11,6 +11,9 @@ import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { LoginScreen } from "../src/screens/LoginScreen";
 import { MasterDashboard } from "../src/screens/MasterDashboard";
 import { MeetKitScreen } from "../src/screens/MeetKitScreen";
+import { PriceListImportScreen } from "../src/screens/PriceListImportScreen";
+import { SetupChoiceScreen } from "../src/components/SetupChoiceScreen";
+import { SchemaWizard } from "../src/components/SchemaWizard";
 import { QuoteScreen } from "../src/screens/QuoteScreen";
 import { QuotesHistoryScreen } from "../src/screens/QuotesHistoryScreen";
 import { RepJoinScreen } from "../src/screens/RepJoinScreen";
@@ -30,7 +33,7 @@ import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
-import { applySchemaUpdate, BLANK_SCHEMA, extractFromMessage, isBlankSchema, summarizeUpdate, updateMeaningful } from "../src/utils/schemaExtractor";
+import { applySchemaUpdate, BLANK_SCHEMA, extractFromMessage, isBlankSchema, quoteSchemaFromWizard, summarizeUpdate, updateMeaningful, WizardData } from "../src/utils/schemaExtractor";
 import { validateSchema, ValidationResult } from "../src/utils/validateSchema";
 
 // Web image picker: a hidden <input type="file"> read as a data URL (expo-image-picker's
@@ -97,6 +100,8 @@ export default function Index() {
   const [extractionNotes, setExtractionNotes] = useState<string[]>([]);
   const [pendingSchema, setPendingSchema] = useState<QuoteSchema | null>(null); // built but unconfirmed
   const [schemaWarning, setSchemaWarning] = useState<ValidationResult | null>(null); // dashboard validation banner
+  const [setupPath, setSetupPath] = useState<"wizard" | "import" | "chat">("wizard"); // which path produced pendingSchema
+  const [importText, setImportText] = useState(""); // preserved across import retries
   const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); console.log("[Schema] updated:", JSON.stringify(next)); };
   const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
 
@@ -123,8 +128,8 @@ export default function Index() {
           // Part 8: a business with a blank schema (no trade, no fields) should never land on an empty
           // quote tool — route straight into onboarding to build it.
           if (isBlankSchema(biz.schema)) {
-            resetKitBuild(); setKitStarted(false); setKitReady(false); setKitMessages([]); setIsReconfiguring(true);
-            setTimeout(() => setScreen("setup"), 600);
+            resetKitBuild(); setPendingSchema(null); setIsReconfiguring(true);
+            setTimeout(() => setScreen("choose_setup"), 600);
             return;
           }
           // Part 6/10: validate the stored schema; surface a dashboard banner if it's broken/placeholder.
@@ -179,7 +184,7 @@ export default function Index() {
     const finalColor = isValidHex(signupBrand.primaryColor) ? signupBrand.primaryColor : "#2979FF";
     try {
       const code = generateCode();
-      const username = authUsername.trim();
+      const username = authUsername.trim().toLowerCase(); // stored lowercase so the resolve_business_code RPC matches
       const adminPinHash = await hashPin(username, authPin);
       const user: User = { id: Date.now().toString(), name: authName, role: "admin", businessCode: code, username, pinHash: adminPinHash };
       const biz: Business = {
@@ -195,7 +200,8 @@ export default function Index() {
       setBusiness(biz);
       setAuthError("");
       setIsReconfiguring(false);
-      setScreen("setup");
+      resetKitBuild(); setPendingSchema(null);
+      setScreen("choose_setup"); // new flow: choice screen → wizard | import → confirm
     } catch { setAuthError("Something went wrong. Try again."); }
   };
 
@@ -206,14 +212,18 @@ export default function Index() {
     try {
       let code: string | null;
       if (mode === "username") {
+        console.log("[Login] username entered:", authUsername.trim().toLowerCase());
         if (!authUsername.trim() || !authPin) { setAuthError("Enter your username and password."); return; }
+        console.log("[Login] calling resolve_business_code RPC");
         code = await resolveBusinessCodeByUsername(authUsername);
+        console.log("[Login] RPC result:", code);
         if (!code) { setAuthError("No account found for that username."); return; }
       } else {
         if (!authCode.trim() || !authPin) { setAuthError("Enter your Business ID and password."); return; }
         code = authCode.toUpperCase();
       }
       const biz = await getBusiness(code);
+      console.log("[Login] business found:", biz ? "yes" : "no");
       if (!biz) { setAuthError("Account not found."); return; }
       const users = await getUsers(biz.code);
       let user: User | undefined;
@@ -230,7 +240,9 @@ export default function Index() {
         else if (biz.adminPin) ok = biz.adminPin === authPin; // legacy plaintext
         user = users.find(u => u.role === "admin") ?? { id: Date.now().toString(), name: biz.ownerName, role: "admin", businessCode: biz.code, username: biz.username };
       }
+      console.log("[Login] password check:", ok ? "pass" : "fail");
       if (!ok || !user) { setAuthError("Incorrect username or password."); return; }
+      console.log("[Login] success → routing to dashboard");
       const legacyShortPin = authPin.length < 8; // signed in with an old short PIN → must upgrade
       await saveCurrentUser(user);
       await setStaySignedIn(staySignedIn); setStayLocal(staySignedIn);
@@ -252,7 +264,7 @@ export default function Index() {
     if (authPin.length < 8) { setAuthError("Password must be at least 8 characters."); return; }
     if (authPin !== authPinConfirm) { setAuthError("Passwords don't match."); return; }
     try {
-      const username = authUsername.trim();
+      const username = authUsername.trim().toLowerCase();
       const adminPinHash = await hashPin(username, authPin);
       const updated: Business = { ...business, username, adminPinHash, adminPin: "" };
       await saveBusiness(updated);
@@ -275,8 +287,8 @@ export default function Index() {
       const biz = await getBusiness(authCode.toUpperCase());
       if (!biz) { setAuthError("Business ID not found. Check with your admin."); return; }
       const users = await getUsers(biz.code);
-      const uname = authUsername.trim();
-      if ((biz.username || "").toLowerCase() === uname.toLowerCase() || users.some(u => (u.username || "").toLowerCase() === uname.toLowerCase())) {
+      const uname = authUsername.trim().toLowerCase(); // stored lowercase for consistent login lookup
+      if ((biz.username || "").toLowerCase() === uname || users.some(u => (u.username || "").toLowerCase() === uname)) {
         setAuthError("That username is taken. Choose another."); return;
       }
       const pinHash = await hashPin(uname, authPin);
@@ -451,17 +463,14 @@ export default function Index() {
     setScreen("done");
   };
 
-  // Start a fresh Kit build with a seeded opening message (used by "rebuild" + the placeholder-fix banner).
-  const startKitRebuild = (seedMessage: string) => {
-    setIsReconfiguring(true);
+  // Open the setup choice screen fresh (used by first-time onboarding, reconfigure, rebuild, and the
+  // placeholder-fix banner). reconfig=true shows a cancel-back to the dashboard.
+  const startSetupChoice = (reconfig: boolean) => {
+    setIsReconfiguring(reconfig);
     resetKitBuild();
     setPendingSchema(null);
-    setKitMessages([{ role: "assistant", content: seedMessage }]);
-    setKitReplies([]);
-    setKitInput("");
-    setKitReady(false);
-    setKitStarted(true); // keep the seeded message — don't let startKitChat overwrite it
-    setScreen("meet_kit");
+    setImportText("");
+    setScreen("choose_setup");
   };
 
   useEffect(() => { if (screen === "meet_kit" && !kitStarted) startKitChat(); }, [screen]);
@@ -528,7 +537,7 @@ export default function Index() {
       onPickLogo={pickImage}
       onSignOut={handleSignOut}
       onViewSigningActivity={isSupabaseConfigured && !isDemoMode ? () => { setSettingsFocusTerms(false); setScreen("pipeline"); } : undefined}
-      onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startKitRebuild("Let's rebuild your quote tool. Tell me your main service and what you charge, and I'll set it up fresh."); }}
+      onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
       onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification }) => {
@@ -566,14 +575,54 @@ export default function Index() {
       onQuotePipeline={isSupabaseConfigured && !isDemoMode ? () => { setJustBuilt(false); setScreen("pipeline"); } : undefined}
       onManageTeam={() => { setJustBuilt(false); setScreen("users"); }}
       schemaWarning={schemaWarning}
-      onFixSchema={() => { setJustBuilt(false); startKitRebuild(schemaWarning?.isPlaceholder
-        ? "Your quote tool has a basic placeholder instead of your real pricing. Tell me your main service and what you charge, and I'll rebuild it right now."
-        : "Let's fix your quote tool. Tell me your main service and what you charge, and I'll rebuild it right now."); }}
-      onReconfigure={() => { setJustBuilt(false); setIsReconfiguring(true); resetKitBuild(); setPendingSchema(null); setScreen("setup"); setKitStarted(false); setKitReady(false); setKitMessages([]); }}
+      onFixSchema={() => { setJustBuilt(false); startSetupChoice(true); }}
+      onReconfigure={() => { setJustBuilt(false); startSetupChoice(true); }}
       onTestQuote={() => { setJustBuilt(false); setQuoteInitialValues(sampleFieldValues(business.schema)); setScreen("quote"); }}
       onDismissTestPrompt={() => setJustBuilt(false)}
       onOpenSettings={() => { setJustBuilt(false); setSettingsFocusTerms(false); setScreen("settings"); }}
       onSetupTerms={() => { setJustBuilt(false); setSettingsFocusTerms(true); setScreen("settings"); }}
+    />
+  );
+
+  if (screen === "choose_setup") return (
+    <SetupChoiceScreen
+      primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor}
+      onChooseWizard={() => setScreen("wizard")}
+      onChooseImport={() => setScreen("import")}
+      isReconfiguring={isReconfiguring}
+      onCancel={() => { setIsReconfiguring(false); setScreen("done"); }}
+    />
+  );
+
+  if (screen === "wizard") return (
+    <SchemaWizard
+      primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor}
+      initialTrade={business?.schema?.trade}
+      onBack={() => setScreen("choose_setup")}
+      onComplete={(data: WizardData) => {
+        const schema = quoteSchemaFromWizard(data);
+        console.log("[Schema] built from wizard:", JSON.stringify(schema));
+        setSetupPath("wizard");
+        setPendingSchema(schema);
+        console.log("[MeetKit] triggering confirmation preview");
+        setScreen("confirm_schema");
+      }}
+    />
+  );
+
+  if (screen === "import") return (
+    <PriceListImportScreen
+      primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor}
+      initialText={importText}
+      onBack={() => setScreen("choose_setup")}
+      onComplete={(schema, rawText) => {
+        console.log("[Schema] built from import:", JSON.stringify(schema));
+        setSetupPath("import");
+        setImportText(rawText);
+        setPendingSchema(schema);
+        console.log("[MeetKit] triggering confirmation preview");
+        setScreen("confirm_schema");
+      }}
     />
   );
 
@@ -593,27 +642,27 @@ export default function Index() {
     const preview: Business = { ...business, schema: pendingSchema };
     return (
       <View style={{ flex: 1, backgroundColor: business.brand.backgroundColor || B.midnight }}>
-        <View style={{ paddingTop: 52, paddingHorizontal: 20, paddingBottom: 12, backgroundColor: B.card, borderBottomWidth: 1, borderBottomColor: B.border }}>
-          <Text style={[s.h2, { fontSize: 20 }]}>Here&apos;s your quote tool</Text>
-          <Text style={[s.body, { marginTop: 2, fontSize: 13 }]}>Try it below. Nothing is saved until you confirm it looks right.</Text>
+        <View style={{ paddingTop: 52, paddingHorizontal: 20, paddingBottom: 12, backgroundColor: B.card, borderBottomWidth: 1, borderBottomColor: B.border, flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <View style={[s.kitAvatar, { backgroundColor: primaryColor, width: 30, height: 30, borderRadius: 15 }]}><Text style={{ color: B.white, fontWeight: "800", fontFamily: "Syne_800ExtraBold", fontSize: 13 }}>K</Text></View>
+          <Text style={[s.h2, { fontSize: 17, flex: 1 }]}>Here&apos;s your quote tool. Does everything look right?</Text>
         </View>
         <View style={{ flex: 1 }}>
           <QuoteScreen schema={pendingSchema} setSchema={() => { }} business={preview} currentUser={currentUser} onBack={() => { }} previewMode />
         </View>
         <View style={{ padding: 16, gap: 10, backgroundColor: B.card, borderTopWidth: 1, borderTopColor: B.border }}>
           <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={commitSchema}>
-            <Text style={[s.btnText, { color: B.white }]}>Looks good — let&apos;s go</Text>
+            <Text style={[s.btnText, { color: B.white }]}>Looks right — Save my tool</Text>
           </TouchableOpacity>
           <View style={{ flexDirection: "row", gap: 10 }}>
             <TouchableOpacity
               style={[s.btnSecondary, { flex: 1, borderColor: primaryColor }]}
-              onPress={() => { setKitMessages(m => [...m, { role: "assistant", content: "What needs to be fixed? Tell me the service and the right price and I'll update it." }]); setKitReady(false); setScreen("meet_kit"); }}
+              onPress={() => { setScreen(setupPath === "import" ? "import" : "wizard"); }}
             >
               <Text style={[s.btnSecondaryText, { color: primaryColor }]}>Something&apos;s wrong</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.btnSecondary, { flex: 1 }]}
-              onPress={() => { setPendingSchema(null); resetKitBuild(); setKitMessages([]); setKitStarted(false); setKitReady(false); setScreen("meet_kit"); }}
+              onPress={() => { setPendingSchema(null); resetKitBuild(); setScreen("choose_setup"); }}
             >
               <Text style={s.btnSecondaryText}>Start over</Text>
             </TouchableOpacity>
