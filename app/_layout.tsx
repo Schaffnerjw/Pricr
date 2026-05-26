@@ -29,11 +29,14 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => { });
   }, [fontsLoaded]);
 
-  if (!fontsLoaded) return null;
-
+  // NOTE: do NOT gate the tree on fontsLoaded (e.g. `if (!fontsLoaded) return null`). On web that
+  // produces a hydration mismatch (#418): the prerendered HTML and the client's first render disagree
+  // about whether to render content vs null. Custom fonts are a CSS concern — RNW emits the same DOM
+  // either way and the font simply swaps in once loaded. The native splash stays up until fonts are
+  // ready via the effect above, so there's no flash on native.
   return (
     <>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#0A0E1A" } }} />

@@ -61,6 +61,9 @@ function pickImageWeb(): Promise<string | null> {
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function Index() {
   const [screen, setScreen] = useState<Screen>("splash");
+  // Web hydration guard: the first client render must match the server's prerendered HTML. We render
+  // the deterministic splash until mounted (set in the effect below), then let session resolution run.
+  const [hydrated, setHydrated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [business, setBusiness] = useState<Business | null>(null);
   const [logoTapCount, setLogoTapCount] = useState(0);
@@ -110,7 +113,7 @@ export default function Index() {
   const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); console.log("[Schema] updated:", JSON.stringify(next)); };
   const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
 
-  useEffect(() => { runStartupMigrations().then(checkSession); }, []);
+  useEffect(() => { setHydrated(true); runStartupMigrations().then(checkSession); }, []);
 
   const checkSession = async () => {
     try {
@@ -592,7 +595,9 @@ export default function Index() {
     return <StatsScreen business={business} onBack={() => setScreen("done")} />;
   }
 
-  if (screen === "splash") {
+  // Until hydrated (and during the initial splash), render the deterministic splash so the server's
+  // prerendered HTML and the client's first render are identical (avoids hydration error #418).
+  if (!hydrated || screen === "splash") {
     return (
       <SafeAreaView style={s.container}>
         <View style={s.centered}>
