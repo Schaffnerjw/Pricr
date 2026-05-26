@@ -8,7 +8,7 @@ import { PRICE_LIST_UNDERSTAND_PROMPT } from "../constants/prompts";
 import { clearImportProgress, getImportProgress, saveImportProgress } from "../storage";
 import { QuoteSchema } from "../types";
 import { ON_PRIMARY } from "../utils/colorUtils";
-import { buildSchemaFromVerified, VerifiedAddOn, VerifiedCategory, VerifiedItem, VerifiedUnit, verifiedItemCount } from "../utils/buildSchemaFromVerified";
+import { buildSchemaFromVerified, groupImportCategories, VerifiedAddOn, VerifiedCategory, VerifiedItem, VerifiedUnit, verifiedItemCount } from "../utils/buildSchemaFromVerified";
 
 const UNITS: VerifiedUnit[] = ["sq ft", "lf", "hour", "each", "flat", "section", "other"];
 // Carries a user-facing message for a handled Phase 1 failure (vs. network/timeout/unknown).
@@ -180,7 +180,11 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
 
   const build = () => {
     const depositPercent = deposit === -1 ? Number(customDeposit) || 0 : deposit;
-    const schema = buildSchemaFromVerified({ trade, categories, addOns, depositPercent });
+    // Group same-unit items in each category into selectors (+ quantity) so a 69-product list becomes
+    // a handful of usable inputs instead of 69 fields.
+    const { selectors, items } = groupImportCategories(categories);
+    console.log("[Import] grouped into", selectors.length, "selectors +", items.length, "single fields");
+    const schema = buildSchemaFromVerified({ trade, categories: [{ id: "services", name: "Services", items }], selectors, addOns, depositPercent });
     if (!schema.fields.length) { setError("Add at least one service with a price to continue."); return; }
     clearImportProgress();
     onComplete(schema, text);

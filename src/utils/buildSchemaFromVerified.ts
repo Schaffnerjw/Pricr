@@ -5,9 +5,11 @@ export type VerifiedUnit = "sq ft" | "lf" | "hour" | "each" | "flat" | "section"
 
 export interface VerifiedItem { id: string; name: string; price: number; unit: VerifiedUnit; notes?: string; }
 export interface VerifiedCategory { id: string; name: string; items: VerifiedItem[]; }
-// A variant-priced quantity group (the deck case: square footage × the selected material's rate).
-// Produced by the wizard; the import editor leaves this empty (a flat list has one price per item).
-export interface VerifiedSelector { quantityLabel: string; unit: VerifiedUnit; options: { name: string; rate: number }[]; }
+// A grouped, priced choice. Two shapes:
+//  • per-unit: `quantityLabel` set → a quantity field × the selected option's rate (deck: sq ft × material).
+//  • flat: `quantityLabel` omitted → a pick-one of fixed-price options (package tiers); `optional` adds "None".
+// Produced by the wizard (variants) and by the import grouping (same-unit items in a category).
+export interface VerifiedSelector { label?: string; quantityLabel?: string; unit: VerifiedUnit; optional?: boolean; options: { name: string; rate: number }[]; }
 export interface VerifiedAddOn { id: string; name: string; price: number; }
 export interface VerifiedData {
   trade: string;
@@ -48,21 +50,35 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
   const terms: string[] = [];
   const lines: SummaryLine[] = [];
 
-  // 1) Variant-priced quantity groups (selectors): quantity field × selected option rate.
+  // 1) Grouped priced choices (selectors) — the antidote to one-field-per-product. A category of
+  //    same-unit items collapses to ONE selector (+ a quantity for per-unit pricing) instead of N fields.
   for (const sel of data.selectors || []) {
     const opts = (sel.options || []).filter(o => o && o.name && typeof o.rate === "number");
     if (opts.length === 0) continue;
+    const selLabel = sel.label || "Material";
     const unit = UNIT_MAP[sel.unit] || "each";
-    const qtyId = slugId(sel.quantityLabel || "Quantity", ids);
-    fields.push({ id: qtyId, label: sel.quantityLabel || "Quantity", type: "number", unit, group: GROUP_FOR_UNIT[unit] || "dimensions", placeholder: `Enter ${(sel.quantityLabel || "quantity").toLowerCase()}` });
-    const selId = slugId("Material", ids);
-    const optKeys: { opt: string; key: string }[] = [];
-    for (const o of opts) { const key = slugId(o.name, ids) + "Rate"; pricing[key] = o.rate; optKeys.push({ opt: o.name, key }); }
-    fields.push({ id: selId, label: "Material", type: "selector", unit, group: "materials", options: opts.map(o => o.name) });
-    const ternary = optKeys.map(o => `${selId} == ${JSON.stringify(o.opt)} ? ${o.key}`).join(" : ") + ` : ${optKeys[0].key}`;
-    const term = `(${qtyId} || 0) * (${ternary})`;
-    terms.push(term);
-    lines.push({ label: `${sel.quantityLabel} ({${qtyId}})`, value: term });
+    const selId = slugId(selLabel, ids);
+    const optKeys = opts.map(o => { const key = slugId(o.name, ids) + "Rate"; pricing[key] = o.rate; return { opt: o.name, key }; });
+    const optionNames = sel.optional ? ["None", ...opts.map(o => o.name)] : opts.map(o => o.name);
+    // rate selected by the chosen option; unmatched (incl. "None") → 0, except a required per-unit
+    // selector falls back to the first option so an unset selector still prices something.
+    const fallback = sel.optional ? "0" : optKeys[0].key;
+    const rateExpr = optKeys.map(o => `${selId} == ${JSON.stringify(o.opt)} ? ${o.key}`).join(" : ") + ` : ${fallback}`;
+
+    if (sel.quantityLabel) {
+      // Per-unit: quantity × selected option's rate.
+      const qtyId = slugId(sel.quantityLabel, ids);
+      fields.push({ id: qtyId, label: sel.quantityLabel, type: "number", unit, group: GROUP_FOR_UNIT[unit] || "dimensions", placeholder: `Enter ${sel.quantityLabel.toLowerCase()}` });
+      fields.push({ id: selId, label: selLabel, type: "selector", unit, group: "materials", options: optionNames });
+      const term = `(${qtyId} || 0) * (${rateExpr})`;
+      terms.push(term);
+      lines.push({ label: `${sel.quantityLabel} ({${qtyId}})`, value: term });
+    } else {
+      // Flat pick-one (package tiers): the selected option's flat price.
+      fields.push({ id: selId, label: selLabel, type: "selector", unit: "flat", group: "details", options: optionNames });
+      terms.push(`(${rateExpr})`);
+      lines.push({ label: selLabel, value: rateExpr });
+    }
   }
 
   // 2) Category items → number (per-unit quantity) or toggle (flat on/off) fields.
@@ -106,4 +122,39 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
 
 export function verifiedItemCount(categories: VerifiedCategory[]): number {
   return (categories || []).reduce((s, c) => s + (c.items?.length || 0), 0);
+}
+
+// Human quantity label for a per-unit group (e.g. all the $/sq ft items in a category).
+function quantityLabelFor(unit: VerifiedUnit): string {
+  switch (unit) {
+    case "sq ft": return "Square Footage";
+    case "lf": return "Linear Feet";
+    case "hour": return "Hours";
+    case "section": return "Sections";
+    default: return "Quantity";
+  }
+}
+
+// Collapse an import's verified categories into the GROUPED SELECTOR + QUANTITY pattern: within a
+// category, items that share a unit become ONE selector (pick the product) — per-unit groups add a
+// single quantity field, flat groups become a pick-one of package tiers. Singletons stay as one field.
+// This turns "69 fields for a deck company" into a handful of selectors + quantities.
+export function groupImportCategories(categories: VerifiedCategory[]): { selectors: VerifiedSelector[]; items: VerifiedItem[] } {
+  const selectors: VerifiedSelector[] = [];
+  const items: VerifiedItem[] = [];
+  for (const cat of categories || []) {
+    const byUnit: Record<string, VerifiedItem[]> = {};
+    for (const it of cat.items || []) { if (!it || !it.name) continue; (byUnit[it.unit] = byUnit[it.unit] || []).push(it); }
+    const units = Object.keys(byUnit) as VerifiedUnit[];
+    const selectorGroups = units.filter(u => byUnit[u].length >= 2).length; // for label disambiguation
+    for (const u of units) {
+      const group = byUnit[u];
+      if (group.length < 2) { items.push(...group); continue; } // a lone item stays a single field
+      const label = selectorGroups > 1 ? `${cat.name} (per ${u})` : cat.name;
+      const options = group.map(g => ({ name: g.name, rate: g.price }));
+      if (u === "flat") selectors.push({ label, unit: "flat", optional: true, options }); // pick-one tier
+      else selectors.push({ label, quantityLabel: quantityLabelFor(u), unit: u, options }); // product × quantity
+    }
+  }
+  return { selectors, items };
 }
