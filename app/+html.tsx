@@ -25,6 +25,16 @@ export default function Root({ children }: PropsWithChildren) {
         {/* Disables body scrolling on web so the RN ScrollViews own scrolling. */}
         <ScrollViewStyleReset />
 
+        {/* Dark app background on every web surface so no white bar bleeds through below the app
+            (html/body/#root default to white, and #root must fill the full viewport height). */}
+        <style dangerouslySetInnerHTML={{ __html: `
+          html, body, #root { margin: 0; padding: 0; background-color: #0A0E1A; }
+          html, body { height: 100%; min-height: 100%; }
+          /* iOS Safari: cover the area behind the home indicator / dynamic toolbars too. */
+          html { min-height: -webkit-fill-available; }
+          #root { min-height: 100vh; min-height: -webkit-fill-available; display: flex; flex-direction: column; }
+        ` }} />
+
         {/* Register the service worker (caches the app shell; never caches API calls). */}
         <script
           dangerouslySetInnerHTML={{

@@ -97,7 +97,7 @@ export default function Index() {
   const [extractionNotes, setExtractionNotes] = useState<string[]>([]);
   const [pendingSchema, setPendingSchema] = useState<QuoteSchema | null>(null); // built but unconfirmed
   const [schemaWarning, setSchemaWarning] = useState<ValidationResult | null>(null); // dashboard validation banner
-  const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); };
+  const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); console.log("[Schema] updated:", JSON.stringify(next)); };
   const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
 
   useEffect(() => { runStartupMigrations().then(checkSession); }, []);
@@ -392,9 +392,12 @@ export default function Index() {
       });
       const data = await response.json();
       const text = data?.content?.[0]?.text;
+      console.log("[Schema][salvage] raw response:", typeof text === "string" ? text : JSON.stringify(data));
       if (typeof text !== "string") return null;
-      return parseSchemaFromResponse(text);
-    } catch { return null; }
+      const parsed = parseSchemaFromResponse(text); // strips ```json fences + extracts the {...} block
+      console.log("[Schema][salvage] parsed result:", JSON.stringify(parsed));
+      return parsed;
+    } catch (e) { console.error("[Schema][salvage] error:", e instanceof Error ? e.message : String(e)); return null; }
   };
 
   // Fire-and-forget real-time extraction after each user message. Merges any confident new pricing
@@ -419,19 +422,23 @@ export default function Index() {
     setScreen("building");
     // Let any in-flight extraction settle so the last answer is captured.
     await new Promise(r => setTimeout(r, 900));
+    console.log("[Schema] finalizing, current state:", JSON.stringify(liveSchemaRef.current));
     let finalSchema: QuoteSchema = liveSchemaRef.current;
     if (isBlankSchema(finalSchema) || (finalSchema.fields || []).length === 0) {
+      console.log("[Schema] live schema empty — attempting one-shot salvage parse");
       const salvaged = await oneShotParse(conversation);
       if (salvaged && !isBlankSchema(salvaged)) finalSchema = salvaged;
     }
     if (!finalSchema) finalSchema = BLANK_SCHEMA;
     setPendingSchema(finalSchema);
+    console.log("[MeetKit] triggering confirmation preview");
     setTimeout(() => setScreen("confirm_schema"), 300);
   };
 
   // Commit the confirmed schema: persist it (preserving all other business settings), seed samples, done.
   const commitSchema = async () => {
     const schemaToSave: QuoteSchema = pendingSchema || BLANK_SCHEMA;
+    console.log("[Schema] committing:", JSON.stringify(schemaToSave));
     const kitSummary = buildSchemaSummary(schemaToSave);
     const updatedBiz = { ...business!, schema: schemaToSave, kitSummary };
     try { await saveBusiness(updatedBiz); } catch (e) { console.warn("[commitSchema] cloud save failed (schema kept locally):", e instanceof Error ? e.message : String(e)); }

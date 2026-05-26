@@ -1,7 +1,6 @@
 import { API_URL } from "../constants/brand";
 import { SCHEMA_EXTRACTION_PROMPT } from "../constants/prompts";
 import { AddOn, FieldGroup, FieldUnit, QuoteSchema, SchemaField } from "../types";
-import { parseSchemaFromResponse } from "./helpers";
 
 // ── Types for the incremental extraction ────────────────────────────────────────
 export type Confidence = "high" | "medium" | "low";
@@ -43,9 +42,13 @@ export function isBlankSchema(schema?: QuoteSchema | null): boolean {
 
 const EMPTY_UPDATE: SchemaUpdate = { newFields: [], updatedFields: [], newAddOns: [], depositPercent: null, tradeName: null, businessTagline: null, confidence: "low" };
 
-// True when an update carries usable, confident information worth merging into the live schema.
+// True when an update carries usable information worth merging into the live schema.
+// NOTE: we do NOT gate on confidence — if the model returned concrete data (a field, add-on,
+// deposit, or trade) we apply it. The prompt already tells the model to return empty arrays when
+// there is nothing to extract, so the presence of data IS the signal. (Gating on confidence was
+// silently dropping valid extractions.)
 export function updateMeaningful(u: SchemaUpdate): boolean {
-  if (!u || u.confidence === "low") return false;
+  if (!u) return false;
   return (u.newFields?.length > 0) || (u.updatedFields?.length > 0) || (u.newAddOns?.length > 0)
     || u.depositPercent != null || !!u.tradeName;
 }
@@ -220,13 +223,30 @@ function normalizeUpdate(raw: any): SchemaUpdate {
   };
 }
 
+// Robustly extract a JSON object from a model response: strip markdown code fences and any
+// surrounding prose, then parse the first {...} block. Logs the failure with the raw text.
+function parseExtractionJson(raw: string): any | null {
+  try {
+    let c = String(raw || "").trim()
+      .replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    const f = c.indexOf("{");
+    const l = c.lastIndexOf("}");
+    if (f !== -1 && l !== -1 && l > f) c = c.substring(f, l + 1);
+    return JSON.parse(c);
+  } catch (e) {
+    console.error("[SchemaExtractor] JSON parse failed:", e instanceof Error ? e.message : String(e), "| raw:", raw);
+    return null;
+  }
+}
+
 // Sends a single message to Claude for structured extraction. Returns an empty update on ANY error
 // so a failed extraction never blocks the conversation.
 export async function extractFromMessage(userMessage: string, currentSchema: QuoteSchema, context: string): Promise<SchemaUpdate> {
   try {
     if (!userMessage || !userMessage.trim()) return { ...EMPTY_UPDATE };
+    console.log("[SchemaExtractor] extracting from:", userMessage.substring(0, 50));
     const slim = { trade: currentSchema.trade, fields: (currentSchema.fields || []).map(f => ({ label: f.label, unit: f.unit })), addOns: (currentSchema.addOns || []).map(a => a.label), depositPercent: currentSchema.pricing?.depositPercent ?? 0 };
-    const user = `${context ? "Context: " + context + "\n\n" : ""}The user is setting up a quote tool for their contracting business. They just said: "${userMessage}"\n\nCurrent schema state: ${JSON.stringify(slim)}\n\nExtract any NEW pricing or service information from this message and return ONLY the JSON SchemaUpdate object.`;
+    const user = `${context ? "Context: " + context + "\n\n" : ""}The user is setting up a quote tool for their contracting business. They just said: "${userMessage}"\n\nCurrent schema state: ${JSON.stringify(slim)}\n\nExtract any NEW pricing or service information from this message and return ONLY the JSON SchemaUpdate object — no markdown, no backticks, no explanation.`;
     const response = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -234,11 +254,27 @@ export async function extractFromMessage(userMessage: string, currentSchema: Quo
     });
     const data = await response.json();
     const text = data?.content?.[0]?.text;
+    console.log("[SchemaExtractor] raw response:", typeof text === "string" ? text : JSON.stringify(data));
     if (typeof text !== "string") return { ...EMPTY_UPDATE };
-    const parsed = parseSchemaFromResponse(text);
+    const parsed = parseExtractionJson(text);
     if (!parsed) return { ...EMPTY_UPDATE };
-    return normalizeUpdate(parsed);
-  } catch {
+    const update = normalizeUpdate(parsed);
+    console.log("[SchemaExtractor] parsed update:", JSON.stringify(update));
+    return update;
+  } catch (error) {
+    console.error("[SchemaExtractor] error:", error instanceof Error ? error.message : String(error));
     return { ...EMPTY_UPDATE };
   }
 }
+
+// Dev/console test harness (Step 7). Runs an extraction against a sample message and logs the result.
+// In the browser console run: __pricrTestExtraction()
+export async function testExtraction(message = "I charge $20 per sq ft for pressure treated and $28 for composite"): Promise<SchemaUpdate> {
+  console.log("[SchemaExtractor][test] message:", message);
+  const result = await extractFromMessage(message, BLANK_SCHEMA, "Test run");
+  console.log("[SchemaExtractor][test] result:", JSON.stringify(result, null, 2));
+  const applied = applySchemaUpdate(BLANK_SCHEMA, result);
+  console.log("[SchemaExtractor][test] applied schema:", JSON.stringify(applied, null, 2));
+  return result;
+}
+if (typeof globalThis !== "undefined") { (globalThis as any).__pricrTestExtraction = testExtraction; }
