@@ -50,6 +50,24 @@ describe("applyKitSchemaUpdate", () => {
     expect(r.schema.pricing!.permitRate).toBeUndefined();
   });
 
+  test("change_type relabels + converts to toggle (Frame Protection screenshot case)", () => {
+    const schema: QuoteSchema = {
+      trade: "Decking",
+      fields: [{ id: "frameProtection", label: "Frame Protection", type: "number", unit: "sqft", group: "materials" }],
+      pricing: { frameProtectionRate: 2, depositPercent: 50 },
+      addOns: [], calculation: "", summaryLines: [],
+    };
+    const r = applyKitSchemaUpdate(schema, {
+      action: "change_type", fieldId: "frameProtection", fieldName: "Frame Protection",
+      changes: { type: "toggle", unit: "flat", label: "Include Frame Protection" },
+    });
+    const f = r.schema.fields!.find(x => x.id === "frameProtection")!;
+    expect(r.changed).toBe(true);
+    expect(f.type).toBe("toggle");
+    expect(f.unit).toBe("flat");
+    expect(f.label).toBe("Include Frame Protection");
+  });
+
   test("update_field changes label + unit", () => {
     const r = applyKitSchemaUpdate(base(), { action: "update_field", fieldId: "railing", changes: { label: "Cable Railing", unit: "lf" } });
     const f = r.schema.fields!.find(x => x.id === "railing")!;

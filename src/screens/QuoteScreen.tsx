@@ -329,7 +329,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       try { next.sections = deriveSections(next.fields || [], next.pricing || {}); }
       catch (e) { logger.error(`[KitAgent] deriveSections failed (${source})`, e instanceof Error ? e.message : String(e)); }
     }
-    logger.debug("[KitAgent] calling schema update with:", JSON.stringify(next).substring(0, 200));
+    logger.debug("[KitApply] schema after update:", JSON.stringify(next).substring(0, 300));
     setSchema(next);
     try {
       await saveBusiness({ ...business, schema: next, kitUpdates: (business.kitUpdates || 0) + 1 });
@@ -374,25 +374,41 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       const reply = (data?.content?.[0]?.text || "").trim();
       logger.debug("[KitAgent] raw response:", reply.substring(0, 300));
 
-      // 1) PREFERRED: a compact structured diff. Reliable to parse + apply deterministically.
-      const blockMatch = reply.match(/SCHEMA_UPDATE_START([\s\S]*?)SCHEMA_UPDATE_END/);
-      if (blockMatch) {
-        const conversational = reply.replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/, "").trim();
-        try {
-          const raw = blockMatch[1].trim().replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-          const update = JSON.parse(raw);
-          logger.debug("[KitAgent] extracted schema change:", JSON.stringify(update));
+      // What the user sees is ONLY the text before any machine block — strip from the first marker
+      // onward (also covers a missing/garbled END marker). The raw block can never reach the chat UI.
+      const markerIdx = (() => {
+        const a = reply.search(/SCHEMA_UPDATE_START/i);
+        const b = reply.search(/CONFIG_UPDATED/);
+        const found = [a, b].filter(i => i >= 0);
+        return found.length ? Math.min(...found) : -1;
+      })();
+      const displayMessage = (markerIdx >= 0 ? reply.slice(0, markerIdx) : reply).replace(/```json/gi, "").replace(/```/g, "").trim();
+
+      // 1) PREFERRED: a compact structured diff. Extract the JSON object after SCHEMA_UPDATE_START even
+      // when the END marker is missing or has trailing characters.
+      const startIdx = reply.search(/SCHEMA_UPDATE_START/i);
+      if (startIdx >= 0) {
+        const after = reply.slice(startIdx + "SCHEMA_UPDATE_START".length);
+        const endIdx = after.search(/SCHEMA_UPDATE_END/i);
+        const region = (endIdx >= 0 ? after.slice(0, endIdx) : after).replace(/```json/gi, "").replace(/```/g, "").trim();
+        const f = region.indexOf("{"), l = region.lastIndexOf("}");
+        const jsonStr = (f >= 0 && l > f) ? region.slice(f, l + 1) : "";
+        logger.debug("[KitApply] raw block found:", region.substring(0, 200));
+        let update: any = null;
+        try { update = jsonStr ? JSON.parse(jsonStr) : null; }
+        catch (e) { logger.error("[KitApply] JSON parse failed:", e instanceof Error ? e.message : String(e), "raw:", jsonStr.substring(0, 200)); }
+        if (update) {
           const result = applyKitSchemaUpdate(schema, update);
           if (result.changed) {
+            logger.debug("[KitApply] calling setSchema with updated schema");
             await applyKitSchema(result.schema, "diff");
-            finish(`✓ ${result.summary}.${conversational ? " " + conversational : ""}`);
+            finish(displayMessage || `✓ ${result.summary}.`);
           } else {
-            logger.debug("[KitAgent] schema update result: no matching field");
-            finish(conversational || "I couldn't find that field to change — which one did you mean?");
+            logger.debug("[KitApply] field not found — not applied");
+            finish(displayMessage || "I couldn't find that field to change — which one did you mean?");
           }
-        } catch (e) {
-          logger.error("[KitAgent] schema update parse failed", e instanceof Error ? e.message : String(e));
-          finish(conversational || "I tried to make that change but something went wrong — tell me again and I'll retry.");
+        } else {
+          finish(displayMessage || "I tried to make that change but couldn't read it — tell me again and I'll retry.");
         }
         setAgentLoading(false);
         return;
@@ -400,31 +416,33 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
       // 2) FALLBACK: a full-schema CONFIG_UPDATED rewrite (large restructures).
       if (reply.includes("CONFIG_UPDATED")) {
-        const jsonStart = reply.indexOf("\n{");
+        const jsonStart = reply.indexOf("{", reply.indexOf("CONFIG_UPDATED"));
         if (jsonStart !== -1) {
           try {
-            const updated = JSON.parse(reply.substring(jsonStart).trim().replace(/```json\n?/g, "").replace(/```\n?/g, "").trim());
-            logger.debug("[KitAgent] extracted full-schema rewrite");
+            const region = reply.substring(jsonStart).replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+            const lastBrace = region.lastIndexOf("}");
+            const updated = JSON.parse(lastBrace >= 0 ? region.slice(0, lastBrace + 1) : region);
+            logger.debug("[KitApply] full-schema rewrite parsed");
             if (updated && Array.isArray(updated.fields)) {
+              logger.debug("[KitApply] calling setSchema with updated schema");
               await applyKitSchema(updated, "full");
-              const msg = reply.substring(0, jsonStart).replace("CONFIG_UPDATED", "").trim();
-              finish(`✓ Updated.${msg ? " " + msg : ""}`);
+              finish(displayMessage || "✓ Updated.");
             } else {
-              finish("That didn't come through as a valid change — tell me again and I'll retry.");
+              finish(displayMessage || "That didn't come through as a valid change — tell me again and I'll retry.");
             }
           } catch (e) {
-            logger.error("[KitAgent] full-schema parse failed", e instanceof Error ? e.message : String(e));
-            finish("I couldn't apply that change cleanly — tell me the specific field and value and I'll fix it.");
+            logger.error("[KitApply] full-schema parse failed:", e instanceof Error ? e.message : String(e));
+            finish(displayMessage || "I couldn't apply that change cleanly — tell me the specific field and value and I'll fix it.");
           }
         } else {
-          finish("I couldn't read that change — tell me the specific field and value and I'll fix it.");
+          finish(displayMessage || "I couldn't read that change — tell me the specific field and value and I'll fix it.");
         }
         setAgentLoading(false);
         return;
       }
 
       // 3) Informational reply.
-      finish(reply);
+      finish(displayMessage || reply);
     } catch (e) {
       logger.error("[KitAgent] request failed", e instanceof Error ? e.message : String(e));
       finish("Something went wrong. Give it another shot.");

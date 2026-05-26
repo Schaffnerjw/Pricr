@@ -28,7 +28,15 @@ export function KitAgentSheet({ primaryColor, messages, earlierCount = 0, input,
 
   const last = messages[messages.length - 1];
   const showLayout = !loading && last?.role === "assistant" && last.content.includes("LAYOUT_OPTIONS");
-  const clean = (c: string) => parseSuggestedReplies(c.replace(/LAYOUT_OPTIONS/g, "")).content;
+  // Strip every machine block before display — the SCHEMA_UPDATE / CONFIG_UPDATED JSON must NEVER be
+  // visible (covers blocks with or without a closing marker, and any already-persisted raw messages).
+  const clean = (c: string) => parseSuggestedReplies(
+    (c || "")
+      .replace(/LAYOUT_OPTIONS/g, "")
+      .replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/g, "")
+      .replace(/SCHEMA_UPDATE_START[\s\S]*$/g, "")
+      .replace(/CONFIG_UPDATED[\s\S]*$/g, ""),
+  ).content.trim();
   // Contextual answer pills from Kit's own SUGGESTED_REPLIES (only when it asked something).
   const suggested = !loading && !showLayout && last?.role === "assistant" ? parseSuggestedReplies(last.content).replies : [];
 

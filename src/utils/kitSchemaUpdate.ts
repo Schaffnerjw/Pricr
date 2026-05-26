@@ -4,6 +4,7 @@
 // guessed beyond a case-insensitive field-name match when no id is supplied.
 import { FieldUnit, QuoteSchema, SchemaField } from "../types";
 import { slugId } from "./helpers";
+import { logger } from "./logger";
 
 export interface KitSchemaUpdate {
   action: "update_field" | "add_field" | "remove_field" | "update_rate" | "change_type";
@@ -30,18 +31,26 @@ const mapType = (t?: string): SchemaField["type"] | undefined => (t ? TYPE_MAP[n
 const mapUnit = (u?: string): FieldUnit | undefined => (u ? (UNIT_MAP[norm(u)] || (u as FieldUnit)) : undefined);
 
 export function applyKitSchemaUpdate(schema: QuoteSchema, u: KitSchemaUpdate): KitApplyResult {
-  if (!schema || !u || !u.action) return { schema, changed: false, summary: "" };
+  if (!schema || !u || !u.action) { logger.debug("[KitApply] no schema/action"); return { schema, changed: false, summary: "" }; }
   const fields: SchemaField[] = [...(schema.fields || [])];
   const pricing: Record<string, number> = { ...(schema.pricing || {}) };
   const c = u.changes || {};
+  logger.debug("[KitApply] parsed action:", u.action);
+  logger.debug("[KitApply] looking for field:", u.fieldId, u.fieldName, "| field ids:", fields.map(f => f.id).join(","));
 
   const findIdx = (): number => {
     let i = u.fieldId ? fields.findIndex(f => f.id === u.fieldId) : -1;
     if (i < 0 && u.fieldName) i = fields.findIndex(f => norm(f.label) === norm(u.fieldName) || norm(f.id) === norm(u.fieldName));
     if (i < 0 && u.fieldId) i = fields.findIndex(f => norm(f.label) === norm(u.fieldId)); // model sometimes puts the label in fieldId
+    // Last resort: a substring/startsWith match on the slugified name (handles minor id drift).
+    if (i < 0 && u.fieldName) { const want = norm(u.fieldName).replace(/[^a-z0-9]/g, ""); i = fields.findIndex(f => f.id.toLowerCase().includes(want) || want.includes(f.id.toLowerCase())); }
+    logger.debug("[KitApply] found field index:", i, i >= 0 ? `(${fields[i].id})` : "(none)");
     return i;
   };
-  const done = (summary: string): KitApplyResult => ({ schema: { ...schema, fields, pricing }, changed: true, summary });
+  const done = (summary: string): KitApplyResult => {
+    logger.debug("[KitApply] applying changes:", JSON.stringify(c), "→", summary);
+    return { schema: { ...schema, fields, pricing }, changed: true, summary };
+  };
   const noop: KitApplyResult = { schema, changed: false, summary: "" };
 
   switch (u.action) {
@@ -69,6 +78,7 @@ export function applyKitSchemaUpdate(schema: QuoteSchema, u: KitSchemaUpdate): K
       const nt = mapType(c.type);
       if (i < 0 || !nt) return noop;
       const f = { ...fields[i], type: nt };
+      if (c.label) f.label = c.label; // change_type often relabels too (e.g. "Include Frame Protection")
       if (nt === "toggle") f.unit = "flat";
       else { const nu = mapUnit(c.unit); if (nu) f.unit = nu; }
       fields[i] = f;
