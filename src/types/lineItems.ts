@@ -36,6 +36,8 @@ export interface QuoteTotal {
 export interface SectionSelection {
   optionIds: string[];                 // selected option ids (one for single-select, many for multi)
   quantities: Record<string, number>;  // optionId → quantity (for measured / labor sections)
+  labels?: Record<string, string>;     // optionId → label, for legacy fallback rate matching
+  rates?: Record<string, number>;      // optionId → rate, for legacy fallback rate matching
 }
 export type QuoteSelections = Record<string, SectionSelection>;
 

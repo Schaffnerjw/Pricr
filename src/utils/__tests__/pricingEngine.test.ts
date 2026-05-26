@@ -112,4 +112,32 @@ describe("pricingEngine — golden scenarios", () => {
     expect(recomputed.subtotal).toBe(8932);
     expect(sumLineItems(q.lineItems.filter(li => li.type !== "discount"))).toBe(8932);
   });
+
+  test("Legacy fallback — an option id mismatch resolves by label, no error", () => {
+    const sections: SchemaSection[] = [{
+      id: "deck", name: "Decking", pattern: "MATERIAL_MEASUREMENT", allowMultiSelect: false, quantityUnit: "sq ft",
+      options: [{ id: "new_cedar_0", label: "Cedar", rate: 10, unit: "sq ft" }],
+    }];
+    // The saved selection references an OLD id but carries the label/rate for fallback matching.
+    const selections: QuoteSelections = { deck: { optionIds: ["old_cedar"], quantities: { old_cedar: 5 }, labels: { old_cedar: "cedar" }, rates: { old_cedar: 10 } } };
+    const q = buildLineItems(sections, selections, [], null);
+    expect(q.hasErrors).toBe(false);
+    expect(q.subtotal).toBe(50);
+  });
+
+  test("Multi-select — one line item per selected option (Deck Lighting)", () => {
+    const sections: SchemaSection[] = [{
+      id: "lighting", name: "Deck Lighting", pattern: "MATERIAL_MEASUREMENT", allowMultiSelect: true, quantityUnit: "each",
+      options: [
+        { id: "accent_0", label: "Accent Lights", rate: 75, unit: "each" },
+        { id: "strip_1", label: "Strip Lights", rate: 130, unit: "each" },
+        { id: "riser_2", label: "Riser Lights", rate: 125, unit: "each" },
+      ],
+    }];
+    const selections: QuoteSelections = { lighting: { optionIds: ["accent_0", "strip_1"], quantities: { accent_0: 6, strip_1: 3 } } };
+    const q = buildLineItems(sections, selections, [], null);
+    expect(q.lineItems.filter(li => li.type !== "discount").length).toBe(2);
+    expect(q.subtotal).toBe(840); // 6×$75 + 3×$130
+    expect(validateQuoteTotal(q).ok).toBe(true);
+  });
 });

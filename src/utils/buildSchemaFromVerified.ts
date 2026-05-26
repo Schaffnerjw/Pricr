@@ -121,9 +121,15 @@ export function buildSchemaFromVerified(data: VerifiedData): QuoteSchema {
   };
 }
 
-// Countable "each" units are independent items the rep can pick several of; measured units (sqft/lf/…)
-// are alternatives where one material is chosen and measured once.
-const COUNTABLE_UNITS = new Set<FieldUnit>(["each", "vehicle", "room", "load", "ton"]);
+// Default multi-select rule (shared with QuoteScreen). A section is MULTI-select unless it looks like
+// a primary material choice: all options share one unit AND the section name carries a material
+// keyword (decking/flooring/roofing/…). So independent-component sections ("Deck Components & Trim",
+// "Deck Lighting") allow several picks; a material pick ("Decking Materials") stays single.
+const MATERIAL_KEYWORDS = /material|decking|flooring|roofing|siding|insulation|paint|carpet/i;
+export function defaultAllowMultiSelect(name: string, options: { unit?: string }[]): boolean {
+  const allSameUnit = !options || options.length <= 1 || options.every(o => o.unit === options[0].unit);
+  return !(allSameUnit && MATERIAL_KEYWORDS.test(name || ""));
+}
 
 // Best-effort exact rate for a selector option from the pricing table (used only on the Kit re-derive
 // path, which has fields+pricing but not the original option→rate map). Exact key first, then a
@@ -156,8 +162,9 @@ export function deriveSections(
     const options = opts(sel);
     if (qty) {
       usedQty.add(qty.id);
-      // Per-unit selector: alternatives unless the unit is countable (e.g. lighting fixtures → multi).
-      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit, options, allowMultiSelect: COUNTABLE_UNITS.has((sel.unit as FieldUnit)) });
+      // Multi-select unless this looks like a primary MATERIAL choice (same unit + a material keyword
+      // in the section name). So "Deck Components & Trim"/"Deck Lighting" = multi; "Decking Materials" = single.
+      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit, options, allowMultiSelect: defaultAllowMultiSelect(sel.label, options) });
     } else {
       // Flat pick-one tier (packages): single-select alternatives.
       out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit, options, allowMultiSelect: false });

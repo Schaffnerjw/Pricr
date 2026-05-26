@@ -19,7 +19,7 @@ import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
-import { deriveSections } from "../utils/buildSchemaFromVerified";
+import { defaultAllowMultiSelect, deriveSections } from "../utils/buildSchemaFromVerified";
 import { logger } from "../utils/logger";
 import { humanSchemaSummary } from "../utils/schemaExtractor";
 
@@ -60,8 +60,16 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
   // Single-page job-walkthrough layout — only for schemas that carry section metadata (import/wizard).
   // Legacy/demo schemas (no sections) keep the classic flat field list below, unchanged.
-  const quoteSections: any[] = schema?.sections || [];
-  const useNewLayout = quoteSections.length > 0;
+  const useNewLayout = !!(schema?.sections?.length);
+  // Re-derive section metadata from the canonical fields on load so LEGACY schemas (built before
+  // option ids / the current multi-select rule) are upgraded in-memory. Deterministic + idempotent:
+  // a schema already built by the current builder re-derives to the same sections.
+  const quoteSections: any[] = useMemo(
+    () => (useNewLayout && schema?.fields?.length ? deriveSections(schema.fields, schema.pricing || {}) : (schema?.sections || [])),
+    [schema, useNewLayout],
+  );
+  // Schema the pricing engine actually sees — carries the upgraded sections (with option ids + rates).
+  const engineSchema = useMemo(() => (useNewLayout ? { ...schema, sections: quoteSections } : schema), [schema, quoteSections, useNewLayout]);
 
   const reduceMotion = useReduceMotion();
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
@@ -94,12 +102,11 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   };
 
   // ── Multi-select for INDEPENDENT items ──
-  // `allowMultiSelect` is set explicitly on the section at build time (lighting fixtures = multi,
-  // decking material = single). Fall back to a unit heuristic only for legacy sections missing the flag.
-  const SINGLE_SELECT_UNITS = ["sqft", "lf", "hr", "ton", "room", "load", "yard"];
+  // Use the section's explicit flag when present; otherwise apply the shared default rule (multi
+  // unless it's a primary material choice). Sections are re-derived on load, so the flag is normally set.
   const isMultiSelect = (sec: any): boolean => {
     if (typeof sec?.allowMultiSelect === "boolean") return sec.allowMultiSelect;
-    return sec?.pattern === "MATERIAL_MEASUREMENT" && !!sec.quantityFieldId && !SINGLE_SELECT_UNITS.includes(sec.unit);
+    return defaultAllowMultiSelect(sec?.name || "", sec?.options || []);
   };
   // Per-item multi-select state keys (must match src/utils/quoteSelections.ts so the engine reads them).
   const selKey = (sec: any, opt: string) => `${sec.materialFieldId}::sel::${opt}`;
@@ -149,8 +156,15 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const discount = { mode: discountMode, value: Number(discountValue) || 0, reason: discountReason.trim() };
   // ALL pricing flows through computeTotals → the pricing engine (exact rate-by-ID for real schemas,
   // safe formula for demos). t carries lineItems + valid/hasErrors so a pricing problem is never silent.
-  const t = computeTotals(schema, fieldValues, selectedAddOns, discount);
-  const pricingError = !!t.error || t.hasErrors || t.valid === false;
+  const t = computeTotals(engineSchema, fieldValues, selectedAddOns, discount);
+  // Only flag a pricing problem once the rep has actually entered something — an empty/unselected
+  // quote is the normal starting state, not an error.
+  const hasUserInput = (schema?.fields || []).some((f: any) => {
+    const v = fieldValues[f.id];
+    if (f.type === "number" || f.type === "area") return Number(v) > 0;
+    return f.type === "selector" || f.type === "toggle" ? !!v : false;
+  }) || Object.keys(fieldValues).some(k => k.includes("::sel::") && fieldValues[k]);
+  const pricingError = hasUserInput && (!!t.error || t.hasErrors || t.valid === false);
 
   // Per-section subtotal, sourced from the engine's line items (single source of truth — the card
   // numbers can't drift from the grand total).
@@ -744,7 +758,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                       <Feather name={iconFor(g.name)} size={20} color={complete ? COMPLETE_GREEN : primaryColor} />
                       {complete
                         ? <Feather name="check-circle" size={18} color={COMPLETE_GREEN} />
-                        : <Feather name={on ? "circle" : "plus-circle"} size={18} color={on ? primaryColor : pal.textMuted} />}
+                        : (on ? null : <Feather name="plus-circle" size={18} color={pal.textMuted} />)}
                     </View>
                     <Text numberOfLines={2} style={{ color: pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{g.name}</Text>
                     {complete && <Text style={{ color: COMPLETE_GREEN, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}

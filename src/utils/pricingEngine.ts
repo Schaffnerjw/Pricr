@@ -42,8 +42,17 @@ export function buildLineItems(
     const measured = section.pattern === "MATERIAL_MEASUREMENT" || section.pattern === "LABOR" || section.pattern === "SYSTEM_CONFIG_QUANTITY";
 
     for (const optionId of sel.optionIds) {
-      const option = (section.options || []).find(o => o.id === optionId);
-      // Rate lookup by ID. Not found → surfaced error, total 0, never silent.
+      // Rate lookup by ID first. Fallbacks (label, then rate) keep schemas built before the ID
+      // system pricing correctly — all exact comparisons, never fuzzy, so a wrong price is impossible.
+      let option = (section.options || []).find(o => o.id === optionId);
+      if (!option && sel.labels?.[optionId]) {
+        const lbl = sel.labels[optionId].toLowerCase();
+        option = (section.options || []).find(o => o.label.toLowerCase() === lbl);
+      }
+      if (!option && sel.rates?.[optionId] != null) {
+        option = (section.options || []).find(o => o.rate === sel.rates![optionId]);
+      }
+      // Not found after all fallbacks → surfaced error, total 0, never silent.
       if (!option) {
         items.push({
           id: `${section.id}:${optionId}`, sectionId: section.id, sectionName: section.name,

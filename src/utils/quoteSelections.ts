@@ -45,7 +45,7 @@ export function selectionsFromFieldValues(schema: QuoteSchema, fieldValues: Reco
     if (sec.pattern === "LABOR") {
       const qty = Number(fieldValues[sec.quantityFieldId || ""]) || 0;
       const opt = options[0];
-      if (opt && qty > 0) out[sec.id] = { optionIds: [opt.id], quantities: { [opt.id]: qty } };
+      if (opt && qty > 0) out[sec.id] = { optionIds: [opt.id], quantities: { [opt.id]: qty }, labels: { [opt.id]: opt.label }, rates: { [opt.id]: opt.rate } };
       continue;
     }
     // MATERIAL_MEASUREMENT (and SYSTEM_CONFIG_QUANTITY)
@@ -53,19 +53,22 @@ export function selectionsFromFieldValues(schema: QuoteSchema, fieldValues: Reco
     if (sec.allowMultiSelect) {
       const optionIds: string[] = [];
       const quantities: Record<string, number> = {};
+      const labels: Record<string, string> = {};
+      const rates: Record<string, number> = {};
       for (const o of options) {
         if (fieldValues[selKey(matId, o.label)]) {
           optionIds.push(o.id);
           quantities[o.id] = Number(fieldValues[qtyKey(matId, o.label)]) || 0;
+          labels[o.id] = o.label; rates[o.id] = o.rate;
         }
       }
-      if (optionIds.length) out[sec.id] = { optionIds, quantities };
+      if (optionIds.length) out[sec.id] = { optionIds, quantities, labels, rates };
     } else {
       const label = fieldValues[matId];
       const opt = options.find(o => o.label === label);
       if (opt) {
         const q = sec.quantityFieldId ? (Number(fieldValues[sec.quantityFieldId]) || 0) : 1;
-        out[sec.id] = { optionIds: [opt.id], quantities: { [opt.id]: q } };
+        out[sec.id] = { optionIds: [opt.id], quantities: { [opt.id]: q }, labels: { [opt.id]: opt.label }, rates: { [opt.id]: opt.rate } };
       }
     }
   }
