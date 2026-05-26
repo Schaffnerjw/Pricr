@@ -46,7 +46,7 @@ After `schema.sql`, run these in order in the SQL editor (they fix the initial s
 3. `migrations/0003_business_insert_bootstrap.sql` — splits the businesses policy so INSERT is open while select/update/delete stay members-only. Without this, creating the first business deadlocks. **Idempotent — safe to re-run; it prints the resulting 4 policies.**
 4. `migrations/0004_signature_and_terms.sql` — signature + remote-signing columns on `quotes` (incl. `signing_token`) and `terms_and_conditions` on `businesses`.
 5. `migrations/0005_username_login_lookup.sql` — username→business-code lookup RPC for username+password login.
-6. `migrations/0006_signing_audit.sql` — signing audit trail: `signer_ip`, `signer_user_agent`, `signer_email`, and an `audit_log` jsonb on `quotes`. Powers the Certificate of Completion and the signing-confirmation emails. **Idempotent.**
+6. `migrations/0006_signing_enterprise.sql` — enterprise signing: audit trail (`audit_log`, `signer_ip`, `signer_user_agent`, `signer_email`), SMS identity verification (`signer_phone`, `phone_verified`, `verification_code`, `verification_expires_at`), tamper-evidence `document_hash`, and per-business signing settings (`notification_email`, `require_sms_verification`). Powers SMS verification, the Certificate of Completion, and the signing-confirmation emails. **Idempotent.**
 
 Also enable **anonymous sign-ins** (Auth → Providers/Settings). The app authenticates every device with an anonymous Supabase session so `auth.uid()` exists for RLS — the contractor never sees a login screen.
 

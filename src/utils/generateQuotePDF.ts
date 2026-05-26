@@ -9,6 +9,12 @@ export interface QuotePDFData extends QuotePresentation {
   signedAt?: number;            // timestamp the signature was captured
   signingLink?: string;         // remote signing URL, shown as a clickable link on page 1
   termsAndConditions?: string;  // business T&C — rendered as a full page 2 if present
+  // Electronic signature record (audit) — rendered only when signatureData exists.
+  signingToken?: string;        // document ID
+  signerIp?: string;            // IP the signature came from
+  documentHash?: string;        // SHA-256 tamper-evidence hash
+  phoneVerified?: boolean;      // true when identity was SMS-verified
+  certificateUrl?: string;      // public certificate-of-completion URL
 }
 
 const esc = (s: unknown) =>
@@ -60,6 +66,22 @@ export function generateQuotePDF(d: QuotePDFData): string {
   const paymentBlock = d.paymentMethods && d.paymentMethods.length
     ? `<div class="pay"><span class="pay-label">We Accept:</span> ${esc(d.paymentMethods.join(", "))}</div>`
     : "";
+  // Electronic signature record (legal audit block) — only on a signed PDF.
+  const esignRow = (label: string, value: string) =>
+    `<div class="es-row"><span class="es-k">${esc(label)}</span><span class="es-v">${esc(value)}</span></div>`;
+  const esignBlock = d.signatureData
+    ? `<div class="esign">
+         <div class="es-title">Electronic Signature Record</div>
+         ${esignRow("Signed by", d.customerName || "Customer")}
+         ${esignRow("Date", formatLongDate(d.signedAt ?? d.date))}
+         ${d.signingToken ? esignRow("Document ID", d.signingToken) : ""}
+         ${d.signerIp ? esignRow("IP Address", d.signerIp) : ""}
+         ${d.phoneVerified ? esignRow("Identity Verified", "SMS verified ✓") : ""}
+         ${d.documentHash ? `<div class="es-row"><span class="es-k">Document Hash</span><span class="es-v es-hash">${esc(d.documentHash)}</span></div>` : ""}
+         ${d.certificateUrl ? `<div class="es-row"><span class="es-k">Certificate</span><a class="es-v es-link" href="${esc(d.certificateUrl)}">${esc(d.certificateUrl)}</a></div>` : ""}
+         <div class="es-legal">This document was electronically signed using Pricr. This signature is legally binding under the E-SIGN Act (15 U.S.C. § 7001) and UETA.</div>
+       </div>`
+    : "";
   const contactBits = [d.phone, d.email, d.address].filter(Boolean).map(esc).join("&nbsp;&nbsp;·&nbsp;&nbsp;");
   const mark = d.logoUri
     ? `<img class="logo" src="${esc(d.logoUri)}" /><div class="biz">${esc(d.businessName)}</div>`
@@ -104,6 +126,13 @@ export function generateQuotePDF(d: QuotePDFData): string {
   .sign-link a { color: ${accent}; font-weight: 600; word-break: break-all; }
   .pay { margin-top: 20px; font-size: 13px; color: #1E2640; }
   .pay-label { font-weight: 700; color: #0A0E1A; }
+  .esign { margin-top: 28px; padding: 16px 18px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; }
+  .es-title { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 800; color: ${accent}; margin-bottom: 10px; }
+  .es-row { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0; font-size: 12px; }
+  .es-k { color: #64748B; } .es-v { color: #0A0E1A; font-weight: 600; text-align: right; word-break: break-word; }
+  .es-hash { font-family: ui-monospace, Menlo, monospace; font-weight: 400; color: #475569; }
+  .es-link { color: ${accent}; }
+  .es-legal { margin-top: 10px; font-size: 11px; color: #475569; line-height: 1.6; }
   .terms-page { page-break-before: always; padding: 40px; }
   .terms-title { font-size: 20px; font-weight: 800; letter-spacing: -0.3px; border-bottom: 3px solid ${accent}; padding-bottom: 10px; margin-bottom: 18px; }
   .terms-body { font-size: 12px; line-height: 1.7; color: #1E2640; white-space: normal; }
@@ -129,6 +158,7 @@ export function generateQuotePDF(d: QuotePDFData): string {
     ${signatureBlock}
     <div class="valid">This estimate is valid for 30 days · through ${esc(formatLongDate(d.validThrough))}</div>
     ${signLinkBlock}
+    ${esignBlock}
     ${paymentBlock}
     ${prefs.showContact && contactBits ? `<div class="footer">${contactBits}</div>` : ""}
   </div>

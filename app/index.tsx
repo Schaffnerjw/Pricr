@@ -473,10 +473,11 @@ export default function Index() {
       currentUser={currentUser}
       onPickLogo={pickImage}
       onSignOut={handleSignOut}
+      onViewSigningActivity={isSupabaseConfigured && !isDemoMode ? () => { setSettingsFocusTerms(false); setScreen("pipeline"); } : undefined}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
-      onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods }) => {
-        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs, paymentMethods };
+      onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification }) => {
+        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification };
         await saveBusiness(updated); // throws on failure → SettingsScreen surfaces it; local state only updates on success
         setBusiness(updated);
       }}

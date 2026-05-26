@@ -14,6 +14,12 @@ export interface QuoteRow {
   signature_data?: string | null;
   signed_at?: string | null;
   signing_token?: string | null;
+  signer_ip?: string | null;
+  signer_phone?: string | null;
+  signer_email?: string | null;
+  phone_verified?: boolean | null;
+  document_hash?: string | null;
+  audit_log?: any[] | null;
   created_at: string;
   updated_at?: string;
 }

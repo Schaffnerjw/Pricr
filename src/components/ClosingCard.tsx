@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Dimensions, Image, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import SignaturePad from "./SignaturePad";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
@@ -12,6 +12,9 @@ import { formatLongDate, formatMoney, resolveDocPrefs } from "../utils/helpers";
 import { shareQuotePDF } from "../utils/shareQuotePDF";
 
 const SCREEN_H = Dimensions.get("window").height;
+
+// E-SIGN / UETA consent the signer affirms before signing (matches the remote signing page).
+const CONSENT_TEXT = "I have read and agree to the terms above. By signing below I consent to use electronic records and signatures for this transaction. I understand this electronic signature is legally binding under the Electronic Signatures in Global and National Commerce Act (E-SIGN Act, 15 U.S.C. § 7001 et seq.) and the Uniform Electronic Transactions Act (UETA).";
 
 type Totals = { ctx: Record<string, any>; taxRate: number; tax: number; total: number; depositPct: number; deposit: number };
 
@@ -36,9 +39,12 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
   const [signedAt, setSignedAt] = useState<number | null>(null);
   const [signingBusy, setSigningBusy] = useState(false);
   const [scrollEnabled, setScrollEnabled] = useState(true);
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
   const t = totals;
   const hasTerms = !!(termsAndConditions && termsAndConditions.trim());
-  const canSign = (!hasTerms || agreed) && !signingBusy;
+  // E-SIGN consent is required before signing (in addition to any T&C agreement).
+  const canSign = (!hasTerms || agreed) && consentChecked && !signingBusy;
   const docPrefs = resolveDocPrefs(business.docPrefs); // what the customer sees on this card
 
   useEffect(() => {
@@ -256,9 +262,30 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                     <Feather name="check-circle" size={16} color={primaryColor} />
                     <Text style={{ color: primaryColor, fontWeight: "800", fontSize: 14, fontFamily: "Syne_700Bold" }}>Quote Accepted — Signed {formatLongDate(signedAt ?? Date.now())}</Text>
                   </View>
+                  {/* Legally-binding trust badge — tap for details */}
+                  <TouchableOpacity onPress={() => setLegalModalOpen(true)} style={{ flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: theme.dividerColor, borderRadius: 10, padding: 12 }}>
+                    <Feather name="shield" size={16} color={primaryColor} />
+                    <Text style={{ flex: 1, color: theme.valueColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>🔒 Legally binding e-signature — E-SIGN Act compliant</Text>
+                    <Feather name="info" size={15} color={theme.lineColor} />
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <View style={{ gap: 10 }}>
+                  {/* Trust badges */}
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    {["🔒 256-bit encrypted", "✓ E-SIGN compliant", "📋 Audit logged"].map(b => (
+                      <View key={b} style={{ borderWidth: 1, borderColor: theme.dividerColor, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 10 }}>
+                        <Text style={{ color: theme.lineColor, fontSize: 11, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{b}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  {/* E-SIGN consent — required before the signature pad becomes active */}
+                  <TouchableOpacity style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, paddingVertical: 4 }} onPress={() => setConsentChecked(c => !c)}>
+                    <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: consentChecked ? primaryColor : theme.lineColor, backgroundColor: consentChecked ? primaryColor : "transparent", alignItems: "center", justifyContent: "center", marginTop: 1 }}>
+                      {consentChecked && <Feather name="check" size={14} color={B.white} />}
+                    </View>
+                    <Text style={{ flex: 1, color: theme.valueColor, fontSize: 12, lineHeight: 18, fontFamily: "DMSans_400Regular" }}>{CONSENT_TEXT}</Text>
+                  </TouchableOpacity>
                   <View style={{ height: 170, borderRadius: 10, overflow: "hidden", backgroundColor: B.white, opacity: canSign ? 1 : 0.5 }} pointerEvents={canSign ? "auto" : "none"}>
                     <SignaturePad
                       ref={sigRef}
@@ -275,6 +302,9 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                   </View>
                   {hasTerms && !agreed && (
                     <Text style={{ color: theme.lineColor, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Agree to the terms above to enable signing.</Text>
+                  )}
+                  {(!hasTerms || agreed) && !consentChecked && (
+                    <Text style={{ color: theme.lineColor, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Check the consent box above to enable signing.</Text>
                   )}
                   <View style={{ flexDirection: "row", gap: 10 }}>
                     <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: theme.dividerColor }]} onPress={() => sigRef.current?.clearSignature()} disabled={signingBusy}>
@@ -333,6 +363,34 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
           </ScrollView>
         </View>
       </Animated.View>
+
+      {/* Legal details modal — opened from the post-signing trust badge */}
+      <Modal visible={legalModalOpen} transparent animationType="fade" onRequestClose={() => setLegalModalOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 28 }} onPress={() => setLegalModalOpen(false)}>
+          <Pressable style={{ backgroundColor: B.card, borderRadius: 18, borderWidth: 1, borderColor: B.border, padding: 22, gap: 12 }} onPress={() => {}}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Feather name="shield" size={18} color={primaryColor} />
+              <Text style={{ color: B.white, fontSize: 17, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Legally binding e-signature</Text>
+            </View>
+            {[
+              ["Signed by", customerName || "Customer"],
+              ["Date & time", formatLongDate(signedAt ?? Date.now())],
+              ["Identity", "Signed in person"],
+            ].map(([k, v]) => (
+              <View key={k} style={{ flexDirection: "row", justifyContent: "space-between", gap: 16 }}>
+                <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{k}</Text>
+                <Text style={{ color: B.gray1, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", flexShrink: 1, textAlign: "right" }}>{v}</Text>
+              </View>
+            ))}
+            <Text style={{ color: B.muted, fontSize: 12, lineHeight: 18, fontFamily: "DMSans_400Regular", marginTop: 4 }}>
+              This signature is legally binding under the Electronic Signatures in Global and National Commerce Act (E-SIGN Act, 2000) and the Uniform Electronic Transactions Act (UETA).
+            </Text>
+            <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, marginTop: 4 }]} onPress={() => setLegalModalOpen(false)}>
+              <Text style={s.btnText}>Done</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

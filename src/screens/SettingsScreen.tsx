@@ -17,13 +17,14 @@ const BG_PRESETS = [
 ];
 
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
-export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, scrollToTerms }: {
+export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, scrollToTerms }: {
   business: Business;
   currentUser?: User;
-  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods }) => void | Promise<void>;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean }) => void | Promise<void>;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
   onSignOut?: () => void;
+  onViewSigningActivity?: () => void;
   scrollToTerms?: boolean;
 }) {
   const [name, setName] = useState(business.name);
@@ -35,6 +36,8 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const [editingTerms, setEditingTerms] = useState(false);
   const [payMethods, setPayMethods] = useState<string[]>(business.paymentMethods?.methods ?? []);
   const [payOther, setPayOther] = useState(business.paymentMethods?.other ?? "");
+  const [notificationEmail, setNotificationEmail] = useState(business.notificationEmail ?? business.brand.email ?? "");
+  const [requireSms, setRequireSms] = useState(business.requireSmsVerification !== false); // default ON
   const [dp, setDp] = useState<DocPrefs>(resolveDocPrefs(business.docPrefs));
   const [kitOpen, setKitOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -76,7 +79,7 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const resetDefaults = () => { setPrimary(DEFAULT_BRAND.primaryColor); setSecondary(DEFAULT_BRAND.secondaryColor); setBackground(DEFAULT_BRAND.backgroundColor); };
   const save = async () => {
     try {
-      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined } });
+      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms });
       setEditingTerms(false);
       setToast(true);
       setTimeout(() => setToast(false), 1600);
@@ -283,6 +286,32 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
               </>
             );
           })()}
+        </View>
+
+        {/* Signing & Verification — enterprise e-signature settings. */}
+        <View style={{ gap: 12 }}>
+          <Text style={s.sectionTitle}>SIGNING & VERIFICATION</Text>
+          <View style={{ gap: 6 }}>
+            <Text style={s.formLabel}>Email for signing notifications</Text>
+            <Text style={s.formHint}>Where we send a notification when a client signs a quote.</Text>
+            <TextInput style={s.input} value={notificationEmail} onChangeText={setNotificationEmail} placeholder="you@yourbusiness.com" placeholderTextColor={B.gray3} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} />
+          </View>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 2, gap: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: B.gray1, fontSize: 15, fontFamily: "DMSans_400Regular" }}>Require SMS verification before signing</Text>
+              <Text style={{ color: B.muted, fontSize: 12, fontFamily: "DMSans_400Regular", marginTop: 2 }}>Recommended — verifies the signer&apos;s identity by text.</Text>
+            </View>
+            <Switch value={requireSms} onValueChange={setRequireSms} trackColor={{ true: pc, false: B.border }} thumbColor={B.white} />
+          </View>
+          <Text style={{ color: B.muted, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Your signed documents are stored securely for a minimum of 7 years.</Text>
+          <TouchableOpacity style={[s.btnSecondary, { borderColor: pc }]} onPress={() => Alert.alert("Coming soon", "Export of all signed records will be available here soon.")}>
+            <Text style={[s.btnSecondaryText, { color: pc }]}>Export All Records</Text>
+          </TouchableOpacity>
+          {onViewSigningActivity && (
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: pc }]} onPress={onViewSigningActivity}>
+              <Text style={[s.btnSecondaryText, { color: pc }]}>View Signing Activity</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={onSavePress}>
