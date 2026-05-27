@@ -21,6 +21,26 @@ const maskIp = (ip?: string | null) => {
   const parts = ip.split(".");
   return parts.length >= 4 ? `${parts[0]}.${parts[1]}.${parts[2]}.*` : ip;
 };
+const relTime = (ts: number): string => {
+  const h = Math.floor((Date.now() - ts) / 3600000);
+  if (h < 1) return "just now";
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+};
+// Expiry pill: green "Valid until", amber "Expires in N days" (<=3), red "Expired". Hidden once signed.
+const expiryPill = (q: QuoteRow): { label: string; color: string } | null => {
+  const exp = q.quote_data?.expiresAt as number | undefined;
+  if (!exp || q.signed_at) return null;
+  const days = Math.ceil((exp - Date.now()) / 86400000);
+  if (days < 0) return { label: "Expired", color: B.red };
+  if (days <= 3) return { label: `Expires in ${days} day${days === 1 ? "" : "s"}`, color: "#F59E0B" };
+  return { label: `Valid until ${formatDate(exp)}`, color: B.green };
+};
+const viewPill = (q: QuoteRow): { label: string; color: string } => {
+  if (!q.first_viewed_at) return { label: "Not yet opened", color: B.gray3 };
+  const vc = q.view_count || 1;
+  return vc > 1 ? { label: `Viewed ${vc} times`, color: B.blue } : { label: `Viewed ${relTime(new Date(q.first_viewed_at).getTime())}`, color: B.blue };
+};
 
 // Supabase-backed quote history. Admins can mark accepted/declined from the detail view; reps are read-only.
 export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, backgroundColor, termsAndConditions }: {
@@ -152,6 +172,10 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
                     {isNewSignature(q) && <NewBadge />}
                   </View>
                   <Text style={[s.historyMeta, { marginTop: 4, color: pal.textMuted }]}>{formatDate(new Date(q.created_at).getTime())}</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                    {(() => { const ep = expiryPill(q); return ep ? <View style={{ borderWidth: 1, borderColor: ep.color, borderRadius: 20, paddingVertical: 2, paddingHorizontal: 8 }}><Text style={{ color: ep.color, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{ep.label}</Text></View> : null; })()}
+                    {(() => { const vp = viewPill(q); return <View style={{ borderWidth: 1, borderColor: vp.color, borderRadius: 20, paddingVertical: 2, paddingHorizontal: 8 }}><Text style={{ color: vp.color, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{vp.label}</Text></View>; })()}
+                  </View>
                 </View>
                 <Text style={[s.historyTotal, { color: accent }]}>{formatMoney(q.total || 0)}</Text>
               </View>

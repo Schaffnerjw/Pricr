@@ -13,6 +13,16 @@ To enable subscription self-management (cancel, update payment) from Settings â†
 
 (The proxy also needs `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_ANNUAL_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, and `APP_URL` set in Railway â€” see `.env.example`.)
 
+## Error monitoring (Sentry)
+
+1. Create a free account at sentry.io and add a **React Native** project.
+2. Copy the DSN.
+3. Set `EXPO_PUBLIC_SENTRY_DSN` in the app/Vercel env (client) and `SENTRY_DSN` in Railway (proxy). Sentry is enabled only in production builds (`__DEV__ === false`).
+
+## Push notifications
+
+Uses Expo push (PWA on Android + iOS 16.4+ added to home screen, and native builds). Set `EXPO_PUBLIC_PROJECT_ID` (from `npx expo config --json | grep projectId` or the expo.dev dashboard).
+
 ## Get started
 
 1. Install dependencies

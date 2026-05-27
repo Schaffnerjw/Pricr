@@ -2,6 +2,12 @@ const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
 
+// Optional server-side error monitoring. Enabled only when SENTRY_DSN is set; the require is guarded
+// so the proxy runs fine without the package/env. Never throws into request handling.
+let Sentry = null;
+try { if (process.env.SENTRY_DSN) { Sentry = require('@sentry/node'); Sentry.init({ dsn: process.env.SENTRY_DSN }); } } catch (_) { Sentry = null; }
+const captureProxyError = (e) => { try { if (Sentry) Sentry.captureException(e); } catch (_) { /* monitoring must never break the proxy */ } };
+
 // ── Supabase REST helper (server-side, service role) ──────────────────────────
 // The service role key lives ONLY here on the server — it is never sent to the browser.
 // RLS does not apply to the service role, so this can read/write any quote by its token.
@@ -120,6 +126,23 @@ function sendEmail({ to, subject, html, attachments }) {
     console.warn('[sign] email send error:', e && e.message);
   }
 }
+
+// ── Expo push notifications (fire-and-forget) ───────────────────────────────────
+// Sends via the Expo push service. No-ops on a missing/invalid token. Never throws into the caller.
+function sendPushNotification(pushToken, title, body) {
+  try {
+    if (!pushToken || typeof pushToken !== 'string' || !pushToken.startsWith('ExponentPushToken')) return;
+    const payload = Buffer.from(JSON.stringify({ to: pushToken, sound: 'default', title, body, data: {} }));
+    const r = https.request({
+      hostname: 'exp.host', path: '/--/api/v2/push/send', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Content-Length': payload.length },
+    }, (resp) => { resp.on('data', () => {}); resp.on('end', () => {}); });
+    r.on('error', (e) => console.warn('[push] send failed:', e && e.message));
+    r.write(payload); r.end();
+  } catch (e) { console.warn('[push] error:', e && e.message); }
+}
+// Push token for a business (stored in config jsonb).
+const businessPushToken = (business) => (business && business.config && business.config.pushToken) || null;
 
 // ── Twilio SMS identity verification (fire-and-forget send) ─────────────────────
 const twilioConfigured = () => !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_PHONE_NUMBER);
@@ -740,6 +763,9 @@ async function handleSignSubmit(req, res, token, rawBody) {
     const ctx = await loadSigningContext(token);
     if (!ctx) return sendJson(res, 404, { error: 'This quote could not be found.' });
     if (ctx.quote.signed_at) return sendJson(res, 409, { error: 'This quote has already been signed.' });
+    // FEATURE 1: reject signing on an expired quote (ADD-only guard).
+    const presExp = (ctx.quote.quote_data && ctx.quote.quote_data.presentation) || {};
+    if (presExp.validThrough && Date.now() > presExp.validThrough) return sendJson(res, 410, { error: 'This quote has expired. Please ask your contractor for an updated quote.' });
     // Identity gate: when SMS verification is enforced, require a valid, unexpired session token
     // (issued by /verify-code) and a verified phone on the row.
     const requireSms = smsRequiredFor(ctx.business);
@@ -814,6 +840,8 @@ async function handleSignSubmit(req, res, token, rawBody) {
             html: contractorEmailHtml(signedQuote, ctx.business, accent, { signedAt, ip, userAgent: ua, phoneLast4: last4, token }, certificateUrl),
           });
         }
+        // Push: client signed.
+        sendPushNotification(businessPushToken(ctx.business), `${name} signed your quote! 🎉`, `${name} accepted the quote for ${money(total)}`);
       } catch (e) { console.warn('[sign] email trigger error:', e && e.message); }
       return sendJson(res, 200, { ok: true, phone_last4: last4 });
     }
@@ -895,6 +923,30 @@ async function handleVerifyCode(req, res, token, rawBody) {
   }
 }
 
+// FEATURE 5: increment view_count, and on the FIRST view set first_viewed_at + notify the contractor
+// (email + push). Best-effort — never blocks the page render.
+async function trackQuoteView(token, ctx) {
+  const quote = ctx.quote;
+  const firstView = !quote.first_viewed_at;
+  const patch = { view_count: (quote.view_count || 0) + 1 };
+  if (firstView) patch.first_viewed_at = new Date().toISOString();
+  try { await supabaseRequest('PATCH', `/rest/v1/quotes?signing_token=eq.${encodeURIComponent(token)}`, patch); } catch (_) { /* column may not exist until migration 0008 */ }
+  if (!firstView) return;
+  const pres = (quote.quote_data && quote.quote_data.presentation) || {};
+  const clientName = pres.customerName || quote.customer_name || 'A client';
+  const total = pres.total != null ? pres.total : (quote.total || 0);
+  const signingUrl = `${SIGNING_BASE}/sign/${encodeURIComponent(token)}`;
+  const cEmail = contractorEmail(ctx.business);
+  if (cEmail) {
+    sendEmail({
+      to: cEmail,
+      subject: `${clientName} viewed your quote`,
+      html: `<p>${esc(clientName)} just opened your quote for ${money(total)}.</p><p>They haven't signed yet — this is a great time to follow up.</p><p><a href="${esc(signingUrl)}">View quote</a></p>`,
+    });
+  }
+  sendPushNotification(businessPushToken(ctx.business), `${clientName} viewed your quote`, `They opened the quote for ${money(total)} — great time to follow up`);
+}
+
 async function handleSignPage(req, res, token) {
   try {
     const ctx = await loadSigningContext(token);
@@ -904,10 +956,18 @@ async function handleSignPage(req, res, token) {
       const biz = (ctx.business && ctx.business.name) || 'Your contractor';
       return sendHtml(res, 200, stateCard(accent, '&#10003;', 'Already signed', 'This quote has already been accepted. ' + biz + ' will be in touch to confirm.'));
     }
+    // FEATURE 1: block expired quotes (ADD-only guard — does not alter the signing flow itself).
+    const pres = (ctx.quote.quote_data && ctx.quote.quote_data.presentation) || {};
+    if (pres.validThrough && Date.now() > pres.validThrough) {
+      const biz = (ctx.business && ctx.business.name) || 'your contractor';
+      return sendHtml(res, 200, stateCard(accent, '!', 'This quote has expired', 'This quote is no longer valid. Contact ' + biz + ' for an updated quote.'));
+    }
     // Log a "quote_viewed" event (fire-and-forget — does not block rendering the page).
     appendAuditEvent(token, ctx.quote.audit_log, {
       event: 'quote_viewed', timestamp: new Date().toISOString(), ip: clientIp(req), user_agent: userAgent(req),
     });
+    // FEATURE 5: count views + notify the contractor on the first open (fire-and-forget).
+    trackQuoteView(token, ctx).catch((e) => console.warn('[view] track failed:', e && e.message));
     return sendHtml(res, 200, signingPage(token, ctx.quote, ctx.business));
   } catch (e) {
     return sendHtml(res, 500, stateCard('#2979FF', '!', 'Something went wrong', 'We could not load this quote right now. Please try again shortly.'));
@@ -1292,6 +1352,10 @@ async function handleBillingStatus(res, businessCode) {
     const started = startedRaw ? new Date(startedRaw).getTime() : Date.now();
     const trialDaysLeft = Math.max(0, 3 - Math.floor((Date.now() - started) / 86400000));
     const isVeraaClient = !!(row && row.config && row.config.isVeraaClient) || status === 'veraa';
+    // FEATURE 7 #3: nudge once when the trial has exactly 1 day left.
+    if (status === 'trial' && trialDaysLeft === 1) {
+      sendPushNotification(row && row.config && row.config.pushToken, 'Your trial ends tomorrow', 'Upgrade to keep access to Pricr — $49/month');
+    }
     return sendJson(res, 200, { status, trialDaysLeft, isVeraaClient, monthlyAvailable: !!process.env.STRIPE_PRICE_ID, annualAvailable: !!process.env.STRIPE_ANNUAL_PRICE_ID });
   } catch (_) { return sendJson(res, 200, { status: 'trial', trialDaysLeft: 3, isVeraaClient: false, monthlyAvailable: !!process.env.STRIPE_PRICE_ID, annualAvailable: !!process.env.STRIPE_ANNUAL_PRICE_ID }); }
 }
@@ -1373,7 +1437,7 @@ const server = http.createServer((req, res) => {
     readBody((buf) => {
       const handler = ADMIN_HANDLERS[action];
       if (!handler) return sendJson(res, 404, { error: 'unknown admin action' });
-      Promise.resolve(handler(res, buf)).catch((e) => { console.error('[admin] error:', e && e.message); sendJson(res, 500, { error: 'server error' }); });
+      Promise.resolve(handler(res, buf)).catch((e) => { console.error('[admin] error:', e && e.message); captureProxyError(e); sendJson(res, 500, { error: 'server error' }); });
     });
     return;
   }

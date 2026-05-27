@@ -4,6 +4,10 @@
 module.exports = {
   testEnvironment: "node",
   testMatch: ["**/src/utils/__tests__/**/*.test.ts"],
+  // Native-only modules pulled in transitively (e.g. via logger) are stubbed so the pure tests run.
+  moduleNameMapper: {
+    "^@sentry/react-native$": "<rootDir>/src/test/sentryStub.ts",
+  },
   transform: {
     "^.+\\.tsx?$": ["ts-jest", {
       isolatedModules: true,

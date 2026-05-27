@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import supabase, { isSupabaseConfigured } from "../lib/supabase";
 import { Business, SavedQuote, User } from "../types";
 import { logger } from "../utils/logger";
+import { enqueue, flushQueue } from "../utils/offlineQueue";
 
 export const KEYS = { currentUser:"pricr_current_user", business:(c:string)=>`pricr_business_${c}`, users:(c:string)=>`pricr_users_${c}`, quotes:(c:string)=>`pricr_quotes_${c}` };
 
@@ -204,8 +205,8 @@ export async function getQuotes(code: string): Promise<SavedQuote[]> {
   } catch { return []; }
 }
 
-export async function addQuote(code: string, q: SavedQuote): Promise<void> {
-  if (!isCloudEnabled(code)) { const e=await getQuotes(code); e.push(q); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e)); return; }
+// Raw cloud insert — throws on failure (used by addQuote + the offline-queue flush). No queueing here.
+async function cloudInsertQuote(code: string, q: SavedQuote): Promise<void> {
   const uid = await ensureSession(code);
   const { error } = await supabase!.from("quotes").insert({
     business_id: codeToUuid(code), created_by: uid,
@@ -213,6 +214,28 @@ export async function addQuote(code: string, q: SavedQuote): Promise<void> {
     status: appToColStatus(q.status), quote_data: q,
   });
   if (error) throw error;
+}
+
+export async function addQuote(code: string, q: SavedQuote): Promise<void> {
+  if (!isCloudEnabled(code)) { const e=await getQuotes(code); e.push(q); await AsyncStorage.setItem(KEYS.quotes(code),JSON.stringify(e)); return; }
+  // Offline-safe: never lose a quote. If the cloud write fails (no connection), queue it durably and
+  // replay on reconnect (flushOfflineQueue). The quote id is already generated, so no duplication.
+  try {
+    await cloudInsertQuote(code, q);
+  } catch (e) {
+    logger.warn("[offline] addQuote queued for sync", e instanceof Error ? e.message : String(e));
+    await enqueue("addQuote", { code, quote: q });
+  }
+}
+
+// Replay queued offline writes. Called on reconnect. Items that fail again stay queued.
+export async function flushOfflineQueue(): Promise<void> {
+  await flushQueue(async (item) => {
+    if (item.type === "addQuote" && item.payload?.code && item.payload?.quote) {
+      if (!isCloudEnabled(item.payload.code)) return; // local/demo never queues
+      await cloudInsertQuote(item.payload.code, item.payload.quote);
+    }
+  });
 }
 
 export async function deleteQuote(code: string, id: string): Promise<void> {

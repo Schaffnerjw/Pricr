@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
 import { SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
@@ -8,6 +9,9 @@ import { getQuotes } from "../storage";
 import { s } from "../styles";
 import { Business, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
+import { getPushPermissionStatus, registerForPushNotifications } from "../utils/pushNotifications";
+
+const PUSH_PROMPT_DISMISSED = "pricr_push_prompt_dismissed";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -34,7 +38,7 @@ function subtextFor(st: DashStats | null): string {
   return "You're all set — let's close some jobs.";
 }
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly, trialDaysLeft, onChoosePlan }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly, trialDaysLeft, onChoosePlan, hasPushToken, onPushToken }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
   onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
@@ -44,6 +48,8 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   quotesOverride?: SavedQuote[]; viewOnly?: boolean;
   // Trial countdown banner (admin, non-demo) — shown when 1 day or less remains.
   trialDaysLeft?: number; onChoosePlan?: () => void;
+  // Push notifications: whether a token is stored + a callback when one is obtained via the banner.
+  hasPushToken?: boolean; onPushToken?: (token: string) => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
@@ -52,6 +58,7 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   const [stats, setStats] = useState<DashStats | null>(quotesOverride ? computeStats(quotesOverride) : null);
   const [dismissed, setDismissed] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
+  const [showPushBanner, setShowPushBanner] = useState(false);
 
   useEffect(() => {
     if (quotesOverride) { setStats(computeStats(quotesOverride)); return; }
@@ -59,6 +66,33 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
     getQuotes(business.code).then(qs => { if (mounted) setStats(computeStats(qs)); });
     return () => { mounted = false; };
   }, [business.code, quotesOverride]);
+
+  // Decide whether to offer the notifications opt-in: admin, not view-only/demo, no token yet,
+  // permission still undetermined, and not previously dismissed.
+  useEffect(() => {
+    if (!isAdmin || viewOnly || isDemoMode || hasPushToken || !onPushToken) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const dismissedPrompt = await AsyncStorage.getItem(PUSH_PROMPT_DISMISSED);
+        if (dismissedPrompt) return;
+        const status = await getPushPermissionStatus();
+        if (mounted && (status === "undetermined" || status === "unknown")) setShowPushBanner(true);
+      } catch { /* ignore */ }
+    })();
+    return () => { mounted = false; };
+  }, [isAdmin, viewOnly, isDemoMode, hasPushToken, onPushToken]);
+
+  const enablePush = async () => {
+    setShowPushBanner(false);
+    try { await AsyncStorage.setItem(PUSH_PROMPT_DISMISSED, "1"); } catch { /* ignore */ }
+    const token = await registerForPushNotifications();
+    if (token) onPushToken?.(token);
+  };
+  const dismissPush = async () => {
+    setShowPushBanner(false);
+    try { await AsyncStorage.setItem(PUSH_PROMPT_DISMISSED, "1"); } catch { /* ignore */ }
+  };
 
   // Onboarding summary card: visible only until the first quote exists, then hidden permanently (FIX 19).
   const showOnboardingCard = !!business.schema && !business.hasGeneratedQuote && (stats?.realCount ?? 0) === 0;
@@ -90,6 +124,15 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
               Your 3-day trial ends {trialDaysLeft <= 0 ? "today" : "tomorrow"} — <Text style={{ color: primaryColor, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Choose your plan →</Text>
             </Text>
           </TouchableOpacity>
+        )}
+        {/* Notifications opt-in — know the moment a client views or signs. */}
+        {showPushBanner && (
+          <View style={[s.brandBanner, { borderColor: primaryColor + "60", flexDirection: "row", alignItems: "center", gap: 10 }]}>
+            <Feather name="bell" size={18} color={primaryColor} />
+            <Text style={[s.brandBannerText, { color: pal.text, flex: 1 }]}>Enable notifications to know when clients sign ✓</Text>
+            <TouchableOpacity onPress={enablePush}><Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Enable</Text></TouchableOpacity>
+            <TouchableOpacity onPress={dismissPush}><Text style={{ color: pal.textMuted, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>Not now</Text></TouchableOpacity>
+          </View>
         )}
         {/* Schema validation banner (Parts 6/10) — urgent styling for the $100/placeholder case. */}
         {isAdmin && schemaWarning && !schemaWarning.ok && onFixSchema && (

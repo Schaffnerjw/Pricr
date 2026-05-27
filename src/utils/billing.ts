@@ -17,7 +17,7 @@ export async function validatePromoCode(code: string): Promise<PromoResult> {
     });
     const data = await res.json();
     return { valid: !!data?.valid, type: data?.type === "veraa" ? "veraa" : "unknown", message: data?.message || "" };
-  } catch (e) { logger.error("[billing] validate failed"); return { valid: false, type: "unknown", message: "Couldn't reach the server" }; }
+  } catch { logger.error("[billing] validate failed"); return { valid: false, type: "unknown", message: "Couldn't reach the server" }; }
 }
 
 // Open Stripe Checkout in the browser for the given business + plan. Returns false if billing isn't configured.
@@ -30,7 +30,7 @@ export async function openCheckout(businessCode: string, plan: PlanId = "monthly
     const data = await res.json();
     if (data?.url) { await WebBrowser.openBrowserAsync(data.url); return true; }
     return false;
-  } catch (e) { logger.error("[billing] checkout open failed"); return false; }
+  } catch { logger.error("[billing] checkout open failed"); return false; }
 }
 
 // Open the Stripe Customer Portal (manage payment / invoices / cancel) for a business. Returns false
@@ -46,7 +46,7 @@ export async function openCustomerPortal(businessCode: string): Promise<boolean>
     }
     Alert.alert("Billing", "Couldn't open billing portal. Try again.");
     return false;
-  } catch (e) {
+  } catch {
     logger.error("[billing] portal open failed");
     Alert.alert("Billing", "Couldn't open billing portal. Try again.");
     return false;

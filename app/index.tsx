@@ -39,6 +39,8 @@ import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "..
 import { logger } from "../src/utils/logger";
 import { authenticateMaster } from "../src/utils/masterAuth";
 import { trialDaysLeft } from "../src/utils/billing";
+import { fetchWithTimeout } from "../src/utils/fetchTimeout";
+import { getPushPermissionStatus, registerForPushNotifications } from "../src/utils/pushNotifications";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
 import { applySchemaUpdate, BLANK_SCHEMA, extractFromMessage, isBlankSchema, quoteSchemaFromWizard, summarizeUpdate, updateMeaningful, WizardData } from "../src/utils/schemaExtractor";
 import { validateSchema, ValidationResult } from "../src/utils/validateSchema";
@@ -117,6 +119,28 @@ export default function Index() {
   const [impersonated, setImpersonated] = useState<{ business: Business; quotes: SavedQuote[] } | null>(null); // super-admin "view as"
   const updateLiveSchema = (next: QuoteSchema) => { liveSchemaRef.current = next; setLiveSchema(next); logger.debug("[Schema] updated"); };
   const resetKitBuild = () => { updateLiveSchema(BLANK_SCHEMA); setExtractionNotes([]); setExtracting(false); };
+
+  // Push: if permission is ALREADY granted, sync the token (no prompt — the DoneScreen banner is what
+  // requests permission). Fire-and-forget so it never blocks login. Demo accounts are skipped.
+  const syncPushIfGranted = async (biz: Business) => {
+    try {
+      if ((await getPushPermissionStatus()) !== "granted") return;
+      const token = await registerForPushNotifications();
+      if (token && token !== biz.pushToken) {
+        setBusiness(prev => (prev && prev.code === biz.code ? { ...prev, pushToken: token } : prev));
+        saveBusiness({ ...biz, pushToken: token }).catch(() => { });
+      }
+    } catch { /* never block the app on push */ }
+  };
+  useEffect(() => { if (business && business.code !== "DEMO") syncPushIfGranted(business); }, [business?.code]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist a push token obtained via the DoneScreen "Enable notifications" banner.
+  const onPushToken = (token: string) => {
+    if (!business) return;
+    const updated: Business = { ...business, pushToken: token };
+    setBusiness(updated);
+    saveBusiness(updated).catch(() => { });
+  };
 
   useEffect(() => { setHydrated(true); runStartupMigrations().then(checkSession); }, []);
 
@@ -405,7 +429,7 @@ export default function Index() {
       const formSummary = `Business: ${business?.name}\nOwner: ${currentUser?.name}\nServices: ${setupServices}\nMaterials: ${setupProducts || "Not specified"}\nPricing: ${setupPricing}`;
       // Trade detection: open by inferring the trade from the business name so the first message feels instantly smart.
       const opener = `The business is named "${business?.name}". Before asking anything, infer their likely trade from that name and OPEN with a one-sentence confirmation, e.g. "${business?.name} — looks like you build decks, is that right? I'll build your quoting tool around deck construction." If the name is ambiguous, instead ask what they do. Then continue the conversation.\n\n${formSummary}`;
-      const response = await fetch(API_URL, {
+      const response = await fetchWithTimeout(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 600, system: KIT_CONVERSATION_PROMPT, messages: [{ role: "user", content: opener }] }),
@@ -435,7 +459,7 @@ export default function Index() {
       const lastMsg = messages[messages.length - 1];
       if (lastMsg.role === "user") lastMsg.content += `\n\n${buildInstruction}`;
       else messages.push({ role: "user", content: buildInstruction });
-      const response = await fetch(API_URL, {
+      const response = await fetchWithTimeout(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 4000, system: SCHEMA_BUILDER_PROMPT, messages }),
@@ -526,7 +550,7 @@ export default function Index() {
     runExtraction(text); // fire-and-forget: build the schema in real time, never blocks the chat
     try {
       const formSummary = `Business: ${business?.name}, Services: ${setupServices}, Materials: ${setupProducts}, Pricing: ${setupPricing}`;
-      const response = await fetch(API_URL, {
+      const response = await fetchWithTimeout(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 800, system: KIT_CONVERSATION_PROMPT, messages: [{ role: "user", content: formSummary }, ...newMessages] }),
@@ -579,8 +603,8 @@ export default function Index() {
       onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
-      onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification }) => {
-        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification };
+      onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification, quoteExpiryDays }) => {
+        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification, quoteExpiryDays };
         await saveBusiness(updated); // throws on failure → SettingsScreen surfaces it; local state only updates on success
         setBusiness(updated);
       }}
@@ -642,6 +666,8 @@ export default function Index() {
       showTestPrompt={justBuilt} isDemoMode={isDemoMode}
       trialDaysLeft={!isDemoMode && business.subscriptionStatus === "trial" ? trialDaysLeft(business.trialStartedAt) : undefined}
       onChoosePlan={() => { setPaywallMode("signup"); setScreen("paywall"); }}
+      hasPushToken={!!business.pushToken}
+      onPushToken={onPushToken}
       onOpenQuoteTool={() => { setJustBuilt(false); setQuoteInitialValues(undefined); setScreen("quote"); }}
       onQuoteHistory={() => { setJustBuilt(false); setScreen("history"); }}
       onStats={() => { setJustBuilt(false); setScreen("stats"); }}

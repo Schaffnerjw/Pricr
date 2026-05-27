@@ -58,8 +58,10 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
   }, [reduceMotion]);
 
   const balanceDue = Math.max(0, t.total - t.deposit);
-  const validTs = Date.now() + 30 * 24 * 60 * 60 * 1000;
-  const validThrough = formatLongDate(validTs);
+  // Quote validity window — business.quoteExpiryDays (default 30); 0 = "Never" (no expiry → validTs 0).
+  const expiryDays = business.quoteExpiryDays === undefined ? 30 : business.quoteExpiryDays;
+  const validTs = expiryDays > 0 ? Date.now() + expiryDays * 24 * 60 * 60 * 1000 : 0;
+  const validThrough = validTs > 0 ? formatLongDate(validTs) : "";
 
   // Build the same line items the card renders, for the PDF.
   const buildLineItems = () => {
@@ -231,7 +233,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
             {t.total > 0 && (
               <View style={{ gap: 2 }}>
                 <Text style={[s.ccTerms, { color: theme.valueColor }]}>Balance of {formatMoney(balanceDue)} due upon completion</Text>
-                <Text style={[s.ccValid, { color: theme.lineColor }]}>Valid through {validThrough}</Text>
+                {validThrough ? <Text style={[s.ccValid, { color: theme.lineColor }]}>Valid until {validThrough}</Text> : null}
               </View>
             )}
 

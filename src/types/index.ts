@@ -12,7 +12,11 @@ export interface Business { code: string; name: string; ownerName: string; admin
   // Billing / partner (stored in config jsonb; subscription_status also mirrored to a column — migration 0007).
   isVeraaClient?: boolean; promoCode?: string; subscriptionStatus?: SubscriptionStatus; stripeCustomerId?: string; trialStartedAt?: number; partnerCodeUsed?: string; selectedPlan?: "monthly" | "annual";
   // Kit conversation history (per business; cross-device when cloud is configured).
-  kitChatHistory?: { role: "user" | "assistant"; content: string; timestamp: number }[]; }
+  kitChatHistory?: { role: "user" | "assistant"; content: string; timestamp: number }[];
+  // Quote validity window (days) — default 30; undefined/0 with "Never" selected → no expiry.
+  quoteExpiryDays?: number;
+  // Expo push token for client-signed / quote-viewed / trial notifications.
+  pushToken?: string; }
 // Optional render metadata for the single-page job walkthrough. When absent (legacy/demo schemas),
 // QuoteScreen falls back to the classic flat field list. Field ids referenced here exist in fields[].
 export type SectionPattern = "MATERIAL_MEASUREMENT" | "SYSTEM_CONFIG_QUANTITY" | "FLAT_RATE" | "LABOR";
@@ -47,6 +51,6 @@ export interface QuotePresentation {
   paymentMethods?: string[]; // resolved accepted-payment labels, shown on the proposal/PDF
 }
 export interface QuoteDiscount { mode: "amount"|"percent"; value: number; reason?: string }
-export interface SavedQuote { id: string; timestamp: number; customerName: string; trade: string; total: number; deposit: number; fieldValues: Record<string,any>; userId: string; repName: string; isSample?: boolean; status?: QuoteStatus; signatureData?: string; signedAt?: number; presentation?: QuotePresentation; discount?: QuoteDiscount; }
+export interface SavedQuote { id: string; timestamp: number; customerName: string; trade: string; total: number; deposit: number; fieldValues: Record<string,any>; userId: string; repName: string; isSample?: boolean; status?: QuoteStatus; signatureData?: string; signedAt?: number; presentation?: QuotePresentation; discount?: QuoteDiscount; expiresAt?: number; firstViewedAt?: number; viewCount?: number; }
 export interface DemoBusiness { name: string; trade: string; color: string; emoji: string; tagline: string; phone: string; schema: QuoteSchema; }
 export interface CardTheme { cardBg: string; cardBorder: string; bizColor: string; customerColor: string; lineColor: string; valueColor: string; dividerColor: string; totalColor: string; depositBg: string; depositBorder: string; depositLabelColor: string; depositAmountColor: string; }

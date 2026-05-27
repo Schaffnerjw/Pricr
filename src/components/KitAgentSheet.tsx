@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { s } from "../styles";
@@ -17,14 +17,23 @@ const LAYOUT_GROUPS = [
 ];
 
 // In-quote Kit assistant sheet: answers questions, explains line items, and makes schema changes.
-export function KitAgentSheet({ primaryColor, messages, earlierCount = 0, input, loading, onInputChange, onSend, onClose }: {
+export function KitAgentSheet({ primaryColor, messages, earlierCount = 0, input, loading, canRetry = false, onRetry, onInputChange, onSend, onClose }: {
   primaryColor: string;
   messages: { role: "user" | "assistant"; content: string }[];
   earlierCount?: number; // leading messages restored from a prior session (shown under an "earlier" divider)
   input: string; loading: boolean;
+  canRetry?: boolean;            // a request timed out → offer "Try again"
+  onRetry?: () => void;
   onInputChange: (v: string) => void; onSend: (text?: string) => void; onClose: () => void;
 }) {
   const [layout, setLayout] = useState<Record<string, string>>({ input: "Number field", display: "Full width", required: "Optional" });
+  // "Still thinking..." after 15s of waiting.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!loading) { setSlow(false); return; }
+    const t = setTimeout(() => setSlow(true), 15000);
+    return () => clearTimeout(t);
+  }, [loading]);
 
   const last = messages[messages.length - 1];
   const showLayout = !loading && last?.role === "assistant" && last.content.includes("LAYOUT_OPTIONS");
@@ -91,7 +100,20 @@ export function KitAgentSheet({ primaryColor, messages, earlierCount = 0, input,
             </View>
           </View>
         ))}
-        {loading && <View style={s.bubbleKit}><TypingDots color={B.gray2} /></View>}
+        {loading && (
+          <View style={s.bubbleKit}>
+            <TypingDots color={B.gray2} />
+            {slow && <Text style={{ color: B.gray3, fontSize: 12, marginTop: 6, fontFamily: "DMSans_400Regular" }}>Still thinking…</Text>}
+          </View>
+        )}
+
+        {/* Retry after a timeout */}
+        {canRetry && !loading && onRetry && (
+          <TouchableOpacity onPress={onRetry} style={[s.chip, { borderColor: primaryColor + "60", flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" }]}>
+            <Feather name="refresh-cw" size={14} color={primaryColor} />
+            <Text style={[s.chipText, { color: primaryColor }]}>Try again</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Contextual answer pills — only what Kit returned for the question it just asked. */}
         {suggested.length > 0 && (

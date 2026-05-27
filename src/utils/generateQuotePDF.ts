@@ -156,7 +156,7 @@ export function generateQuotePDF(d: QuotePDFData): string {
     </table>
     ${depositBlock}
     ${signatureBlock}
-    <div class="valid">This estimate is valid for 30 days · through ${esc(formatLongDate(d.validThrough))}</div>
+    <div class="valid">${d.validThrough > 0 ? `Quote valid until ${esc(formatLongDate(d.validThrough))}` : "This quote does not expire"}</div>
     ${signLinkBlock}
     ${esignBlock}
     ${paymentBlock}

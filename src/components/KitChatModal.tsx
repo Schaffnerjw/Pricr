@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { API_URL, B } from "../constants/brand";
+import { fetchWithTimeout } from "../utils/fetchTimeout";
 import { s } from "../styles";
 import { TypingDots } from "./TypingDots";
 
@@ -45,7 +46,7 @@ export function KitChatModal({ visible, onClose, primaryColor, title, subtitle, 
       // Anthropic requires the first message to be a user turn — drop the leading opener.
       let start = 0;
       while (start < next.length && next[start].role === "assistant") start++;
-      const res = await fetch(API_URL, {
+      const res = await fetchWithTimeout(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1800, system: systemPrompt, messages: next.slice(start) }),

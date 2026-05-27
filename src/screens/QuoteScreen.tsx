@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, View } from "react-native";
+import { Alert, Image, KeyboardAvoidingView, LayoutAnimation, Modal, Platform, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, UIManager, useWindowDimensions, View } from "react-native";
 import { AnimatedDollar } from "../components/AnimatedDollar";
 import { BrandHeader } from "../components/BrandHeader";
 import { ClosingCard } from "../components/ClosingCard";
@@ -21,6 +21,8 @@ import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typi
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { defaultAllowMultiSelect, deriveSections } from "../utils/buildSchemaFromVerified";
 import { applyKitSchemaUpdate } from "../utils/kitSchemaUpdate";
+import { fetchWithTimeout, isTimeout, KIT_TIMEOUT_MS } from "../utils/fetchTimeout";
+import { checkOnline } from "../hooks/useNetworkStatus";
 import { executeKitCommand } from "../utils/executeKitCommand";
 import { KitCommand } from "../utils/kitCommands";
 import { logger } from "../utils/logger";
@@ -53,6 +55,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentMessages, setAgentMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [kitEarlierCount, setKitEarlierCount] = useState(0); // how many leading messages are from prior sessions
+  const [kitRetryText, setKitRetryText] = useState<string | null>(null); // last message to resend after a timeout
   const [showOverview, setShowOverview] = useState(false);       // section overview / negotiation screen
   const [comparingField, setComparingField] = useState<string | null>(null); // selector with the comparison panel open
   const [activeSections, setActiveSections] = useState<Record<string, boolean>>({}); // single-page: which sections are ON
@@ -85,6 +88,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const primaryColor = pal.primary;
   const onPrimary = ON_PRIMARY; // brand look: always white text/icons on the primary color
   const PILL_MAX = Platform.OS === "web" ? 180 : 140; // FIX 7: keep pills compact for long material names
+  const { width: screenW } = useWindowDimensions();
+  const narrowCards = screenW < 380; // small phones → single-column section list
   const COMPLETE_GREEN = "#22C55E";                   // FIX 3: section-complete accent
   const COMPLETE_TINT = "rgba(34,197,94,0.10)";       // subtle green card tint when a section is done
 
@@ -244,10 +249,12 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
   // Throws if the write fails — callers MUST surface the error and not show a success state.
   const saveQuote = async (): Promise<string> => {
+    const expiryDays = business.quoteExpiryDays === undefined ? 30 : business.quoteExpiryDays;
     const quote: SavedQuote = {
       id: Date.now().toString(), timestamp: Date.now(), customerName,
       trade: schema?.trade, total: t.total, deposit: t.deposit, fieldValues,
       userId: currentUser.id, repName: currentUser.name, status: "open",
+      ...(expiryDays > 0 ? { expiresAt: Date.now() + expiryDays * 24 * 60 * 60 * 1000 } : {}),
       ...(discount.value > 0 ? { discount: { mode: discount.mode, value: discount.value, reason: discount.reason || undefined } } : {}),
     };
     const isFirstReal = history.filter(q => !q.isSample).length === 0;
@@ -353,11 +360,14 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     setAgentMessages(newMessages);
     setAgentInput("");
     setAgentLoading(true);
+    setKitRetryText(null);
     const finish = (assistantText: string) => {
       const all = [...newMessages, { role: "assistant" as const, content: assistantText }];
       setAgentMessages(all);
       persistKitHistory(all);
     };
+    // Fail fast when offline — Kit needs the network; no hanging spinner.
+    if (!(await checkOnline())) { setKitRetryText(text); finish("Kit requires an internet connection. Reconnect and try again."); setAgentLoading(false); return; }
     try {
       logger.debug("[KitAgent] sending message to Claude");
       // Send the LAST 20 messages for context (window management), grounding the latest turn with the
@@ -371,11 +381,11 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           : { role: m.role, content: m.role === "assistant" ? stripBlocks(m.content) : m.content },
       );
       const agentSystem = `${AGENT_PROMPT}\n\nYou are Kit, the AI assistant for ${business.name}${schema?.trade ? `, a ${schema.trade} business` : ""}.\n\nYOUR CURRENT QUOTE TOOL:\n${humanSchemaSummary(schema)}`;
-      const response = await fetch(API_URL, {
+      const response = await fetchWithTimeout(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1500, system: agentSystem, messages: apiMessages }),
-      });
+      }, KIT_TIMEOUT_MS);
       const data = await response.json();
       const reply = (data?.content?.[0]?.text || "").trim();
       logger.debug("[KitAgent] raw response:", reply.substring(0, 300));
@@ -482,7 +492,8 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       finish(displayMessage || reply);
     } catch (e) {
       logger.error("[KitAgent] request failed", e instanceof Error ? e.message : String(e));
-      finish("Something went wrong. Give it another shot.");
+      if (isTimeout(e)) { setKitRetryText(text); finish("Kit is taking longer than usual. Check your connection and try again."); }
+      else finish("Something went wrong. Give it another shot.");
     }
     setAgentLoading(false);
   };
@@ -872,23 +883,36 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         {!readOnly && (
           <View style={{ gap: 10 }}>
             <Text style={[s.fieldLabel, { color: pal.textMuted }]}>WHAT&apos;S IN THIS JOB?</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+            <View style={narrowCards ? { gap: 8 } : { flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
               {displaySections.map((g) => {
                 const on = !!activeSections[g.id];
                 const sub = groupSubtotal(g);
-                const complete = on && sub > 0;                 // FIX 3: toggled on AND has a value
+                const complete = on && sub > 0;                 // toggled on AND has a value
                 const cardBg = complete ? COMPLETE_TINT : pal.surface;
                 const cardBorder = complete ? COMPLETE_GREEN : (on ? primaryColor : pal.border);
+                const statusIcon = complete
+                  ? <Feather name="check-circle" size={18} color={COMPLETE_GREEN} />
+                  : (on ? null : <Feather name="plus-circle" size={18} color={pal.textMuted} />);
+                // Small phones: single-column list row (icon · name · subtotal · chevron).
+                if (narrowCards) {
+                  return (
+                    <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: cardBg, borderColor: cardBorder, borderWidth: complete || on ? 2 : 1, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14 }}>
+                      <Feather name={iconFor(g.name)} size={20} color={complete ? COMPLETE_GREEN : primaryColor} />
+                      <Text numberOfLines={2} style={{ flex: 1, color: pal.text, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{g.name}</Text>
+                      {complete && <Text style={{ color: COMPLETE_GREEN, fontSize: 13, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}
+                      <Feather name="chevron-right" size={18} color={pal.textMuted} />
+                    </PressableScale>
+                  );
+                }
+                // Wide: fixed-height 2-column card so rows align regardless of name length.
                 return (
-                  <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ width: "47.5%", flexGrow: 1, minWidth: 140, backgroundColor: cardBg, borderColor: cardBorder, borderWidth: complete || on ? 2 : 1, borderRadius: 16, padding: 14, gap: 8 }}>
+                  <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ width: "47.5%", flexGrow: 1, minWidth: 150, height: 86, justifyContent: "space-between", backgroundColor: cardBg, borderColor: cardBorder, borderWidth: complete || on ? 2 : 1, borderRadius: 16, padding: 12 }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                       <Feather name={iconFor(g.name)} size={20} color={complete ? COMPLETE_GREEN : primaryColor} />
-                      {complete
-                        ? <Feather name="check-circle" size={18} color={COMPLETE_GREEN} />
-                        : (on ? null : <Feather name="plus-circle" size={18} color={pal.textMuted} />)}
+                      {statusIcon}
                     </View>
-                    <Text numberOfLines={2} style={{ color: pal.text, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{g.name}</Text>
-                    {complete && <Text style={{ color: COMPLETE_GREEN, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(sub)}</Text>}
+                    <Text numberOfLines={2} style={{ color: pal.text, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold", lineHeight: 15 }}>{g.name}</Text>
+                    <Text style={{ color: COMPLETE_GREEN, fontSize: 12, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{complete ? formatMoney(sub) : " "}</Text>
                   </PressableScale>
                 );
               })}
@@ -1294,7 +1318,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       )}
 
       {agentOpen && isAdmin && !readOnly && (
-        <KitAgentSheet primaryColor={primaryColor} messages={agentMessages} earlierCount={kitEarlierCount} input={agentInput} loading={agentLoading} onInputChange={setAgentInput} onSend={sendAgentMessage} onClose={() => { setAgentOpen(false); setAgentMessages([]); setKitEarlierCount(0); }} />
+        <KitAgentSheet primaryColor={primaryColor} messages={agentMessages} earlierCount={kitEarlierCount} input={agentInput} loading={agentLoading} canRetry={!!kitRetryText && !agentLoading} onRetry={() => { const t = kitRetryText; setKitRetryText(null); if (t) sendAgentMessage(t); }} onInputChange={setAgentInput} onSend={sendAgentMessage} onClose={() => { setAgentOpen(false); setAgentMessages([]); setKitEarlierCount(0); setKitRetryText(null); }} />
       )}
 
       {showCelebration && !readOnly && <ConfettiOverlay message="First quote saved!" />}

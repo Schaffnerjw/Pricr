@@ -48,7 +48,7 @@ function HexColorRow({ label, initial, valid, onCommit }: { label: string; initi
 export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, scrollToTerms }: {
   business: Business;
   currentUser?: User;
-  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean }) => void | Promise<void>;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number }) => void | Promise<void>;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
   onSignOut?: () => void;
@@ -67,6 +67,7 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const [payOther, setPayOther] = useState(business.paymentMethods?.other ?? "");
   const [notificationEmail, setNotificationEmail] = useState(business.notificationEmail ?? business.brand.email ?? "");
   const [requireSms, setRequireSms] = useState(business.requireSmsVerification !== false); // default ON
+  const [expiryDays, setExpiryDays] = useState(business.quoteExpiryDays === undefined ? 30 : business.quoteExpiryDays); // 0 = Never
   const [dp, setDp] = useState<DocPrefs>(resolveDocPrefs(business.docPrefs));
   const [kitOpen, setKitOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -126,7 +127,7 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   );
   const save = async () => {
     try {
-      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms });
+      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms, quoteExpiryDays: expiryDays });
       setEditingTerms(false);
       setToast(true);
       setTimeout(() => setToast(false), 1600);
@@ -341,6 +342,19 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
               <Text style={[s.btnSecondaryText, { color: pc }]}>Rebuild Quote Tool</Text>
             </TouchableOpacity>
           )}
+
+          {/* Quote validity window */}
+          <Text style={{ color: B.gray1, fontSize: 14, fontWeight: "600", fontFamily: "DMSans_600SemiBold", marginTop: 4 }}>Quote validity</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            {[{ label: "15 days", v: 15 }, { label: "30 days", v: 30 }, { label: "45 days", v: 45 }, { label: "60 days", v: 60 }, { label: "Never", v: 0 }].map(opt => {
+              const active = expiryDays === opt.v;
+              return (
+                <TouchableOpacity key={opt.v} onPress={() => setExpiryDays(opt.v)} style={{ paddingVertical: 8, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: active ? pc : B.border, backgroundColor: active ? pc : "transparent" }}>
+                  <Text style={{ fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold", color: active ? ON_PRIMARY : B.gray1 }}>{opt.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <TouchableOpacity onPress={() => setSchemaOpen(o => !o)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 }}>
             <Text style={{ color: B.gray1, fontSize: 15, fontFamily: "DMSans_600SemiBold" }}>Current Schema</Text>
             <Feather name={schemaOpen ? "chevron-up" : "chevron-down"} size={18} color={B.gray2} />

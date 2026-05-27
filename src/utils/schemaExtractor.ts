@@ -1,4 +1,5 @@
 import { API_URL } from "../constants/brand";
+import { fetchWithTimeout } from "./fetchTimeout";
 import { SCHEMA_EXTRACTION_PROMPT } from "../constants/prompts";
 import { AddOn, FieldGroup, FieldUnit, QuoteSchema, SchemaField } from "../types";
 import { buildSchemaFromVerified, VerifiedAddOn, VerifiedItem, VerifiedSelector, VerifiedUnit } from "./buildSchemaFromVerified";
@@ -338,7 +339,7 @@ export async function extractFromMessage(userMessage: string, currentSchema: Quo
     logger.debug("[SchemaExtractor] extracting...");
     const slim = { trade: currentSchema.trade, fields: (currentSchema.fields || []).map(f => ({ label: f.label, unit: f.unit })), addOns: (currentSchema.addOns || []).map(a => a.label), depositPercent: currentSchema.pricing?.depositPercent ?? 0 };
     const user = `${context ? "Context: " + context + "\n\n" : ""}The user is setting up a quote tool for their contracting business. They just said: "${userMessage}"\n\nCurrent schema state: ${JSON.stringify(slim)}\n\nExtract any NEW pricing or service information from this message and return ONLY the JSON SchemaUpdate object — no markdown, no backticks, no explanation.`;
-    const response = await fetch(API_URL, {
+    const response = await fetchWithTimeout(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 700, system: SCHEMA_EXTRACTION_PROMPT, messages: [{ role: "user", content: user }] }),

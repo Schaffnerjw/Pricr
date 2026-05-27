@@ -20,6 +20,8 @@ export interface QuoteRow {
   phone_verified?: boolean | null;
   document_hash?: string | null;
   audit_log?: any[] | null;
+  first_viewed_at?: string | null;
+  view_count?: number | null;
   created_at: string;
   updated_at?: string;
 }

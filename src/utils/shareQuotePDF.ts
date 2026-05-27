@@ -4,6 +4,7 @@ import * as Sharing from "expo-sharing";
 import * as WebBrowser from "expo-web-browser";
 import { Alert, Platform, Share } from "react-native";
 import { generateQuotePDF, QuotePDFData } from "./generateQuotePDF";
+import { logger } from "./logger";
 
 // Open the quote HTML as a RENDERED document in a new tab (blob URL with a text/html content type —
 // the browser parses and displays it, never the raw source). Falls back to a download if popups are
@@ -88,6 +89,7 @@ export async function shareQuotePDF(data: QuotePDFData, opts?: { message?: strin
       UTI: "com.adobe.pdf",
     });
   } catch (e) {
+    logger.error("[PDF] share failed", e instanceof Error ? e.message : String(e));
     Alert.alert("Couldn't create PDF", e instanceof Error ? e.message : "Something went wrong. Please try again.");
   }
 }
@@ -109,6 +111,7 @@ export async function previewQuotePDF(data: QuotePDFData): Promise<void> {
       else await WebBrowser.openBrowserAsync(uri);
     }
   } catch (e) {
+    logger.error("[PDF] preview failed", e instanceof Error ? e.message : String(e));
     Alert.alert("Couldn't open preview", e instanceof Error ? e.message : "Something went wrong. Please try again.");
   }
 }
