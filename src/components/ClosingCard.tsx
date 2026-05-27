@@ -9,7 +9,7 @@ import { Business, QuotePresentation } from "../types";
 import { getCardTheme } from "../utils/color";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { formatLongDate, formatMoney, resolveDocPrefs } from "../utils/helpers";
-import { shareQuotePDF } from "../utils/shareQuotePDF";
+import { previewQuotePDF, shareQuotePDF } from "../utils/shareQuotePDF";
 
 const SCREEN_H = Dimensions.get("window").height;
 
@@ -103,6 +103,11 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
     docPrefs: business.docPrefs,
     paymentMethods: paymentMethods && paymentMethods.length ? paymentMethods : undefined,
   });
+
+  // Contractor preview — renders the quote exactly as the client sees it (no send, no side effects).
+  const onPreview = async () => {
+    await previewQuotePDF({ ...buildPresentation(), signatureData: signature ?? undefined, signedAt: signedAt ?? undefined, termsAndConditions });
+  };
 
   const onShare = async () => {
     if (sharing) return;
@@ -335,6 +340,14 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                 {business.brand.address ? <ContactRow icon="map-pin" text={business.brand.address} color={theme.lineColor} /> : null}
               </View>
             )}
+
+            <TouchableOpacity
+              style={[s.btnSecondary, { borderColor: primaryColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 8 }]}
+              onPress={onPreview}
+            >
+              <Feather name="eye" size={18} color={primaryColor} />
+              <Text style={[s.btnSecondaryText, { color: primaryColor }]}>Preview as Client</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={[s.btn, { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: primaryColor, marginTop: 8 }]}

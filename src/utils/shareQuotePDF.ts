@@ -1,28 +1,41 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import * as WebBrowser from "expo-web-browser";
 import { Alert, Platform, Share } from "react-native";
 import { generateQuotePDF, QuotePDFData } from "./generateQuotePDF";
 
-// Web: open the quote in a new window and trigger the browser print dialog (Save as PDF), then
-// share the signing link via the Web Share API (falling back to clipboard). expo-print's
-// printToFileAsync and expo-sharing aren't available on web, so this path replaces them.
+// Open the quote HTML as a RENDERED document in a new tab (blob URL with a text/html content type —
+// the browser parses and displays it, never the raw source). Falls back to a download if popups are
+// blocked. Returns the object URL so the caller can trigger print / revoke it.
+function openHtmlInNewTab(html: string): string | null {
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, "_blank");
+  if (!w) {
+    // Popup blocked → download the proposal as an HTML file instead.
+    const a = document.createElement("a");
+    a.href = url; a.download = "Pricr-Quote.html"; a.click();
+  }
+  // Revoke later so the tab has time to finish loading (immediate revoke can blank the page).
+  setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* ignore */ } }, 60000);
+  return w ? url : null;
+}
+
+// Web: open the quote as a rendered page in a new tab and trigger the browser print dialog (Save as
+// PDF), then share the signing link via the Web Share API (falling back to clipboard).
 async function shareQuotePDFWeb(html: string, opts?: { message?: string }): Promise<void> {
   try {
-    const w = window.open("", "_blank");
+    const w = window.open("about:blank", "_blank");
     if (w) {
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-      w.focus();
-      setTimeout(() => { try { w.print(); } catch { /* user can print manually */ } }, 400);
-    } else {
-      // Popup blocked → download the proposal as an HTML file instead.
       const blob = new Blob([html], { type: "text/html" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = "Pricr-Quote.html"; a.click();
-      URL.revokeObjectURL(url);
+      w.location.href = url; // render the HTML as a document (not raw source)
+      w.focus();
+      setTimeout(() => { try { w.print(); } catch { /* user can print manually */ } }, 600);
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* ignore */ } }, 60000);
+    } else {
+      openHtmlInNewTab(html); // popup blocked → download
     }
   } catch { /* ignore window/print failures */ }
 
@@ -76,5 +89,26 @@ export async function shareQuotePDF(data: QuotePDFData, opts?: { message?: strin
     });
   } catch (e) {
     Alert.alert("Couldn't create PDF", e instanceof Error ? e.message : "Something went wrong. Please try again.");
+  }
+}
+
+// Contractor-side PREVIEW — shows the quote exactly as the client receives it, RENDERED (never raw
+// HTML). Web: opens the HTML as a document in a new tab. Native: the OS print preview paginates the
+// HTML into a real PDF view. No sending, no side effects.
+export async function previewQuotePDF(data: QuotePDFData): Promise<void> {
+  try {
+    const html = generateQuotePDF(data);
+    if (Platform.OS === "web") { openHtmlInNewTab(html); return; }
+    // Native: printAsync renders the HTML as a paginated PDF preview in the OS print UI.
+    try {
+      await Print.printAsync({ html });
+    } catch {
+      // Fallback: render to a file and open it (share sheet / in-app browser).
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Quote Preview", UTI: "com.adobe.pdf" });
+      else await WebBrowser.openBrowserAsync(uri);
+    }
+  } catch (e) {
+    Alert.alert("Couldn't open preview", e instanceof Error ? e.message : "Something went wrong. Please try again.");
   }
 }
