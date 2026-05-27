@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Dimensions, Image, Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Dimensions, Image, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import SignaturePad from "./SignaturePad";
 import { B } from "../constants/brand";
 import { useReduceMotion } from "../hooks/useReduceMotion";
@@ -19,7 +19,7 @@ const CONSENT_TEXT = "I have read and agree to the terms above. By signing below
 type Totals = { ctx: Record<string, any>; taxRate: number; tax: number; total: number; depositPct: number; deposit: number };
 
 // The slide-up "proposal" sheet shown when reviewing a quote. Owns its own entrance animation.
-export function ClosingCard({ schema, business, primaryColor, customerName, notes, totals, selectedAddOns, discount, paymentMethods, saved, onSave, prepareShare, onSign, termsAndConditions, onClose, onNewQuote }: {
+export function ClosingCard({ schema, business, primaryColor, customerName, notes, totals, selectedAddOns, discount, paymentMethods, saved, onSave, prepareShare, onSign, termsAndConditions, onClose, onNewQuote, onSaveTemplate, onDuplicate }: {
   schema: any; business: Business; primaryColor: string; customerName: string; notes?: string;
   totals: Totals; selectedAddOns: string[]; discount?: { amount: number; reason?: string }; paymentMethods?: string[]; saved: boolean; onSave: () => void;
   prepareShare?: (presentation: QuotePresentation) => Promise<{ signingLink: string | null }>;
@@ -27,6 +27,8 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
   termsAndConditions?: string;
   onClose: () => void;
   onNewQuote?: () => void;
+  onSaveTemplate?: (name: string) => void;   // save this quote's config as a named template
+  onDuplicate?: () => void;                   // start a similar quote (same config, blank client)
 }) {
   const reduceMotion = useReduceMotion();
   const theme = getCardTheme(primaryColor);
@@ -41,6 +43,9 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
   const [scrollEnabled, setScrollEnabled] = useState(true);
   const [consentChecked, setConsentChecked] = useState(false);
   const [legalModalOpen, setLegalModalOpen] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [templateSaved, setTemplateSaved] = useState(false);
   const t = totals;
   const hasTerms = !!(termsAndConditions && termsAndConditions.trim());
   // E-SIGN consent is required before signing (in addition to any T&C agreement).
@@ -378,6 +383,22 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
               </TouchableOpacity>
             )}
 
+            {/* Quote a similar job — same config, blank client. */}
+            {onDuplicate && (
+              <TouchableOpacity style={[s.btnSecondary, { borderColor: primaryColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onDuplicate}>
+                <Feather name="copy" size={16} color={primaryColor} />
+                <Text style={[s.btnSecondaryText, { color: primaryColor }]}>Quote a similar job →</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Save this configuration as a reusable template. */}
+            {onSaveTemplate && (
+              <TouchableOpacity style={[s.btnSecondary, { borderColor: theme.dividerColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={() => { setTemplateName(""); setTemplateSaved(false); setTemplateModalOpen(true); }}>
+                <Feather name="bookmark" size={16} color={theme.lineColor} />
+                <Text style={[s.btnSecondaryText, { color: theme.lineColor }]}>Save as Template</Text>
+              </TouchableOpacity>
+            )}
+
             {/* Start a fresh quote for a new client (FIX 17). */}
             {onNewQuote && (
               <TouchableOpacity style={[s.btnSecondary, { borderColor: theme.dividerColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onNewQuote}>
@@ -388,6 +409,31 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
           </ScrollView>
         </View>
       </Animated.View>
+
+      {/* Save-as-template name prompt */}
+      <Modal visible={templateModalOpen} transparent animationType="fade" onRequestClose={() => setTemplateModalOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 28 }} onPress={() => setTemplateModalOpen(false)}>
+          <Pressable style={{ backgroundColor: B.card, borderRadius: 18, borderWidth: 1, borderColor: B.border, padding: 22, gap: 14 }} onPress={() => {}}>
+            <Text style={{ color: B.white, fontSize: 17, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Save as Template</Text>
+            {templateSaved ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Feather name="check-circle" size={18} color={primaryColor} />
+                <Text style={{ color: B.gray1, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>Saved — find it at the top of a new quote.</Text>
+              </View>
+            ) : (
+              <>
+                <TextInput
+                  style={{ backgroundColor: B.midnight, color: B.white, borderColor: B.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontFamily: "DMSans_400Regular", fontSize: 15 }}
+                  placeholder="e.g. Standard 300sqft Deck" placeholderTextColor={B.gray3} value={templateName} onChangeText={setTemplateName} autoFocus
+                />
+                <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, opacity: templateName.trim() ? 1 : 0.4 }]} disabled={!templateName.trim()} onPress={() => { onSaveTemplate?.(templateName.trim()); setTemplateSaved(true); setTimeout(() => setTemplateModalOpen(false), 900); }}>
+                  <Text style={s.btnText}>Save Template</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Legal details modal — opened from the post-signing trust badge */}
       <Modal visible={legalModalOpen} transparent animationType="fade" onRequestClose={() => setLegalModalOpen(false)}>

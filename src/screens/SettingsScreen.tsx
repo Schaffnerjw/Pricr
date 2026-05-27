@@ -47,7 +47,7 @@ function HexColorRow({ label, helper, initial, valid, onCommit }: { label: strin
 }
 
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
-export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, onApplyVeraa, scrollToTerms }: {
+export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, onEditSchema, onApplyVeraa, scrollToTerms }: {
   business: Business;
   currentUser?: User;
   onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number }) => void | Promise<void>;
@@ -56,6 +56,7 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   onSignOut?: () => void;
   onViewSigningActivity?: () => void;
   onRebuildQuoteTool?: () => void;
+  onEditSchema?: () => void; // open the manual schema editor (Settings-only power feature)
   onApplyVeraa?: (code: string) => void | Promise<void>; // valid Veraa code entered post-signup → mark veraa + persist
   scrollToTerms?: boolean;
 }) {
@@ -375,14 +376,24 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
           })()}
         </View>
 
-        {/* Quote Tool — rebuild + a debug view of exactly what Kit captured (Part 7). */}
+        {/* Quote Tool — rebuild with Kit OR edit manually (power-user editor lives here, not onboarding). */}
         <View style={{ gap: 12 }}>
           <Text style={s.sectionTitle}>QUOTE TOOL</Text>
-          {onRebuildQuoteTool && (
-            <TouchableOpacity style={[s.btnSecondary, { borderColor: pc, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onRebuildQuoteTool}>
-              <Feather name="refresh-cw" size={15} color={pc} />
-              <Text style={[s.btnSecondaryText, { color: pc }]}>Rebuild Quote Tool</Text>
-            </TouchableOpacity>
+          {(onRebuildQuoteTool || onEditSchema) && (
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              {onRebuildQuoteTool && (
+                <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: pc, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onRebuildQuoteTool}>
+                  <Feather name="message-circle" size={15} color={pc} />
+                  <Text style={[s.btnSecondaryText, { color: pc }]}>Rebuild with Kit</Text>
+                </TouchableOpacity>
+              )}
+              {onEditSchema && (
+                <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: pc, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={onEditSchema}>
+                  <Feather name="edit-2" size={15} color={pc} />
+                  <Text style={[s.btnSecondaryText, { color: pc }]}>Edit Manually</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           )}
 
           {/* Quote validity window */}

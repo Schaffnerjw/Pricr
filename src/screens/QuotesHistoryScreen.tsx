@@ -86,8 +86,10 @@ const viewPill = (q: QuoteRow): { label: string; color: string } => {
 };
 
 // Supabase-backed quote history. Admins can mark accepted/declined from the detail view; reps are read-only.
-export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, backgroundColor, termsAndConditions }: {
+export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, backgroundColor, termsAndConditions, onDuplicate }: {
   businessId?: string; isAdmin: boolean; onBack: () => void; accentColor?: string; backgroundColor?: string; termsAndConditions?: string;
+  // Start a new quote pre-filled with this quote's field values (client/notes cleared).
+  onDuplicate?: (fieldValues: Record<string, any>) => void;
 }) {
   const { quotes, updateQuoteStatus, updateQuoteData, loading, error } = useQuotes(businessId);
   const [selected, setSelected] = useState<QuoteRow | null>(null);
@@ -184,6 +186,12 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
             <TouchableOpacity style={[s.btnSecondary, { borderColor: accent, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }]} onPress={() => openCertificate(selected)}>
               <Feather name="award" size={16} color={accent} />
               <Text style={[s.btnSecondaryText, { color: accent }]}>View Certificate</Text>
+            </TouchableOpacity>
+          )}
+          {onDuplicate && selected.quote_data?.fieldValues && (
+            <TouchableOpacity style={[s.btnSecondary, { borderColor: accent, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }]} onPress={() => onDuplicate(selected.quote_data.fieldValues as Record<string, any>)}>
+              <Feather name="copy" size={16} color={accent} />
+              <Text style={[s.btnSecondaryText, { color: accent }]}>Duplicate this quote</Text>
             </TouchableOpacity>
           )}
           {isAdmin && (

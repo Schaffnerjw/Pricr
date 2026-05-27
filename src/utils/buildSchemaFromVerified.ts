@@ -153,8 +153,10 @@ export function deriveSections(
   fields: SchemaField[],
   pricing: Record<string, number>,
   optionsByField?: Record<string, SchemaOption[]>,
+  defaultSectionIds?: string[],
 ): QuoteSection[] {
   const out: QuoteSection[] = [];
+  const isDefault = (id: string) => Array.isArray(defaultSectionIds) && defaultSectionIds.includes(id);
   const usedQty = new Set<string>();
   const opts = (f: SchemaField): SchemaOption[] => optionsByField?.[f.id] || reconstructOptions(f, pricing);
   for (const sel of fields.filter(f => f.type === "selector")) {
@@ -164,14 +166,14 @@ export function deriveSections(
       usedQty.add(qty.id);
       // Multi-select unless this looks like a primary MATERIAL choice (same unit + a material keyword
       // in the section name). So "Deck Components & Trim"/"Deck Lighting" = multi; "Decking Materials" = single.
-      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit, options, allowMultiSelect: defaultAllowMultiSelect(sel.label, options) });
+      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit, options, allowMultiSelect: defaultAllowMultiSelect(sel.label, options), defaultOn: isDefault(sel.id) });
     } else {
       // Flat pick-one tier (packages): single-select alternatives.
-      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit, options, allowMultiSelect: false });
+      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit, options, allowMultiSelect: false, defaultOn: isDefault(sel.id) });
     }
   }
   for (const num of fields.filter(f => (f.type === "number" || f.type === "area") && !usedQty.has(f.id))) {
-    out.push({ id: num.id, name: num.label, pattern: "LABOR", quantityFieldId: num.id, unit: num.unit, laborRate: pricing[`${num.id}Rate`] ?? 0, options: opts(num), allowMultiSelect: false });
+    out.push({ id: num.id, name: num.label, pattern: "LABOR", quantityFieldId: num.id, unit: num.unit, laborRate: pricing[`${num.id}Rate`] ?? 0, options: opts(num), allowMultiSelect: false, defaultOn: isDefault(num.id) });
   }
   const toggles = fields.filter(f => f.type === "toggle");
   if (toggles.length) {
@@ -180,7 +182,7 @@ export function deriveSections(
       // Carry linked/derived pricing from the field onto the option so the engine can price it.
       return { ...base, ...(t.linkedTo ? { linkedTo: t.linkedTo } : {}), ...(typeof t.multiplier === "number" ? { multiplier: t.multiplier } : {}) };
     });
-    out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: toggles.map(f => f.id), options, allowMultiSelect: true });
+    out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: toggles.map(f => f.id), options, allowMultiSelect: true, defaultOn: isDefault("_flat_fees") });
   }
   return out;
 }

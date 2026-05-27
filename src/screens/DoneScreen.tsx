@@ -40,7 +40,7 @@ function subtextFor(st: DashStats | null): string {
   return "You're all set — let's close some jobs.";
 }
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly, trialDaysLeft, onChoosePlan, hasPushToken, onPushToken }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly, trialDaysLeft, onChoosePlan, hasPushToken, onPushToken, onConfigureQuoteTool }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
   onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
@@ -52,6 +52,8 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   trialDaysLeft?: number; onChoosePlan?: () => void;
   // Push notifications: whether a token is stored + a callback when one is obtained via the banner.
   hasPushToken?: boolean; onPushToken?: (token: string) => void;
+  // Opens the "Configure Quote Tool" action sheet (Kit / manual editor / import).
+  onConfigureQuoteTool?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
@@ -312,6 +314,14 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Configure Quote Tool — opens an action sheet (Kit / manual editor / import). Admin only. */}
+        {isAdmin && onConfigureQuoteTool && (
+          <TouchableOpacity onPress={onConfigureQuoteTool} style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 4 }}>
+            <Feather name="sliders" size={15} color={secondaryColor} />
+            <Text style={{ color: secondaryColor, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Configure Quote Tool →</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Admin-only tertiary — small text links */}
         {isAdmin && (

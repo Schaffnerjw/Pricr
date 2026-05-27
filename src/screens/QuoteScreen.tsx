@@ -67,8 +67,20 @@ export function parseKitDiff(text: string): KitSchemaDiff | null {
   return null;
 }
 
-export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, isDemoMode, initialValues, previewMode }: {
-  schema: any; setSchema: (s: any) => void; business: Business; currentUser: User; onBack: () => void; isDemoMode?: boolean; initialValues?: Record<string, any>; previewMode?: boolean;
+// Section-name normalizers (module-level so the new-quote default computation and the display-group
+// keying produce identical keys). stripParen drops a trailing "(…)"; normName lowercases + collapses ws.
+const stripParen = (n: string) => String(n || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+const normName = (n: string) => stripParen(n).toLowerCase().replace(/\s+/g, " ").trim();
+// The display-group key for a derived section (matches displaySections grouping).
+const groupKeyFor = (sec: { name?: string; id: string }) => normName(sec.name || "") || sec.id;
+
+export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, isDemoMode, initialValues, initialActiveSections, initialAddOns, onSaveTemplate, previewMode }: {
+  schema: any; setSchema: (s: any) => void; business: Business; currentUser: User; onBack: () => void; isDemoMode?: boolean; initialValues?: Record<string, any>;
+  // Pre-populate from a template or a duplicated quote.
+  initialActiveSections?: Record<string, boolean>; initialAddOns?: string[];
+  // Persist the current quote config as a named template (saved on the business).
+  onSaveTemplate?: (t: { name: string; fieldValues: Record<string, any>; activeSections?: Record<string, boolean>; selectedAddOns?: string[] }) => void;
+  previewMode?: boolean;
 }) {
   const readOnly = !!previewMode; // confirmation-preview render: real QuoteScreen, non-interactive
   const [customerName, setCustomerName] = useState("");
@@ -112,7 +124,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const schemaPricingKey = JSON.stringify(schema?.pricing ?? null);
   const schemaSectionsKey = JSON.stringify(schema?.sections ?? null);
   const quoteSections: any[] = useMemo(
-    () => (useNewLayout && schema?.fields?.length ? deriveSections(schema.fields, schema.pricing || {}) : (schema?.sections || [])),
+    () => (useNewLayout && schema?.fields?.length ? deriveSections(schema.fields, schema.pricing || {}, undefined, schema.defaultSectionIds) : (schema?.sections || [])),
     [schemaFieldsKey, schemaPricingKey, schemaSectionsKey, useNewLayout], // eslint-disable-line react-hooks/exhaustive-deps
   );
   // Schema the pricing engine actually sees — carries the upgraded sections (with option ids + rates).
@@ -197,7 +209,14 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       if (maxKey) exp[maxKey] = true;
       exp["addons"] = false;
       setExpanded(exp);
-      setActiveSections({}); // single-page: every section starts OFF; the rep taps to include
+      // Sections flagged "default on" start pre-selected (saves repeat-job reps several taps); an
+      // explicit initialActiveSections (template / duplicate) wins. Otherwise everything starts OFF.
+      // Pre-select default-on sections (mapped to their display-group key). An explicit
+      // initialActiveSections (template / duplicate) takes precedence.
+      const defActive: Record<string, boolean> = {};
+      for (const sec of quoteSections) { if (sec.defaultOn) defActive[groupKeyFor(sec)] = true; }
+      setActiveSections(initialActiveSections ?? defActive);
+      if (initialAddOns && initialAddOns.length) setSelectedAddOns(initialAddOns);
       setCollapsedGroups({});
     });
   }, [schema, business.code]);
@@ -305,6 +324,18 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     // Flag the business as having generated a quote so the dashboard hides the onboarding card (FIX 19).
     if (isFirstReal && !business.hasGeneratedQuote) { try { await saveBusiness({ ...business, hasGeneratedQuote: true }); } catch (e) { logger.error("[Quote] hasGeneratedQuote flag save failed", e instanceof Error ? e.message : String(e)); } }
     return quote.id;
+  };
+
+  // Save the current quote configuration as a reusable template (sections + materials + measurements).
+  const saveTemplate = (name: string) => {
+    onSaveTemplate?.({ name, fieldValues, activeSections, selectedAddOns });
+  };
+  // Apply a saved template to the live quote (rep only updates client name + tweaks measurements).
+  const applyTemplate = (t: { fieldValues: Record<string, any>; activeSections?: Record<string, boolean>; selectedAddOns?: string[] }) => {
+    setFieldValues(prev => ({ ...prev, ...t.fieldValues }));
+    if (t.activeSections) setActiveSections(t.activeSections);
+    if (t.selectedAddOns) setSelectedAddOns(t.selectedAddOns);
+    setLastSavedId(null); setSaved(false);
   };
 
   // Reset every field for a fresh quote (FIX 17). Mirrors the initial-load defaults.
@@ -701,8 +732,6 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // ("Deck Components (per lf)" + "(per sq ft)") becomes several cards with the same base name.
   // Group by the base name (parenthetical suffix stripped, case/space-insensitive) so each base
   // name is ONE card holding all its members. Industry-agnostic — no trade-specific keywords.
-  const stripParen = (n: string) => String(n || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
-  const normName = (n: string) => stripParen(n).toLowerCase().replace(/\s+/g, " ").trim();
   // Sub-label shown for each member when a group holds more than one (e.g. the "(per lf)" qualifier).
   const memberSubLabel = (sec: any): string => {
     const m = String(sec.name || "").match(/\(([^)]+)\)\s*$/);
@@ -714,7 +743,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
     const byKey: Record<string, { id: string; name: string; members: any[] }> = {};
     const order: string[] = [];
     for (const sec of quoteSections) {
-      const key = normName(sec.name) || sec.id;
+      const key = groupKeyFor(sec);
       if (!byKey[key]) { byKey[key] = { id: key, name: stripParen(sec.name) || sec.name, members: [] }; order.push(key); }
       byKey[key].members.push(sec);
     }
@@ -727,7 +756,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       groups.push(other);
     }
     return groups;
-  }, [useNewLayout, quoteSections]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [useNewLayout, quoteSections]);
 
   const groupSubtotal = (group: any): number => (group.members || []).reduce((sum: number, sec: any) => sum + sectionSubtotal(sec), 0);
 
@@ -1102,6 +1131,21 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         ) : (
           <>
+            {/* Start from a saved template (if any) — pre-fills sections + measurements. */}
+            {!readOnly && (business.quoteTemplates?.length ?? 0) > 0 && (
+              <View style={{ gap: 8 }}>
+                <Text style={[s.fieldLabel, { color: pal.textMuted }]}>START FROM A TEMPLATE</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                  {(business.quoteTemplates || []).map(t => (
+                    <TouchableOpacity key={t.id} onPress={() => applyTemplate(t)} style={{ flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderColor: primaryColor, borderRadius: 20, paddingVertical: 8, paddingHorizontal: 14 }}>
+                      <Feather name="layers" size={14} color={primaryColor} />
+                      <Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{t.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
             {/* Job notes — free-text, optional. Flows into the PDF, proposal, and signing page. */}
             {!readOnly && (
               <View style={{ gap: 8 }}>
@@ -1223,7 +1267,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </KeyboardAvoidingView>
 
       {showTotal && !readOnly && (
-        <ClosingCard schema={presentationSchema} business={business} primaryColor={primaryColor} customerName={customerName} notes={notes.trim() || undefined} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
+        <ClosingCard schema={presentationSchema} business={business} primaryColor={primaryColor} customerName={customerName} notes={notes.trim() || undefined} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} onSaveTemplate={onSaveTemplate ? saveTemplate : undefined} onDuplicate={() => { setShowTotal(false); setCustomerName(""); setNotes(""); setLastSavedId(null); setSaved(false); }} />
       )}
 
       {/* ── Section overview / negotiation screen — review subtotals, edit any section, see the live total ── */}
@@ -1292,8 +1336,20 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
               )}
             </ScrollView>
 
-            {/* Footer: live grand total + continue to the proposal */}
+            {/* Footer: subtotal / deposit breakdown + live grand total + continue to the proposal */}
             <View style={{ padding: 20, borderTopWidth: 1, borderTopColor: pal.border, gap: 12 }}>
+              {t.depositPct > 0 && t.total > 0 && (
+                <View style={{ gap: 4 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Deposit ({t.depositPct}%)</Text>
+                    <Text style={{ color: pal.text, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{formatMoney(t.deposit)}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Balance at completion</Text>
+                    <Text style={{ color: pal.text, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{formatMoney(Math.max(0, t.total - t.deposit))}</Text>
+                  </View>
+                </View>
+              )}
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <Text style={{ color: pal.textMuted, fontSize: 13, fontWeight: "700", letterSpacing: 1, fontFamily: "DMSans_700Bold" }}>TOTAL</Text>
                 <Text style={{ color: primaryColor, fontSize: 30, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>{formatMoney(t.total)}</Text>
@@ -1363,28 +1419,69 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             <TouchableOpacity onPress={() => setShowCustomer(false)} hitSlop={10}><Feather name="x" size={28} color={pal.textMuted} /></TouchableOpacity>
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: 24, gap: 22 }}>
+          <ScrollView contentContainerStyle={{ padding: 24, gap: 16 }}>
             {displayOverviewSections.length === 0 && <Text style={{ color: pal.textMuted, fontSize: 18, fontFamily: "DMSans_400Regular", textAlign: "center", marginTop: 48 }}>Your quote is being built…</Text>}
-            {displayOverviewSections.map(g => (
-              <View key={g.key} style={{ gap: 10 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-                  <Text style={{ color: pal.text, fontSize: 21, fontWeight: "800", fontFamily: "Syne_700Bold", flex: 1 }}>{g.title}</Text>
-                  <Text style={{ color: primaryColor, fontSize: 21, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(g.subtotal)}</Text>
-                </View>
-                {g.lines.map((ln, i) => (
-                  <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", gap: 16, paddingLeft: 4 }}>
-                    <Text style={{ color: pal.textMuted, fontSize: 16, fontFamily: "DMSans_400Regular", flexShrink: 1 }}>{ln.label}</Text>
-                    <Text style={{ color: pal.text, fontSize: 16, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{formatMoney(ln.amount)}</Text>
+            {displayOverviewSections.length > 0 && (
+              <Text style={{ color: pal.textMuted, fontSize: 13, fontWeight: "700", letterSpacing: 1, fontFamily: "DMSans_700Bold" }}>WHAT&apos;S INCLUDED IN YOUR QUOTE</Text>
+            )}
+            {/* Card per included item: brand checkmark, name, auto-description, subtotal. */}
+            {displayOverviewSections.flatMap(g => g.lines.map((ln, i) => {
+              const parts = ln.label.split(" — ");
+              const name = parts[0];
+              const desc = parts.length > 1 ? `${g.title} · ${parts.slice(1).join(" — ")}` : g.title;
+              return (
+                <View key={`${g.key}-${i}`} style={{ flexDirection: "row", alignItems: "flex-start", gap: 12, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 14, padding: 16 }}>
+                  <Feather name="check-circle" size={22} color={primaryColor} style={{ marginTop: 2 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: pal.text, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{name}</Text>
+                    <Text style={{ color: pal.textMuted, fontSize: 14, fontFamily: "DMSans_400Regular", marginTop: 2 }}>{desc}</Text>
                   </View>
-                ))}
-              </View>
-            ))}
-            {t.discountAmount > 0 && (
-              <View style={{ flexDirection: "row", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: pal.border, paddingTop: 14 }}>
-                <Text style={{ color: pal.textMuted, fontSize: 17, fontFamily: "DMSans_400Regular" }}>Discount</Text>
-                <Text style={{ color: primaryColor, fontSize: 17, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>-{formatMoney(t.discountAmount)}</Text>
+                  <Text style={{ color: pal.text, fontSize: 16, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{formatMoney(ln.amount)}</Text>
+                </View>
+              );
+            }))}
+
+            {/* Total breakdown */}
+            {t.total > 0 && (
+              <View style={{ gap: 8, borderTopWidth: 1, borderTopColor: pal.border, paddingTop: 16, marginTop: 4 }}>
+                {t.discountAmount > 0 && (
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ color: pal.textMuted, fontSize: 16, fontFamily: "DMSans_400Regular" }}>Discount</Text>
+                    <Text style={{ color: primaryColor, fontSize: 16, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>-{formatMoney(t.discountAmount)}</Text>
+                  </View>
+                )}
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={{ color: pal.text, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Total</Text>
+                  <Text style={{ color: pal.text, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{formatMoney(t.total)}</Text>
+                </View>
+                {t.depositPct > 0 && (
+                  <>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                      <Text style={{ color: pal.textMuted, fontSize: 16, fontFamily: "DMSans_400Regular" }}>{t.depositPct}% Deposit Today</Text>
+                      <Text style={{ color: pal.text, fontSize: 16, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{formatMoney(t.deposit)}</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                      <Text style={{ color: pal.textMuted, fontSize: 16, fontFamily: "DMSans_400Regular" }}>Balance at completion</Text>
+                      <Text style={{ color: pal.text, fontSize: 16, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{formatMoney(Math.max(0, t.total - t.deposit))}</Text>
+                    </View>
+                  </>
+                )}
               </View>
             )}
+
+            {/* Trust signals */}
+            <View style={{ gap: 8, marginTop: 8 }}>
+              {["Licensed & Insured", "Signed quote — legally binding"].map(txt => (
+                <View key={txt} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Feather name="check" size={16} color={primaryColor} />
+                  <Text style={{ color: pal.textMuted, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>{txt}</Text>
+                </View>
+              ))}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Feather name="check" size={16} color={primaryColor} />
+                <Text style={{ color: pal.textMuted, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>{business.name}{business.brand.phone ? ` · ${business.brand.phone}` : ""}</Text>
+              </View>
+            </View>
           </ScrollView>
 
           <View style={{ padding: 24, borderTopWidth: 1, borderTopColor: pal.border, gap: 4 }}>

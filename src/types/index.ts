@@ -1,5 +1,5 @@
 export type Role = "admin" | "rep" | "superadmin";
-export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"choose_setup"|"wizard"|"import"|"meet_kit"|"building"|"confirm_schema"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"stats"|"master"|"super_analytics"|"view_as"|"paywall";
+export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"choose_setup"|"wizard"|"import"|"meet_kit"|"building"|"confirm_schema"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"stats"|"master"|"super_analytics"|"view_as"|"paywall"|"schema_editor";
 export interface User { id: string; name: string; role: Role; businessCode: string; username?: string; pinHash?: string;
   // Multi-location foundation (data model only): which location this rep works at.
   assignedLocationCode?: string; }
@@ -21,7 +21,15 @@ export interface Business { code: string; name: string; ownerName: string; admin
   pushToken?: string;
   // Multi-location / franchise foundation (data model only — no UI yet). A "headquarters" business
   // can have child "location" businesses; a "single" business stands alone.
-  locationType?: "single" | "headquarters" | "location"; parentBusinessCode?: string; locationName?: string; childLocationCodes?: string[]; }
+  locationType?: "single" | "headquarters" | "location"; parentBusinessCode?: string; locationName?: string; childLocationCodes?: string[];
+  // Saved quote templates + schema version history (both stored in config jsonb — no migration).
+  quoteTemplates?: QuoteTemplate[]; schemaVersions?: SchemaVersion[]; }
+
+// A saved quote configuration the rep can start a new quote from.
+export interface QuoteTemplate { id: string; name: string; fieldValues: Record<string, any>; activeSections?: Record<string, boolean>; selectedAddOns?: string[]; createdAt: number; }
+// One entry in the quote-tool version history (last 5 kept).
+export type SchemaVersionSource = "Kit" | "Import" | "Manual edit";
+export interface SchemaVersion { timestamp: number; source: SchemaVersionSource; schema: QuoteSchema; }
 // Optional render metadata for the single-page job walkthrough. When absent (legacy/demo schemas),
 // QuoteScreen falls back to the classic flat field list. Field ids referenced here exist in fields[].
 export type SectionPattern = "MATERIAL_MEASUREMENT" | "SYSTEM_CONFIG_QUANTITY" | "FLAT_RATE" | "LABOR";
@@ -36,8 +44,12 @@ export interface QuoteSection {
   // never by name. `allowMultiSelect` is explicit, never inferred from the section name.
   options?: import("./schema").SchemaOption[];
   allowMultiSelect?: boolean;
+  // When true, this section is pre-selected (toggled on + expanded) on a new quote.
+  defaultOn?: boolean;
 }
-export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; sections?: QuoteSection[]; }
+export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; sections?: QuoteSection[];
+  // Ids of sections pre-selected on a new quote (set in the schema editor). Stable across re-derivation.
+  defaultSectionIds?: string[]; }
 export type FieldUnit = "sqft"|"lf"|"each"|"hr"|"flat"|"percent"|"load"|"room"|"vehicle"|"ton";
 export type FieldGroup = "dimensions"|"materials"|"railings"|"lighting"|"fencing"|"extras"|"fees"|"details";
 export interface SchemaField { id: string; label: string; type: "number"|"selector"|"toggle"|"area"; options?: string[]; placeholder?: string; unit?: FieldUnit; group?: FieldGroup;

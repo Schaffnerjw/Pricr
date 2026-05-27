@@ -1,6 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { BrandHeader } from "../src/components/BrandHeader";
 import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
@@ -19,7 +19,9 @@ import { QuoteScreen } from "../src/screens/QuoteScreen";
 import { QuotesHistoryScreen } from "../src/screens/QuotesHistoryScreen";
 import { RepJoinScreen } from "../src/screens/RepJoinScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
+import { SchemaEditorScreen } from "../src/screens/SchemaEditorScreen";
 import { ThemeProvider } from "../src/contexts/ThemeContext";
+import { pushSchemaVersion } from "../src/utils/schemaEditorOps";
 import { SetUsernameScreen } from "../src/screens/SetUsernameScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
 import { SignupBrandScreen } from "../src/screens/SignupBrandScreen";
@@ -33,7 +35,8 @@ import { WelcomeScreen } from "../src/screens/WelcomeScreen";
 import { s } from "../src/styles";
 import { isSupabaseConfigured } from "../src/lib/supabase";
 import { addQuote, clearCurrentUser, clearImportProgress, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
-import { BrandConfig, Business, DemoBusiness, QuoteSchema, SavedQuote, Screen, User } from "../src/types";
+import { BrandConfig, Business, DemoBusiness, QuoteSchema, QuoteTemplate, SavedQuote, Screen, User } from "../src/types";
+import { addTemplate, templateToInitialValues } from "../src/utils/quoteTemplates";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
@@ -105,6 +108,53 @@ export default function Index() {
   const [kitReady, setKitReady] = useState(false);
   const [justBuilt, setJustBuilt] = useState(false);
   const [quoteInitialValues, setQuoteInitialValues] = useState<Record<string, any> | undefined>(undefined);
+  const [quoteInitialActiveSections, setQuoteInitialActiveSections] = useState<Record<string, boolean> | undefined>(undefined);
+  const [quoteInitialAddOns, setQuoteInitialAddOns] = useState<string[] | undefined>(undefined);
+  // Start a fresh blank quote (clears any template/duplicate pre-fill).
+  const startBlankQuote = () => { setJustBuilt(false); setQuoteInitialValues(undefined); setQuoteInitialActiveSections(undefined); setQuoteInitialAddOns(undefined); setScreen("quote"); };
+  // Open a new quote pre-filled from a saved template.
+  const startFromTemplate = (t: QuoteTemplate) => {
+    const init = templateToInitialValues(t);
+    setJustBuilt(false); setQuoteInitialValues(init.fieldValues); setQuoteInitialActiveSections(init.activeSections); setQuoteInitialAddOns(init.selectedAddOns); setScreen("quote");
+  };
+  // Open a new quote pre-filled from an existing one (client/notes cleared).
+  const startDuplicate = (fieldValues: Record<string, any>) => {
+    setJustBuilt(false); setQuoteInitialValues({ ...fieldValues }); setQuoteInitialActiveSections(undefined); setQuoteInitialAddOns(undefined); setScreen("quote");
+  };
+  // Persist a saved template into the business config (best-effort cloud save).
+  const onSaveQuoteTemplate = async (t: { name: string; fieldValues: Record<string, any>; activeSections?: Record<string, boolean>; selectedAddOns?: string[] }) => {
+    if (!business) return;
+    const updated: Business = { ...business, quoteTemplates: addTemplate(business.quoteTemplates, t) };
+    setBusiness(updated);
+    try { await saveBusiness(updated); } catch (e) { logger.warn("[template] save failed", e instanceof Error ? e.message : String(e)); }
+  };
+  // Commit a manual schema edit: records a version (last 5) + persists. Re-derives sections on load.
+  const onSaveSchemaEdit = async (nextSchema: QuoteSchema, source: "Manual edit" | "Kit" | "Import" = "Manual edit") => {
+    if (!business) return;
+    const versions = pushSchemaVersion(business.schemaVersions, business.schema ?? nextSchema, source === "Manual edit" ? "Manual edit" : source);
+    const updated: Business = { ...business, schema: nextSchema, schemaVersions: versions, kitUpdates: (business.kitUpdates || 0) + 1 };
+    setBusiness(updated);
+    try { await saveBusiness(updated); } catch (e) { logger.warn("[schema] manual save failed", e instanceof Error ? e.message : String(e)); }
+  };
+  // Dashboard "New Quote" → blank, or start from a saved template (P5).
+  const openNewQuote = () => {
+    const tpls = business?.quoteTemplates || [];
+    if (!tpls.length) { startBlankQuote(); return; }
+    Alert.alert("New Quote", "Start blank or from a saved template?", [
+      { text: "Blank quote", onPress: startBlankQuote },
+      ...tpls.slice(0, 3).map(t => ({ text: `From: ${t.name}`, onPress: () => startFromTemplate(t) })),
+      { text: "Cancel", style: "cancel" as const },
+    ]);
+  };
+  // Dashboard "Configure Quote Tool" → action sheet (Kit / manual editor / import).
+  const openConfigureQuoteTool = () => {
+    Alert.alert("Configure Quote Tool", "How would you like to set up your quote tool?", [
+      { text: "Chat with Kit", onPress: () => { setSettingsFocusTerms(false); startSetupChoice(true); } },
+      { text: "Edit manually", onPress: () => setScreen("schema_editor") },
+      { text: "Import price sheet", onPress: () => { setIsReconfiguring(true); setScreen("import"); } },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
   const scrollRef = useRef<ScrollView>(null);
 
   // ── Real-time incremental schema building ──
@@ -596,8 +646,19 @@ export default function Index() {
   const content = (() => {
   if (screen === "users" && business && currentUser) return <UsersScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} />;
   if (screen === "history" && business && currentUser) return <HistoryScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} onNewQuote={() => setScreen("quote")} />;
-  if (screen === "pipeline" && business && currentUser) return <QuotesHistoryScreen businessId={codeToUuid(business.code)} isAdmin={isAdmin} accentColor={primaryColor} backgroundColor={business.brand.backgroundColor} termsAndConditions={business.termsAndConditions} onBack={() => setScreen("done")} />;
-  if (screen === "quote" && business && currentUser) return <QuoteScreen schema={business.schema} setSchema={(ns) => setBusiness(b => b ? { ...b, schema: ns } : b)} business={business} currentUser={currentUser} onBack={() => setScreen("done")} isDemoMode={isDemoMode} initialValues={quoteInitialValues} />;
+  if (screen === "pipeline" && business && currentUser) return <QuotesHistoryScreen businessId={codeToUuid(business.code)} isAdmin={isAdmin} accentColor={primaryColor} backgroundColor={business.brand.backgroundColor} termsAndConditions={business.termsAndConditions} onBack={() => setScreen("done")} onDuplicate={startDuplicate} />;
+  if (screen === "quote" && business && currentUser) return <QuoteScreen schema={business.schema} setSchema={(ns) => setBusiness(b => b ? { ...b, schema: ns } : b)} business={business} currentUser={currentUser} onBack={() => setScreen("done")} isDemoMode={isDemoMode} initialValues={quoteInitialValues} initialActiveSections={quoteInitialActiveSections} initialAddOns={quoteInitialAddOns} onSaveTemplate={onSaveQuoteTemplate} />;
+  if (screen === "schema_editor" && business && currentUser && isAdmin && business.schema) return (
+    <SchemaEditorScreen
+      schema={business.schema}
+      primaryColor={primaryColor}
+      versions={business.schemaVersions}
+      onSave={(ns) => { onSaveSchemaEdit(ns); setScreen("settings"); }}
+      onBack={() => setScreen("settings")}
+      onRestore={(ns) => onSaveSchemaEdit(ns)}
+      onAskKit={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
+    />
+  );
 
   // Admin-only Settings (reps are redirected by the guard above).
   if (screen === "settings" && business && currentUser && isAdmin) return (
@@ -608,6 +669,7 @@ export default function Index() {
       onSignOut={handleSignOut}
       onViewSigningActivity={isSupabaseConfigured && !isDemoMode ? () => { setSettingsFocusTerms(false); setScreen("pipeline"); } : undefined}
       onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
+      onEditSchema={business.schema ? () => setScreen("schema_editor") : undefined}
       onApplyVeraa={async (code) => {
         const updated: Business = { ...business!, isVeraaClient: true, subscriptionStatus: "veraa", partnerCodeUsed: code };
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }
@@ -680,7 +742,7 @@ export default function Index() {
       onChoosePlan={() => { setPaywallMode("signup"); setScreen("paywall"); }}
       hasPushToken={!!business.pushToken}
       onPushToken={onPushToken}
-      onOpenQuoteTool={() => { setJustBuilt(false); setQuoteInitialValues(undefined); setScreen("quote"); }}
+      onOpenQuoteTool={openNewQuote}
       onQuoteHistory={() => { setJustBuilt(false); setScreen("history"); }}
       onStats={() => { setJustBuilt(false); setScreen("stats"); }}
       onQuotePipeline={isSupabaseConfigured && !isDemoMode ? () => { setJustBuilt(false); setScreen("pipeline"); } : undefined}
@@ -692,6 +754,7 @@ export default function Index() {
       onDismissTestPrompt={() => setJustBuilt(false)}
       onOpenSettings={() => { setJustBuilt(false); setSettingsFocusTerms(false); setScreen("settings"); }}
       onSetupTerms={() => { setJustBuilt(false); setSettingsFocusTerms(true); setScreen("settings"); }}
+      onConfigureQuoteTool={isAdmin && !isDemoMode && business.schema ? openConfigureQuoteTool : undefined}
     />
   );
 

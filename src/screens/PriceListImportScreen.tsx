@@ -39,7 +39,7 @@ Examples of what works:
 
 Or paste a full price sheet — product tables, categories, everything.`;
 
-type Phase = "paste" | "loading" | "verify" | "editor" | "addons";
+type Phase = "paste" | "loading" | "confirm" | "verify" | "editor" | "addons";
 
 // Educational content shown while the AI reads the price list — auto-advances every 6s, loops if
 // processing runs long. Stats are real industry averages, framed as such.
@@ -226,8 +226,10 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
       const t = String(parsed.trade || "");
       const dep = Number(parsed.depositPercent) || 0;
       setTrade(t); setSummary(String(parsed.summary || "")); setCategories(cats); setAddOns(extraAddOns); setDeposit(dep); setCatIndex(0);
-      setPhase("verify");
-      saveImportProgress({ phase: "verify", text, trade: t, summary: String(parsed.summary || ""), categories: cats, catIndex: 0, addOns: extraAddOns, deposit: dep });
+      // ONE confirmation screen — see everything, edit anything, confirm once (replaces the old
+      // category-by-category editor; that flow remains reachable only when resuming an old import).
+      setPhase("confirm");
+      saveImportProgress({ phase: "confirm", text, trade: t, summary: String(parsed.summary || ""), categories: cats, catIndex: 0, addOns: extraAddOns, deposit: dep });
     } catch (e: any) {
       clearTimeout(timer);
       let msg = "Couldn't read your price list automatically. You can enter your pricing manually instead.";
@@ -253,6 +255,11 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     setCatIndex(i => Math.max(0, Math.min(i, next.length - 1)));
     saveImportProgress({ phase: "editor", text, trade, summary, categories: next, catIndex: Math.max(0, catIndex - (catIndex >= next.length ? 1 : 0)), addOns, deposit });
   };
+
+  const updateCategoryName = (catId: string, name: string) =>
+    setCategories(cs => cs.map(c => c.id === catId ? { ...c, name } : c));
+  const addCategory = () =>
+    setCategories(cs => [...cs, { id: newId(), name: "New Section", items: [{ id: newId(), name: "", price: 0, unit: "each" as VerifiedUnit }] }]);
 
   const goToAddons = () => { setPhase("addons"); persist({ phase: "addons" }); };
 
@@ -289,6 +296,91 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
       <Text style={{ flex: 1, color: B.gray1, fontSize: 15, lineHeight: 22, fontFamily: "DMSans_400Regular" }}>{msg}</Text>
     </View>
   );
+
+  // ── CONFIRM (single screen — see everything, edit anything, confirm once) ──
+  if (phase === "confirm") {
+    const count = verifiedItemCount(categories);
+    return (
+      <SafeAreaView style={[styles.c, backgroundColor ? { backgroundColor } : null]}>
+        {nav("Does this look right?", () => setPhase("paste"))}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} keyboardShouldPersistTaps="handled">
+            {kit(`I found ${count} item${count !== 1 ? "s" : ""}${trade ? ` for ${trade}` : ""}. Tap any name, price, or unit to edit. Add or remove anything, then build.`)}
+
+            {categories.map(cat => (
+              <View key={cat.id} style={[styles.card, { gap: 10 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <TextInput style={{ flex: 1, color: B.white, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }} value={cat.name} onChangeText={t => updateCategoryName(cat.id, t)} placeholder="Section name" placeholderTextColor={B.gray3} />
+                  <TouchableOpacity onPress={() => removeCategory(cat.id)} hitSlop={8}><Feather name="trash-2" size={16} color={B.gray3} /></TouchableOpacity>
+                </View>
+                {cat.items.map(it => (
+                  <View key={it.id} style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                    <TextInput style={[styles.cell, { flex: 1 }]} value={it.name} onChangeText={t => updateItem(cat.id, it.id, { name: t })} placeholder="Item name" placeholderTextColor={B.gray3} />
+                    <View style={{ flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: B.border, borderRadius: 8, paddingHorizontal: 6 }}>
+                      <Text style={{ color: B.gray3, fontSize: 14 }}>$</Text>
+                      <TextInput style={{ width: 54, color: B.white, fontSize: 14, paddingVertical: 10, fontFamily: "DMSans_400Regular" }} value={it.price ? String(it.price) : ""} onChangeText={t => updateItem(cat.id, it.id, { price: Number(numOnly(t)) || 0 })} placeholder="0" placeholderTextColor={B.gray3} keyboardType="numeric" />
+                    </View>
+                    <TouchableOpacity onPress={() => setEditingUnit(editingUnit === it.id ? null : it.id)} style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+                      <Text style={{ color: primaryColor, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>/{it.unit}</Text>
+                      <Feather name="chevron-down" size={12} color={primaryColor} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => deleteItem(cat.id, it.id)} hitSlop={8}><Feather name="x" size={18} color={B.gray3} /></TouchableOpacity>
+                  </View>
+                ))}
+                {cat.items.some(it => editingUnit === it.id) && (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    {UNITS.map(u => { const it = cat.items.find(x => x.id === editingUnit); if (!it) return null; return (
+                      <TouchableOpacity key={u} onPress={() => { updateItem(cat.id, it.id, { unit: u }); setEditingUnit(null); }} style={{ borderWidth: 1, borderColor: it.unit === u ? primaryColor : B.border, backgroundColor: it.unit === u ? primaryColor : "transparent", borderRadius: 16, paddingVertical: 5, paddingHorizontal: 11 }}>
+                        <Text style={{ color: it.unit === u ? onPrimary : B.gray2, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>{u}</Text>
+                      </TouchableOpacity>
+                    ); })}
+                  </View>
+                )}
+                <TouchableOpacity onPress={() => addItem(cat.id)} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
+                  <Feather name="plus" size={15} color={primaryColor} /><Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Add item</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            <TouchableOpacity onPress={addCategory} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
+              <Feather name="plus" size={16} color={primaryColor} /><Text style={{ color: primaryColor, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Add section</Text>
+            </TouchableOpacity>
+
+            {/* Add-ons */}
+            <Text style={{ color: B.gray1, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold", marginTop: 4 }}>Add-ons (optional)</Text>
+            {addOns.map(a => (
+              <View key={a.id} style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                <TextInput style={[styles.cell, { flex: 1 }]} value={a.name} onChangeText={t => setAddOns(addOns.map(x => x.id === a.id ? { ...x, name: t } : x))} placeholder="Add-on name" placeholderTextColor={B.gray3} />
+                <View style={{ flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: B.border, borderRadius: 8, paddingHorizontal: 6 }}>
+                  <Text style={{ color: B.gray3, fontSize: 14 }}>$</Text>
+                  <TextInput style={{ width: 54, color: B.white, fontSize: 14, paddingVertical: 10, fontFamily: "DMSans_400Regular" }} value={a.price ? String(a.price) : ""} onChangeText={t => setAddOns(addOns.map(x => x.id === a.id ? { ...x, price: Number(numOnly(t)) || 0 } : x))} placeholder="0" placeholderTextColor={B.gray3} keyboardType="numeric" />
+                </View>
+                <TouchableOpacity onPress={() => setAddOns(addOns.filter(x => x.id !== a.id))} hitSlop={8}><Feather name="x" size={18} color={B.gray3} /></TouchableOpacity>
+              </View>
+            ))}
+            <TouchableOpacity onPress={() => setAddOns([...addOns, { id: newId(), name: "", price: 0 }])} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
+              <Feather name="plus" size={15} color={primaryColor} /><Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Add add-on</Text>
+            </TouchableOpacity>
+
+            {/* Deposit */}
+            <Text style={{ color: B.gray1, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold", marginTop: 4 }}>Deposit</Text>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+              {[["No deposit", 0], ["25%", 25], ["30%", 30], ["50%", 50], ["Custom", -1]].map(([label, val]) => (
+                <TouchableOpacity key={String(label)} onPress={() => setDeposit(val as number)} style={{ borderWidth: 1, borderColor: deposit === val ? primaryColor : B.border, backgroundColor: deposit === val ? primaryColor : B.card, borderRadius: 22, paddingVertical: 9, paddingHorizontal: 15 }}>
+                  <Text style={{ color: deposit === val ? onPrimary : B.gray1, fontSize: 14, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {deposit === -1 && <TextInput style={styles.cell} value={customDeposit} onChangeText={t => setCustomDeposit(numOnly(t))} placeholder="Deposit %" placeholderTextColor={B.gray3} keyboardType="numeric" />}
+            {error ? <Text style={{ color: B.red, fontSize: 14, fontFamily: "DMSans_400Regular" }}>{error}</Text> : null}
+          </ScrollView>
+          <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: B.border }}>
+            <TouchableOpacity style={[styles.btn, { backgroundColor: primaryColor }]} onPress={build}><Text style={[styles.btnTxt, { color: onPrimary }]}>Looks right — Build my tool →</Text></TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
+  }
 
   // ── PASTE ──
   if (phase === "paste") {
