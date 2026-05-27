@@ -20,6 +20,10 @@ import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { defaultAllowMultiSelect, deriveSections } from "../utils/buildSchemaFromVerified";
+import { AddFieldSheet } from "../components/AddFieldSheet";
+import { DragHandle } from "../components/DragHandle";
+import { EditableFieldRow } from "../components/EditableFieldRow";
+import { reorderFields } from "../utils/schemaEditorOps";
 import { applyKitSchemaUpdate } from "../utils/kitSchemaUpdate";
 import { applyKitSchemaDiff, KitSchemaDiff } from "../utils/applyKitSchemaDiff";
 import { fetchWithTimeout, isTimeout, KIT_TIMEOUT_MS } from "../utils/fetchTimeout";
@@ -132,6 +136,88 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
   const reduceMotion = useReduceMotion();
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
+  // In-quote tool editing (admin only). When off, zero editing UI is shown — the quote tool behaves
+  // exactly as normal. Every edit auto-saves via applyKitSchema (setSchema + saveBusiness + re-derive).
+  const [editMode, setEditMode] = useState(false);
+  const [addFieldOpen, setAddFieldOpen] = useState(false);
+  const [editUndo, setEditUndo] = useState<{ label: string; before: any } | null>(null);
+  const editUndoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (editUndoTimer.current) clearTimeout(editUndoTimer.current); }, []);
+  const canEdit = isAdmin && !readOnly && !isDemoMode;
+  const applyEdit = (next: any) => { applyKitSchema(next, "edit"); };
+  const renameOpt = (id: string, label: string) => { const { schema: n, result } = executeKitCommand(schema, { type: "RENAME_FIELD", fieldIdentifier: id, newLabel: label }); if (result.success) applyEdit(n); };
+  const setOptRate = (id: string, rate: number) => { const { schema: n, result } = executeKitCommand(schema, { type: "UPDATE_RATE", fieldIdentifier: id, newRate: rate }); if (result.success) applyEdit(n); };
+  const deleteOpt = (id: string, label: string) => {
+    const before = schema;
+    const { schema: n, result } = executeKitCommand(schema, { type: "REMOVE_FIELD", fieldIdentifier: id });
+    if (!result.success) return;
+    applyEdit(n); setEditUndo({ label, before });
+    if (editUndoTimer.current) clearTimeout(editUndoTimer.current);
+    editUndoTimer.current = setTimeout(() => setEditUndo(null), 4000);
+  };
+  const undoEdit = () => { if (editUndo) { applyEdit(editUndo.before); setEditUndo(null); } if (editUndoTimer.current) clearTimeout(editUndoTimer.current); };
+  // Move a whole group up/down by reordering its primary field within schema.fields.
+  const primaryFieldIdxOfGroup = (g: any): number => {
+    const sec = g.members?.[0]; const id = sec?.materialFieldId || sec?.quantityFieldId || sec?.options?.[0]?.id;
+    return (schema?.fields || []).findIndex((f: any) => f.id === id);
+  };
+  const moveGroup = (groups: any[], idx: number, dir: -1 | 1) => {
+    const target = groups[idx + dir]; if (!target) return;
+    const from = primaryFieldIdxOfGroup(groups[idx]); const to = primaryFieldIdxOfGroup(target);
+    if (from < 0 || to < 0) return;
+    applyEdit(reorderFields(schema, from, to));
+  };
+  const deleteGroup = (g: any) => {
+    const opts = (g.members || []).flatMap((m: any) => m.options || []);
+    Alert.alert(`Delete ${g.name}?`, `Removes all ${opts.length} field${opts.length !== 1 ? "s" : ""} inside it.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => { let n = schema; for (const o of opts) { const r = executeKitCommand(n, { type: "REMOVE_FIELD", fieldIdentifier: o.id }); if (r.result.success) n = r.schema; } applyEdit(n); } },
+    ]);
+  };
+  // Reorder one option within its section (selector options on the field; flat toggles among fields).
+  const moveOptInSection = (sec: any, optIndex: number, dir: -1 | 1) => {
+    const target = optIndex + dir; if (target < 0 || target >= (sec.options?.length || 0)) return;
+    if (sec.materialFieldId) {
+      applyEdit({ ...schema, fields: (schema.fields || []).map((f: any) => {
+        if (f.id !== sec.materialFieldId || !f.options) return f;
+        const o = f.options.slice(); const tmp = o[optIndex]; o[optIndex] = o[target]; o[target] = tmp; return { ...f, options: o };
+      }) });
+    } else {
+      const fromId = sec.options[optIndex]?.id, toId = sec.options[target]?.id;
+      const fromIdx = (schema.fields || []).findIndex((f: any) => f.id === fromId);
+      const toIdx = (schema.fields || []).findIndex((f: any) => f.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return;
+      applyEdit(reorderFields(schema, fromIdx, toIdx));
+    }
+  };
+  const cycleOptUnit = (id: string, current: string) => {
+    const U = ["sq ft", "lf", "hour", "each", "flat"]; const next = U[(U.indexOf(current) + 1) % U.length];
+    const { schema: n, result } = executeKitCommand(schema, { type: "UPDATE_RATE", fieldIdentifier: id, newRate: schema.pricing?.[`${id}Rate`] ?? 0, unit: next }); if (result.success) applyEdit(n);
+  };
+
+  // The in-quote editable tool view (admin, editMode). Bypasses the input renderers entirely so the
+  // normal quoting flow is never touched. Reuses EditableFieldRow + DragHandle.
+  const renderEditBody = () => (
+    <View style={{ gap: 12 }}>
+      <Text style={[s.fieldLabel, { color: pal.textMuted }]}>EDIT YOUR QUOTE TOOL — TAP A NAME OR PRICE</Text>
+      {displaySections.map((g: any, gi: number) => (
+        <View key={g.id} style={{ backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 16, overflow: "hidden" }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, padding: 10, borderBottomWidth: 1, borderBottomColor: pal.border }}>
+            <DragHandle onUp={() => moveGroup(displaySections, gi, -1)} onDown={() => moveGroup(displaySections, gi, 1)} canUp={gi > 0} canDown={gi < displaySections.length - 1} color={pal.textMuted} accent={primaryColor} />
+            <Text style={{ color: pal.text, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold", flex: 1 }} numberOfLines={1}>{g.name}</Text>
+            <TouchableOpacity onPress={() => deleteGroup(g)} hitSlop={8} style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center" }}><Feather name="trash-2" size={17} color="#EF4444" /></TouchableOpacity>
+          </View>
+          {(g.members || []).flatMap((sec: any) => (sec.options || []).map((opt: any, oi: number) => (
+            <View key={opt.id} style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, backgroundColor: pal.background }}>
+              <DragHandle onUp={() => moveOptInSection(sec, oi, -1)} onDown={() => moveOptInSection(sec, oi, 1)} canUp={oi > 0} canDown={oi < (sec.options.length - 1)} color={pal.textMuted} accent={primaryColor} />
+              <EditableFieldRow label={opt.label} rate={opt.rate} unit={opt.unit} primaryColor={primaryColor}
+                onRename={(v) => renameOpt(opt.id, v)} onRate={(v) => setOptRate(opt.id, v)} onCycleUnit={() => cycleOptUnit(opt.id, opt.unit)} onDelete={() => deleteOpt(opt.id, opt.label)} />
+            </View>
+          )))}
+        </View>
+      ))}
+    </View>
+  );
   const pal = getBrandPalette(business);          // always-readable palette derived from brand colors
   const primaryColor = pal.primary;
   const onPrimary = ON_PRIMARY; // brand look: always white text/icons on the primary color
@@ -988,6 +1074,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // The single-page body: a 2-column section checklist (one card per group), then every active
   // group expanded inline with each of its member sections stacked.
   const renderNewBody = () => {
+    if (editMode && canEdit) return renderEditBody();
     const activeGroups = displaySections.filter((g) => activeSections[g.id] || readOnly);
     return (
       <>
@@ -1084,6 +1171,13 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         ) : (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            {/* Edit Tool — admin only; toggles in-quote field editing. */}
+            {canEdit && (
+              <TouchableOpacity onPress={() => setEditMode(e => !e)} hitSlop={8} accessibilityLabel="Edit quote tool" style={{ flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: editMode ? primaryColor : primaryColor + "60", backgroundColor: editMode ? primaryColor : "transparent", borderRadius: 8, paddingVertical: 4, paddingHorizontal: 8 }}>
+                <Feather name={editMode ? "check" : "edit-2"} size={13} color={editMode ? onPrimary : primaryColor} />
+                <Text style={{ color: editMode ? onPrimary : primaryColor, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{editMode ? "Done" : "Edit Tool"}</Text>
+              </TouchableOpacity>
+            )}
             {/* FIX 12: hand-the-phone customer view */}
             <TouchableOpacity onPress={() => setShowCustomer(true)} hitSlop={8} accessibilityLabel="Show customer view">
               <Feather name="eye" size={20} color={primaryColor} />
@@ -1515,6 +1609,23 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       )}
 
       {showCelebration && !readOnly && <ConfettiOverlay message="First quote saved!" />}
+
+      {/* In-quote field editing (admin, edit mode): floating Add Field + the shared add sheet + undo. */}
+      {editMode && canEdit && !showTotal && (
+        <TouchableOpacity style={{ position: "absolute", right: 20, bottom: 28, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: primaryColor, borderRadius: 28, paddingVertical: 14, paddingHorizontal: 20, shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 }} onPress={() => setAddFieldOpen(true)}>
+          <Feather name="plus" size={20} color={onPrimary} />
+          <Text style={{ color: onPrimary, fontSize: 15, fontWeight: "800", fontFamily: "DMSans_700Bold" }}>Add Field</Text>
+        </TouchableOpacity>
+      )}
+      {canEdit && (
+        <AddFieldSheet visible={addFieldOpen} onClose={() => setAddFieldOpen(false)} primaryColor={primaryColor} schema={schema} onApply={(next) => applyEdit(next)} />
+      )}
+      {editUndo && (
+        <View style={{ position: "absolute", left: 16, right: 16, bottom: 24, backgroundColor: "#0A0E1A", borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 8 }}>
+          <Text style={{ color: "#FFFFFF", fontSize: 14, fontFamily: "DMSans_600SemiBold", flex: 1 }} numberOfLines={1}>{editUndo.label} removed</Text>
+          <TouchableOpacity onPress={undoEdit} hitSlop={8}><Text style={{ color: primaryColor, fontSize: 14, fontWeight: "800", fontFamily: "DMSans_700Bold" }}>Undo</Text></TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 }

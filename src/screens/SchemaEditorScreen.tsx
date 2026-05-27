@@ -1,7 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Modal, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, SafeAreaView, ScrollView, Switch, Text, TouchableOpacity, View } from "react-native";
+import { AddFieldSheet } from "../components/AddFieldSheet";
 import { DragHandle } from "../components/DragHandle";
+import { EditableFieldRow } from "../components/EditableFieldRow";
 import { useTheme } from "../contexts/ThemeContext";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { s } from "../styles";
@@ -9,18 +11,9 @@ import { QuoteSchema, SchemaVersion } from "../types";
 import { deriveSections } from "../utils/buildSchemaFromVerified";
 import { executeKitCommand } from "../utils/executeKitCommand";
 import { ON_PRIMARY } from "../utils/colorUtils";
-import { addCalculatedField, addMeasurementField, addSelectField, addToggleField, reorderFields, setSectionDefault } from "../utils/schemaEditorOps";
+import { reorderFields, setSectionDefault } from "../utils/schemaEditorOps";
 
-type AddType = "measure" | "yesno" | "pickone" | "calculated";
 const UNITS = ["sq ft", "lf", "hour", "each", "flat"];
-
-const FIELD_TEMPLATES: { label: string; type: AddType; rate: number; unit: string }[] = [
-  { label: "Permit", type: "yesno", rate: 200, unit: "flat" },
-  { label: "Demo", type: "yesno", rate: 500, unit: "flat" },
-  { label: "Delivery", type: "yesno", rate: 150, unit: "flat" },
-  { label: "Labor", type: "measure", rate: 75, unit: "hour" },
-  { label: "Stairs", type: "yesno", rate: 800, unit: "flat" },
-];
 
 // Manual quote-tool editor — admin only, lives in Settings (never onboarding). Auto-saves every change
 // (no Save button) via onChange. All mutations go through the tested pure ops.
@@ -36,17 +29,11 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
   const isAdmin = useIsAdmin();
   const [draft, setDraft] = useState<QuoteSchema>(schema);
   const [adding, setAdding] = useState(false);
-  const [addType, setAddType] = useState<AddType | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [undo, setUndo] = useState<{ label: string; before: QuoteSchema } | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [fName, setFName] = useState("");
-  const [fRate, setFRate] = useState("");
-  const [fUnit, setFUnit] = useState("sq ft");
-  const [fLinked, setFLinked] = useState("");
-  const [fOptions, setFOptions] = useState("");
 
   useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current); if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
   // Non-admins can't edit the tool — show the message briefly, then bounce back automatically.
@@ -131,23 +118,6 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
     ]);
   };
 
-  const resetAddForm = () => { setAddType(null); setFName(""); setFRate(""); setFUnit("sq ft"); setFLinked(""); setFOptions(""); };
-  const closeAdd = () => { setAdding(false); resetAddForm(); };
-  const commitAdd = () => {
-    const name = fName.trim(); if (!name) return;
-    const rate = Number(fRate) || 0;
-    let next = draft;
-    if (addType === "measure") next = addMeasurementField(draft, name, rate, fUnit);
-    else if (addType === "yesno") next = addToggleField(draft, name, rate);
-    else if (addType === "calculated") next = addCalculatedField(draft, name, fLinked.trim(), rate);
-    else if (addType === "pickone") {
-      const opts = fOptions.split(",").map(o => o.trim()).filter(Boolean).map(o => { const m = o.match(/^(.*?)[\s:$]*([\d.]+)?$/); return { label: (m?.[1] || o).trim(), rate: Number(m?.[2]) || 0, unit: fUnit }; });
-      next = addSelectField(draft, name, opts.length ? opts : [{ label: "Option 1", rate, unit: fUnit }]);
-    }
-    apply(next); closeAdd();
-  };
-  const applyTemplate = (t: { label: string; type: AddType; rate: number; unit: string }) => { setAddType(t.type); setFName(t.label); setFRate(String(t.rate)); setFUnit(t.unit); };
-
   // ── Admin guard ──
   if (!isAdmin) {
     return (
@@ -219,7 +189,7 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
             <Feather name="plus-circle" size={44} color={primaryColor} />
             <Text style={{ color: th.text, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Your quote tool is empty</Text>
             <Text style={{ color: th.textMuted, fontSize: 14, fontFamily: "DMSans_400Regular", textAlign: "center" }}>Start by adding your first field.</Text>
-            <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, flexDirection: "row", gap: 8, paddingHorizontal: 24 }]} onPress={() => { resetAddForm(); setAdding(true); }}>
+            <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, flexDirection: "row", gap: 8, paddingHorizontal: 24 }]} onPress={() => setAdding(true)}>
               <Feather name="plus" size={18} color={ON_PRIMARY} /><Text style={[s.btnText, { color: ON_PRIMARY }]}>Add your first field</Text>
             </TouchableOpacity>
           </View>
@@ -229,7 +199,7 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, padding: 10, borderBottomWidth: 1, borderBottomColor: th.border }}>
               <DragHandle onUp={() => moveSection(idx, -1)} onDown={() => moveSection(idx, 1)} canUp={idx > 0} canDown={idx < sections.length - 1} color={th.textMuted} accent={primaryColor} />
               <Text style={{ color: th.text, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold", flex: 1 }} numberOfLines={1}>{sec.name}</Text>
-              <TouchableOpacity onPress={() => { resetAddForm(); setAdding(true); }} style={{ flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 4 }} hitSlop={6}>
+              <TouchableOpacity onPress={() => setAdding(true)} style={{ flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 4 }} hitSlop={6}>
                 <Feather name="plus" size={15} color={primaryColor} /><Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Add</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => deleteSection(sec)} hitSlop={8} style={{ width: 36, height: 36, alignItems: "center", justifyContent: "center" }}><Feather name="trash-2" size={17} color={th.error} /></TouchableOpacity>
@@ -249,7 +219,7 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
             ) : (sec.options || []).map((opt: any, oi: number) => (
               <View key={opt.id} style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: th.background }}>
                 <DragHandle onUp={() => moveOption(sec, oi, -1)} onDown={() => moveOption(sec, oi, 1)} canUp={oi > 0} canDown={oi < sec.options.length - 1} color={th.textMuted} accent={primaryColor} />
-                <EditableFieldRow th={th} label={opt.label} rate={opt.rate} unit={opt.unit} primaryColor={primaryColor}
+                <EditableFieldRow label={opt.label} rate={opt.rate} unit={opt.unit} primaryColor={primaryColor}
                   onRename={(v) => renameOption(opt.id, v)} onRate={(v) => setRate(opt.id, v)} onCycleUnit={() => cycleUnit(opt.id, opt.unit)} onDelete={() => deleteField(opt.id, opt.label)} />
               </View>
             ))}
@@ -262,7 +232,7 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
             <Text style={{ color: th.text, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold", marginBottom: 2 }}>Add-ons</Text>
             {(draft.addOns || []).map(a => (
               <View key={a.id} style={{ paddingVertical: 2 }}>
-                <EditableFieldRow th={th} label={a.label} rate={a.price} unit="flat" primaryColor={primaryColor}
+                <EditableFieldRow label={a.label} rate={a.price} unit="flat" primaryColor={primaryColor}
                   onRename={(v) => { const { schema: n, result } = executeKitCommand(draft, { type: "UPDATE_ADDON", addonIdentifier: a.id, newLabel: v }); if (result.success) apply(n); }}
                   onRate={(v) => { const { schema: n, result } = executeKitCommand(draft, { type: "UPDATE_ADDON", addonIdentifier: a.id, newPrice: v }); if (result.success) apply(n); }}
                   onDelete={() => deleteField(a.id, a.label)} />
@@ -272,7 +242,7 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
         )}
 
         {sections.length > 0 && (
-          <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, flexDirection: "row", justifyContent: "center", gap: 8 }]} onPress={() => { resetAddForm(); setAdding(true); }}>
+          <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, flexDirection: "row", justifyContent: "center", gap: 8 }]} onPress={() => setAdding(true)}>
             <Feather name="plus" size={18} color={ON_PRIMARY} /><Text style={[s.btnText, { color: ON_PRIMARY }]}>Add Field</Text>
           </TouchableOpacity>
         )}
@@ -297,129 +267,7 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
         </View>
       )}
 
-      {/* Add-field bottom sheet */}
-      <Modal visible={adding} transparent animationType="slide" onRequestClose={closeAdd}>
-        <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }} onPress={closeAdd}>
-          <Pressable style={{ backgroundColor: th.surfaceHigh, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: "88%" }} onPress={() => {}}>
-            <ScrollView contentContainerStyle={{ padding: 20, gap: 14 }} keyboardShouldPersistTaps="handled">
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={{ color: th.text, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{addType ? "Quick setup" : "What kind of field?"}</Text>
-                <TouchableOpacity onPress={closeAdd} hitSlop={8}><Feather name="x" size={24} color={th.textMuted} /></TouchableOpacity>
-              </View>
-              {!addType ? (
-                <>
-                  {([
-                    { t: "measure", icon: "📐", title: "I measure something", hint: "sq feet, linear feet" },
-                    { t: "yesno", icon: "☑️", title: "Include it or not", hint: "permit, delivery" },
-                    { t: "pickone", icon: "🔘", title: "Pick from a list", hint: "material type" },
-                    { t: "calculated", icon: "🔗", title: "Calculates from another", hint: "protection × sq footage" },
-                  ] as const).map(c => (
-                    <TouchableOpacity key={c.t} onPress={() => setAddType(c.t)} style={{ minHeight: 64, backgroundColor: th.surface, borderColor: th.border, borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 14 }}>
-                      <Text style={{ fontSize: 26 }}>{c.icon}</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: th.text, fontSize: 15, fontWeight: "800", fontFamily: "DMSans_700Bold" }}>{c.title}</Text>
-                        <Text style={{ color: th.textMuted, fontSize: 12, fontFamily: "DMSans_400Regular" }}>{c.hint}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                  <Text style={{ color: th.textMuted, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold", marginTop: 4 }}>OR A COMMON FIELD</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                    {FIELD_TEMPLATES.map(t => (
-                      <TouchableOpacity key={t.label} onPress={() => applyTemplate(t)} style={{ borderWidth: 1, borderColor: primaryColor, borderRadius: 20, paddingVertical: 8, paddingHorizontal: 14 }}>
-                        <Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{t.label}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </>
-              ) : (
-                <>
-                  <View style={{ gap: 6 }}>
-                    <Text style={[s.formLabel, { color: th.textMuted }]}>What&apos;s it called?</Text>
-                    <TextInput style={[s.input, { backgroundColor: th.surface, color: th.text, borderColor: th.border }]} value={fName} onChangeText={setFName} placeholder="e.g. Stairs" placeholderTextColor={th.textMuted} autoFocus />
-                  </View>
-                  {addType === "pickone" ? (
-                    <View style={{ gap: 6 }}>
-                      <Text style={[s.formLabel, { color: th.textMuted }]}>Options (comma-separated, e.g. &quot;Cedar 28, Composite 35&quot;)</Text>
-                      <TextInput style={[s.input, { backgroundColor: th.surface, color: th.text, borderColor: th.border }]} value={fOptions} onChangeText={setFOptions} placeholder="Pressure Treated 20, Composite 35" placeholderTextColor={th.textMuted} />
-                    </View>
-                  ) : addType === "calculated" ? (
-                    <>
-                      <View style={{ gap: 6 }}>
-                        <Text style={[s.formLabel, { color: th.textMuted }]}>Based on (source field name)</Text>
-                        <TextInput style={[s.input, { backgroundColor: th.surface, color: th.text, borderColor: th.border }]} value={fLinked} onChangeText={setFLinked} placeholder="e.g. Deck Square Footage" placeholderTextColor={th.textMuted} />
-                      </View>
-                      <View style={{ gap: 6 }}>
-                        <Text style={[s.formLabel, { color: th.textMuted }]}>Price per unit of that field</Text>
-                        <TextInput style={[s.input, { backgroundColor: th.surface, color: th.text, borderColor: th.border }]} value={fRate} onChangeText={t => setFRate(t.replace(/[^0-9.]/g, ""))} placeholder="0.50" placeholderTextColor={th.textMuted} keyboardType="numeric" />
-                      </View>
-                      {!!fRate && !!fLinked && <Text style={{ color: primaryColor, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>Preview: 300 {fUnit} × ${fRate} = ${(300 * (Number(fRate) || 0)).toLocaleString()}</Text>}
-                    </>
-                  ) : (
-                    <View style={{ gap: 6 }}>
-                      <Text style={[s.formLabel, { color: th.textMuted }]}>{addType === "yesno" ? "Price when included" : "Rate"}</Text>
-                      <TextInput style={[s.input, { backgroundColor: th.surface, color: th.text, borderColor: th.border }]} value={fRate} onChangeText={t => setFRate(t.replace(/[^0-9.]/g, ""))} placeholder="0" placeholderTextColor={th.textMuted} keyboardType="numeric" />
-                    </View>
-                  )}
-                  {(addType === "measure" || addType === "pickone") && (
-                    <View style={{ gap: 6 }}>
-                      <Text style={[s.formLabel, { color: th.textMuted }]}>Unit</Text>
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                        {UNITS.map(u => (
-                          <TouchableOpacity key={u} onPress={() => setFUnit(u)} style={{ borderWidth: 1, borderColor: fUnit === u ? primaryColor : th.border, backgroundColor: fUnit === u ? primaryColor : "transparent", borderRadius: 16, paddingVertical: 6, paddingHorizontal: 12 }}>
-                            <Text style={{ color: fUnit === u ? ON_PRIMARY : th.textMuted, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>{u}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-                  <View style={{ flexDirection: "row", gap: 10 }}>
-                    <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: th.border }]} onPress={() => setAddType(null)}><Text style={[s.btnSecondaryText, { color: th.textMuted }]}>Back</Text></TouchableOpacity>
-                    <TouchableOpacity style={[s.btn, { flex: 2, backgroundColor: primaryColor, opacity: fName.trim() ? 1 : 0.4 }]} disabled={!fName.trim()} onPress={commitAdd}>
-                      <Text style={[s.btnText, { color: ON_PRIMARY }]}>Add Field →</Text>
-                    </TouchableOpacity>
-                  </View>
-                </>
-              )}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <AddFieldSheet visible={adding} onClose={() => setAdding(false)} primaryColor={primaryColor} schema={draft} onApply={apply} />
     </SafeAreaView>
-  );
-}
-
-// One editable field row: tap name/rate to edit inline (auto-saves on blur); tap unit to cycle; 🗑 deletes.
-function EditableFieldRow({ th, label, rate, unit, primaryColor, onRename, onRate, onCycleUnit, onDelete }: {
-  th: ReturnType<typeof useTheme>; label: string; rate: number; unit: string; primaryColor: string;
-  onRename: (v: string) => void; onRate: (v: number) => void; onCycleUnit?: () => void; onDelete: () => void;
-}) {
-  const [editingName, setEditingName] = useState(false);
-  const [editingRate, setEditingRate] = useState(false);
-  const [nameDraft, setNameDraft] = useState(label);
-  const [rateDraft, setRateDraft] = useState(String(rate));
-  return (
-    <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8 }}>
-      {editingName ? (
-        <TextInput style={[s.input, { flex: 1, backgroundColor: th.surface, color: th.text, borderColor: th.border, paddingVertical: 8 }]} value={nameDraft} onChangeText={setNameDraft} autoFocus onBlur={() => { setEditingName(false); if (nameDraft.trim() && nameDraft !== label) onRename(nameDraft.trim()); }} />
-      ) : (
-        <TouchableOpacity style={{ flex: 1 }} onPress={() => { setNameDraft(label); setEditingName(true); }}>
-          <Text style={{ color: th.text, fontSize: 15, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{label}</Text>
-        </TouchableOpacity>
-      )}
-      {editingRate ? (
-        <View style={{ flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: th.border, borderRadius: 8, paddingHorizontal: 6 }}>
-          <Text style={{ color: th.textMuted, fontSize: 14 }}>$</Text>
-          <TextInput style={{ width: 52, color: th.text, fontSize: 14, paddingVertical: 8, fontFamily: "DMSans_400Regular" }} value={rateDraft} onChangeText={t => setRateDraft(t.replace(/[^0-9.]/g, ""))} keyboardType="numeric" autoFocus onBlur={() => { setEditingRate(false); const n = Number(rateDraft); if (!Number.isNaN(n) && n !== rate) onRate(n); }} />
-        </View>
-      ) : (
-        <TouchableOpacity onPress={() => { setRateDraft(String(rate)); setEditingRate(true); }}>
-          <Text style={{ color: primaryColor, fontSize: 14, fontWeight: "800", fontFamily: "Syne_700Bold" }}>${rate.toLocaleString()}</Text>
-        </TouchableOpacity>
-      )}
-      <TouchableOpacity onPress={onCycleUnit} disabled={!onCycleUnit} hitSlop={4}>
-        <Text style={{ color: th.textMuted, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>/{unit}</Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={onDelete} hitSlop={8} style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}><Feather name="trash-2" size={15} color={th.error} /></TouchableOpacity>
-    </View>
   );
 }
