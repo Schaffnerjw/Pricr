@@ -1,13 +1,18 @@
 import { Feather } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Image, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Image, Platform, SafeAreaView, ScrollView, Share, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { DemoPickerModal } from "../components/DemoPickerModal";
 import { B, SIGN_BASE } from "../constants/brand";
 import { masterAuthHeaders } from "../utils/masterAuth";
 import { s } from "../styles";
 import { Business, DemoBusiness } from "../types";
 import { formatDate } from "../utils/helpers";
+import { logger } from "../utils/logger";
+
+// Cross-platform monospace stack for displaying generated codes.
+const MONO = Platform.OS === "ios" ? "Courier" : Platform.OS === "android" ? "monospace" : "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 // Cross-platform alert (web prompt() can't show multi-line nicely, so use window.alert there).
 const notify = (title: string, msg: string) => { if (Platform.OS === "web") window.alert(`${title}\n\n${msg}`); else Alert.alert(title, msg); };
@@ -64,6 +69,8 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
   const [veraaName, setVeraaName] = useState("");
   const [veraaCodes, setVeraaCodes] = useState<{ code: string; client_name?: string; created_at?: string; used_by?: string; revoked?: boolean }[]>([]);
   const [veraaBusy, setVeraaBusy] = useState(false);
+  const [generatedCode, setGeneratedCode] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null); // the code most recently copied (for the "Copied!" state)
 
   useEffect(() => { loadStats(); loadVeraaCodes(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const loadStats = async () => { try { setStats(await adminFetch("stats")); } catch (e) { setErr(e instanceof Error ? e.message : "stats failed"); } };
@@ -116,15 +123,56 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
     catch (e) { notify("Couldn't send", e instanceof Error ? e.message : "failed"); }
   };
 
+  // Merge server codes with any locally-added (optimistic) ones, so a freshly generated code stays
+  // visible even if the table query lags or the migration hasn't been run yet.
   const loadVeraaCodes = async () => {
-    try { const r = await adminFetch("list-veraa-codes"); setVeraaCodes(r.codes || []); } catch { /* table may not exist yet */ }
+    try {
+      const r = await adminFetch("list-veraa-codes");
+      const server: typeof veraaCodes = Array.isArray(r?.codes) ? r.codes : [];
+      logger.debug("[Veraa] loaded codes:", server.length);
+      setVeraaCodes(prev => {
+        const byCode = new Map(prev.map(c => [c.code, c]));
+        for (const c of server) byCode.set(c.code, c); // server is authoritative on overlap
+        return Array.from(byCode.values()).sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+      });
+    } catch { /* table may not exist yet — keep whatever is shown locally */ }
   };
   const generateVeraa = async () => {
     if (!veraaName.trim() || veraaBusy) return;
     setVeraaBusy(true);
-    try { const r = await adminFetch("generate-veraa-code", { clientName: veraaName.trim() }); setVeraaName(""); notify("Code generated", r.code); await loadVeraaCodes(); }
-    catch (e) { notify("Couldn't generate", e instanceof Error ? e.message : "failed"); }
+    try {
+      const name = veraaName.trim();
+      const r = await adminFetch("generate-veraa-code", { clientName: name });
+      setVeraaName("");
+      if (r?.code) {
+        setGeneratedCode(r.code);
+        // Show it in the list immediately (optimistic) — reconciled by loadVeraaCodes below.
+        setVeraaCodes(prev => prev.some(c => c.code === r.code) ? prev : [{ code: r.code, client_name: name, created_at: new Date().toISOString(), revoked: false }, ...prev]);
+      }
+      await loadVeraaCodes();
+    } catch (e) { notify("Couldn't generate", e instanceof Error ? e.message : "failed"); }
     setVeraaBusy(false);
+  };
+  // Copy works on web (navigator.clipboard) and native (expo-clipboard); shows a brief "Copied!".
+  const copyText = async (text: string) => {
+    try {
+      if (Platform.OS === "web") { if (typeof navigator !== "undefined" && navigator.clipboard) await navigator.clipboard.writeText(text); }
+      else await Clipboard.setStringAsync(text);
+      setCopied(text);
+      setTimeout(() => setCopied(c => (c === text ? null : c)), 1500);
+    } catch { /* ignore copy failures */ }
+  };
+  const shareCode = async (code: string) => {
+    const message = `Your Pricr access code: ${code}\nUse this when signing up at app.pricr.veraa.io`;
+    try {
+      if (Platform.OS === "web") {
+        const nav = navigator as Navigator & { share?: (d: { text: string }) => Promise<void> };
+        if (typeof nav !== "undefined" && nav.share) await nav.share({ text: message });
+        else await copyText(code);
+      } else {
+        await Share.share({ message });
+      }
+    } catch { /* share cancelled / unavailable */ }
   };
   const revokeVeraa = (code: string) => confirmAction("Revoke code?", `${code} will stop working for new signups.`, async () => {
     try { await adminFetch("revoke-veraa-code", { code }); await loadVeraaCodes(); } catch (e) { notify("Couldn't revoke", e instanceof Error ? e.message : "failed"); }
@@ -335,16 +383,45 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
             {veraaBusy ? <ActivityIndicator color={B.white} /> : <Text style={s.btnText}>Generate</Text>}
           </TouchableOpacity>
         </View>
+
+        {/* Inline success — copyable code (no un-copyable alert) + share. Stays until dismissed/regenerated. */}
+        {generatedCode && (
+          <View style={{ backgroundColor: B.card, borderWidth: 1, borderColor: B.blue, borderRadius: 12, padding: 14, gap: 12 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={{ color: B.muted, fontSize: 11, fontWeight: "700", letterSpacing: 1, fontFamily: "DMSans_700Bold" }}>NEW PARTNER CODE</Text>
+              <TouchableOpacity onPress={() => setGeneratedCode(null)} hitSlop={8}><Feather name="x" size={18} color={B.gray3} /></TouchableOpacity>
+            </View>
+            <View style={{ backgroundColor: B.midnight, borderWidth: 1, borderColor: B.border, borderRadius: 10, padding: 12 }}>
+              <Text selectable style={{ color: B.white, fontSize: 18, fontFamily: MONO, fontWeight: "700", letterSpacing: 1 }}>{generatedCode}</Text>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity style={[s.btn, { flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6 }]} onPress={() => copyText(generatedCode)}>
+                <Feather name={copied === generatedCode ? "check" : "copy"} size={15} color={B.white} />
+                <Text style={s.btnText}>{copied === generatedCode ? "Copied!" : "Copy Code"}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.btnSecondary, { flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6 }]} onPress={() => shareCode(generatedCode)}>
+                <Feather name="share" size={15} color={B.blue} />
+                <Text style={s.btnSecondaryText}>Share</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {veraaCodes.length === 0 && <Text style={s.historyMeta}>No partner codes yet.</Text>}
         {veraaCodes.map(c => (
           <View key={c.code} style={[s.historyCard, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
             <View style={{ flex: 1 }}>
-              <Text style={[s.historyName, c.revoked && { textDecorationLine: "line-through", color: B.gray3 }]}>{c.code}</Text>
+              <Text style={[s.historyName, { fontFamily: MONO }, c.revoked && { textDecorationLine: "line-through", color: B.gray3 }]}>{c.code}</Text>
               <Text style={s.historyMeta}>{c.client_name || "—"}{c.used_by ? ` · used by ${c.used_by}` : " · unused"}{c.revoked ? " · revoked" : ""}</Text>
             </View>
-            {!c.revoked && (
-              <TouchableOpacity onPress={() => revokeVeraa(c.code)}><Text style={{ color: B.red, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Revoke</Text></TouchableOpacity>
-            )}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
+              <TouchableOpacity onPress={() => copyText(c.code)} hitSlop={8}>
+                <Feather name={copied === c.code ? "check" : "copy"} size={16} color={copied === c.code ? B.green : B.blue} />
+              </TouchableOpacity>
+              {!c.revoked && (
+                <TouchableOpacity onPress={() => revokeVeraa(c.code)}><Text style={{ color: B.red, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Revoke</Text></TouchableOpacity>
+              )}
+            </View>
           </View>
         ))}
 
