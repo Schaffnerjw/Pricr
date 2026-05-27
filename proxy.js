@@ -1309,20 +1309,43 @@ async function handleGenerateVeraaCode(res, buf) {
   const slug = clientName.toUpperCase().replace(/[^A-Z]/g, '');
   if (!slug) return sendJson(res, 400, { error: 'clientName must contain letters' });
   const code = `VERAA-${slug}-${String(Math.floor(1000 + Math.random() * 9000))}`;
-  try { await supabaseRequest('POST', '/rest/v1/veraa_codes', { code, client_name: clientName }); }
-  catch (e) { console.warn('[admin] veraa code save failed:', e && e.message); }
+  console.log('[Veraa] generating code for:', clientName, '→', code);
+  // Explicit columns (created_at/revoked have DB defaults, but send them so the row is complete even
+  // if a default is ever missing). The proxy uses the SERVICE ROLE client (supabaseRequest), which
+  // bypasses RLS — so this insert is not subject to any anon/authenticated policy.
+  const row = { code, client_name: clientName, created_at: new Date().toISOString(), revoked: false };
+  try {
+    console.log('[Veraa] inserting to Supabase...');
+    const result = await supabaseRequest('POST', '/rest/v1/veraa_codes', row);
+    console.log('[Veraa] insert result:', result.status, result.text);
+    // supabaseRequest resolves on ANY HTTP status — a non-2xx here means the insert did NOT persist
+    // (this was the bug: the old code returned 200 regardless, so codes vanished on reload).
+    if (result.status < 200 || result.status >= 300) {
+      console.error('[Veraa] insert error:', result.status, result.text);
+      return sendJson(res, 500, { error: `Could not save code (HTTP ${result.status}): ${result.text || 'unknown error'}` });
+    }
+  } catch (e) {
+    console.error('[Veraa] insert error:', e && e.message);
+    return sendJson(res, 500, { error: (e && e.message) || 'Could not save code to the database' });
+  }
+  console.log('[Veraa] saved:', code);
   return sendJson(res, 200, { code, clientName });
 }
 async function handleListVeraaCodes(res) {
   try {
-    const r = await supabaseRequest('GET', '/rest/v1/veraa_codes?select=code,client_name,created_at,used_by,used_at,revoked&order=created_at.desc');
+    // All non-revoked codes, newest first.
+    const r = await supabaseRequest('GET', '/rest/v1/veraa_codes?select=code,client_name,created_at,used_by,used_at,revoked&revoked=eq.false&order=created_at.desc');
+    if (r.status < 200 || r.status >= 300) { console.error('[Veraa] list error:', r.status, r.text); return sendJson(res, 200, { codes: [] }); }
     return sendJson(res, 200, { codes: Array.isArray(r.json) ? r.json : [] });
-  } catch (_) { return sendJson(res, 200, { codes: [] }); }
+  } catch (e) { console.error('[Veraa] list error:', e && e.message); return sendJson(res, 200, { codes: [] }); }
 }
 async function handleRevokeVeraaCode(res, buf) {
   const code = String(parseJsonBody(buf).code || '').toUpperCase().trim();
   if (!code) return sendJson(res, 400, { error: 'code required' });
-  try { await supabaseRequest('PATCH', `/rest/v1/veraa_codes?code=eq.${encodeURIComponent(code)}`, { revoked: true }); } catch (_) {}
+  try {
+    const r = await supabaseRequest('PATCH', `/rest/v1/veraa_codes?code=eq.${encodeURIComponent(code)}`, { revoked: true });
+    if (r.status < 200 || r.status >= 300) { console.error('[Veraa] revoke error:', r.status, r.text); return sendJson(res, 500, { error: `Could not revoke code (HTTP ${r.status})` }); }
+  } catch (e) { console.error('[Veraa] revoke error:', e && e.message); return sendJson(res, 500, { error: (e && e.message) || 'Could not revoke code' }); }
   return sendJson(res, 200, { ok: true });
 }
 
