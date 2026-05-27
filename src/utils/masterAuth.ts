@@ -31,7 +31,7 @@ export async function authenticateMaster(code: string): Promise<boolean> {
       return true;
     }
     return false;
-  } catch (e) {
+  } catch {
     logger.error("[admin] auth request failed");
     return false;
   }

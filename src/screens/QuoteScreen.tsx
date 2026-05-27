@@ -826,12 +826,6 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // ("Deck Components (per lf)" + "(per sq ft)") becomes several cards with the same base name.
   // Group by the base name (parenthetical suffix stripped, case/space-insensitive) so each base
   // name is ONE card holding all its members. Industry-agnostic — no trade-specific keywords.
-  // Sub-label shown for each member when a group holds more than one (e.g. the "(per lf)" qualifier).
-  const memberSubLabel = (sec: any): string => {
-    const m = String(sec.name || "").match(/\(([^)]+)\)\s*$/);
-    return (m ? m[1] : unitLabel(sec.unit)).replace(/^\w/, c => c.toUpperCase());
-  };
-
   const displaySections = useMemo(() => {
     if (!useNewLayout) return [] as { id: string; name: string; members: any[] }[];
     const byKey: Record<string, { id: string; name: string; members: any[] }> = {};
@@ -935,7 +929,6 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // MATERIAL_MEASUREMENT: horizontal material pills → measurement input → live subtotal → compare.
   const renderMaterialSection = (sec: any) => {
     const sel = fieldById(sec.materialFieldId);
-    const pricing = schema?.pricing || {};
 
     // Multi-select: independent items (e.g. lighting fixtures). Tap to add/remove; each selected item
     // gets its own quantity input + running subtotal; the section total sums them.
@@ -1472,7 +1465,6 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           <View style={{ maxHeight: "80%", backgroundColor: pal.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: pal.border }}>
             {compareSec && (() => {
               const sel = fieldById(compareSec.materialFieldId);
-              const pricing = schema?.pricing || {};
               const measure = compareSec.quantityFieldId ? Number(fieldValues[compareSec.quantityFieldId]) || 0 : 0;
               const chosen = fieldValues[compareSec.materialFieldId];
               return (

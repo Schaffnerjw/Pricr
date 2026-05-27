@@ -1,7 +1,6 @@
 import * as ImagePicker from "expo-image-picker";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Image, Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
-import { BrandHeader } from "../src/components/BrandHeader";
 import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
 import { GetStartedScreen } from "../src/screens/GetStartedScreen";
