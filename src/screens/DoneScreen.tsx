@@ -34,7 +34,7 @@ function subtextFor(st: DashStats | null): string {
   return "You're all set — let's close some jobs.";
 }
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly, trialDaysLeft, onChoosePlan }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
   onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
@@ -42,6 +42,8 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   // View-as (super admin, read-only): inject the business's quotes (cross-tenant fetch happens via the
   // proxy, not the local RLS session) and hide the interactive Kit bubble.
   quotesOverride?: SavedQuote[]; viewOnly?: boolean;
+  // Trial countdown banner (admin, non-demo) — shown when 1 day or less remains.
+  trialDaysLeft?: number; onChoosePlan?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
@@ -80,6 +82,15 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         ) : undefined
       } />
       <ScrollView contentContainerStyle={{ padding: 24, gap: 16, paddingTop: 24, paddingBottom: 96 }}>
+        {/* Trial countdown — last day(s) of the 3-day trial. Tapping opens the plan chooser. */}
+        {isAdmin && typeof trialDaysLeft === "number" && trialDaysLeft <= 1 && onChoosePlan && (
+          <TouchableOpacity style={[s.brandBanner, { borderColor: primaryColor, backgroundColor: primaryColor + "1A", flexDirection: "row", alignItems: "center", gap: 10 }]} onPress={onChoosePlan}>
+            <Feather name="clock" size={18} color={primaryColor} />
+            <Text style={[s.brandBannerText, { color: pal.text, flex: 1 }]}>
+              Your 3-day trial ends {trialDaysLeft <= 0 ? "today" : "tomorrow"} — <Text style={{ color: primaryColor, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Choose your plan →</Text>
+            </Text>
+          </TouchableOpacity>
+        )}
         {/* Schema validation banner (Parts 6/10) — urgent styling for the $100/placeholder case. */}
         {isAdmin && schemaWarning && !schemaWarning.ok && onFixSchema && (
           <TouchableOpacity

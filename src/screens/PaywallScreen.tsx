@@ -1,11 +1,11 @@
 import { Feather } from "@expo/vector-icons";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
 import { B } from "../constants/brand";
 import { s } from "../styles";
 import { ON_PRIMARY } from "../utils/colorUtils";
-import { openCheckout, validatePromoCode } from "../utils/billing";
+import { getBillingStatus, openCheckout, PlanId, validatePromoCode } from "../utils/billing";
 
 const FEATURES = [
   "Unlimited quotes & instant PDFs",
@@ -15,22 +15,30 @@ const FEATURES = [
   "Team logins for your crew",
 ];
 
-// Shown between signup_brand and choose_setup (and on trial expiry). A valid Veraa partner code skips
-// the paywall entirely (Pricr is included in the client's Veraa plan).
-export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onStartTrial, onVeraaApplied, onContinue }: {
+// Shown between signup_brand and choose_setup (and on trial expiry / from the dashboard banner). A
+// valid Veraa partner code skips the paywall entirely (Pricr is included in the client's Veraa plan).
+export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onStartTrial, onSelectPlan, onVeraaApplied, onContinue }: {
   businessCode: string;
   primaryColor: string;
-  mode?: "signup" | "expired";   // "signup" offers a free trial; "expired" requires subscribe/Veraa
-  trialDays?: number;            // when set (>0) the user is mid-trial → offer "Continue"
-  onStartTrial: () => void;      // begin the 14-day trial (no card) and continue to setup
-  onVeraaApplied: (code: string) => void; // valid Veraa code → mark veraa + continue
-  onContinue?: () => void;       // continue mid-trial without paying yet
+  mode?: "signup" | "expired";              // "signup" continues into setup; "expired" requires subscribe/Veraa
+  trialDays?: number;                        // when set (>0) the user is mid-trial → offer "Continue"
+  onStartTrial: (plan: PlanId) => void;      // begin the 3-day trial and continue into the app
+  onSelectPlan?: (plan: PlanId) => void;     // persist the chosen plan to the business config
+  onVeraaApplied: (code: string) => void;    // valid Veraa code → mark veraa + continue
+  onContinue?: () => void;                   // continue mid-trial without paying yet
 }) {
   const [showPromo, setShowPromo] = useState(false);
   const [promo, setPromo] = useState("");
   const [checking, setChecking] = useState(false);
   const [promoError, setPromoError] = useState("");
-  const [launching, setLaunching] = useState(false);
+  const [launching, setLaunching] = useState<PlanId | null>(null);
+  const [annualAvailable, setAnnualAvailable] = useState(true); // hidden if STRIPE_ANNUAL_PRICE_ID unset
+
+  useEffect(() => {
+    let live = true;
+    getBillingStatus(businessCode).then(st => { if (live) setAnnualAvailable(st.annualAvailable !== false); }).catch(() => {});
+    return () => { live = false; };
+  }, [businessCode]);
 
   const applyPromo = async () => {
     const code = promo.trim().toUpperCase();
@@ -42,12 +50,44 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
     setPromoError(r.message || "That code isn't valid.");
   };
 
-  const startCheckout = async () => {
-    setLaunching(true);
-    const opened = await openCheckout(businessCode);
-    setLaunching(false);
-    if (!opened) setPromoError("Billing isn't available right now — start your free trial and add a card later.");
+  // Pick a plan: record it, open Stripe Checkout (3-day trial collected there). In signup mode we then
+  // continue into the app (the webhook flips the subscription to active on payment). In expired mode we
+  // stay put — the user must complete payment before regaining access.
+  const choosePlan = async (plan: PlanId) => {
+    setPromoError("");
+    onSelectPlan?.(plan);
+    setLaunching(plan);
+    const opened = await openCheckout(businessCode, plan);
+    setLaunching(null);
+    if (mode === "expired") {
+      if (!opened) setPromoError("Billing isn't available right now. Try again shortly or use a partner code.");
+      return;
+    }
+    onStartTrial(plan); // signup: continue into setup (trial active)
   };
+
+  const PlanCard = ({ plan, price, per, billed, recommended, badge }: { plan: PlanId; price: string; per: string; billed: string; recommended?: boolean; badge?: string }) => (
+    <View style={{ flex: 1, backgroundColor: B.card, borderRadius: 16, borderWidth: recommended ? 2 : 1, borderColor: recommended ? primaryColor : B.border, padding: 16, gap: 10 }}>
+      {recommended && (
+        <View style={{ position: "absolute", top: -11, alignSelf: "center", backgroundColor: primaryColor, borderRadius: 20, paddingVertical: 3, paddingHorizontal: 12 }}>
+          <Text style={{ color: ON_PRIMARY, fontSize: 10, fontWeight: "800", letterSpacing: 0.5, fontFamily: "DMSans_700Bold" }}>MOST POPULAR</Text>
+        </View>
+      )}
+      <View style={{ alignItems: "center", marginTop: recommended ? 6 : 0 }}>
+        <Text style={{ color: B.white, fontSize: 30, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>{price}<Text style={{ fontSize: 14, color: B.gray2 }}>{per}</Text></Text>
+        <Text style={{ color: B.gray3, fontSize: 12, fontFamily: "DMSans_400Regular" }}>{billed}</Text>
+      </View>
+      {badge && (
+        <View style={{ backgroundColor: B.green + "22", borderRadius: 8, paddingVertical: 5, paddingHorizontal: 8 }}>
+          <Text style={{ color: B.green, fontSize: 11, fontWeight: "700", textAlign: "center", fontFamily: "DMSans_700Bold" }}>{badge}</Text>
+        </View>
+      )}
+      <TouchableOpacity style={[s.btn, { backgroundColor: recommended ? primaryColor : "transparent", borderWidth: recommended ? 0 : 1, borderColor: primaryColor, paddingVertical: 11, alignItems: "center" }]} onPress={() => choosePlan(plan)} disabled={launching !== null}>
+        {launching === plan ? <ActivityIndicator color={recommended ? ON_PRIMARY : primaryColor} size="small" />
+          : <Text style={{ color: recommended ? ON_PRIMARY : primaryColor, fontWeight: "700", fontSize: 13, fontFamily: "DMSans_700Bold", textAlign: "center" }}>{mode === "expired" ? "Subscribe" : "Start 3-day free trial"}</Text>}
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <SafeAreaView style={[s.container, { backgroundColor: B.midnight }]}>
@@ -55,8 +95,8 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
         <View style={{ alignItems: "center", marginTop: 12 }}><PricrLogo size={30} /></View>
 
         <View style={{ gap: 6, alignItems: "center" }}>
-          <Text style={{ color: B.white, fontSize: 26, fontWeight: "800", fontFamily: "Syne_800ExtraBold", textAlign: "center" }}>{mode === "expired" ? "Your trial has ended" : "Start your 14-day free trial"}</Text>
-          <Text style={{ color: B.gray2, fontSize: 15, fontFamily: "DMSans_400Regular", textAlign: "center" }}>{mode === "expired" ? "Subscribe to keep using Pricr — or enter your partner code." : "No card required to start. $49/month after your trial."}</Text>
+          <Text style={{ color: B.white, fontSize: 26, fontWeight: "800", fontFamily: "Syne_800ExtraBold", textAlign: "center" }}>{mode === "expired" ? "Your trial has ended" : "Start your 3-day free trial"}</Text>
+          <Text style={{ color: B.gray2, fontSize: 15, fontFamily: "DMSans_400Regular", textAlign: "center" }}>{mode === "expired" ? "Choose a plan to keep using Pricr — or enter your partner code." : "Pick a plan to begin. Cancel anytime during your trial."}</Text>
         </View>
 
         <View style={{ backgroundColor: B.card, borderRadius: 16, borderWidth: 1, borderColor: B.border, padding: 20, gap: 12 }}>
@@ -68,21 +108,11 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
           ))}
         </View>
 
-        <View style={{ alignItems: "center", gap: 2 }}>
-          <Text style={{ color: B.white, fontSize: 34, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>$49<Text style={{ fontSize: 16, color: B.gray2 }}>/month</Text></Text>
-          <Text style={{ color: B.gray3, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Cancel anytime.</Text>
+        {/* Plan cards */}
+        <View style={{ flexDirection: "row", gap: 12, marginTop: annualAvailable ? 6 : 0 }}>
+          <PlanCard plan="monthly" price="$49" per="/month" billed="Billed monthly" />
+          {annualAvailable && <PlanCard plan="annual" price="$490" per="/year" billed="Billed annually" recommended badge="Save $98 — 2 months free" />}
         </View>
-
-        {mode === "signup" && (
-          <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 }]} onPress={onStartTrial}>
-            <Text style={[s.btnText, { color: ON_PRIMARY }]}>Start Free Trial →</Text>
-          </TouchableOpacity>
-        )}
-
-        <TouchableOpacity style={[s.btnSecondary, { borderColor: primaryColor, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 }]} onPress={startCheckout} disabled={launching}>
-          {launching ? <ActivityIndicator color={primaryColor} size="small" /> : <Feather name="credit-card" size={16} color={primaryColor} />}
-          <Text style={[s.btnSecondaryText, { color: primaryColor }]}>Subscribe now ($49/mo)</Text>
-        </TouchableOpacity>
 
         {/* Promo / partner code */}
         {!showPromo ? (

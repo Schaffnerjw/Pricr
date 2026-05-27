@@ -112,7 +112,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
       const { signingLink } = (await prepareShare?.(presentation)) ?? { signingLink: null };
       await shareQuotePDF(
         { ...presentation, signatureData: signature ?? undefined, signedAt: signedAt ?? undefined, signingLink: signingLink ?? undefined, termsAndConditions },
-        signingLink ? { message: `Here is your quote from ${business.name}. Review and sign here: ${signingLink}` } : undefined,
+        signingLink ? { message: `${business.name} sent you a quote for ${formatMoney(t.total)}. Review and sign: ${signingLink}` } : undefined,
       );
     } catch {
       Alert.alert("Couldn't share quote", "We couldn't prepare this quote to share. Check your connection and try again.");

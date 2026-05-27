@@ -91,6 +91,9 @@ function appendAuditEvent(token, existingLog, event) {
 // ── Resend transactional email (fire-and-forget) ───────────────────────────────
 const FROM_EMAIL = process.env.FROM_EMAIL || 'quotes@pricr.veraa.io';
 const APP_URL = 'https://app.pricr.veraa.io';
+// Clean public base for signing-page self-references (OG image, certificate links, email links).
+// Override with SIGN_BASE_URL (e.g. https://sign.pricr.veraa.io); falls back to the Railway URL.
+const SIGNING_BASE = process.env.SIGN_BASE_URL || 'https://pricr-production.up.railway.app';
 // Sends an email via Resend. Never throws into the caller — errors are logged only, so a mail
 // failure can never block or fail the signing response. No-ops cleanly if RESEND_API_KEY is unset.
 function sendEmail({ to, subject, html, attachments }) {
@@ -172,10 +175,10 @@ function resolvePaymentMethods(pres, business) {
 // Safe to embed inside a <script> tag (prevents </script> breakouts).
 const jsonForScript = (obj) => JSON.stringify(obj).replace(/</g, '\\u003c');
 
-function pageShell(title, bodyHtml) {
+function pageShell(title, bodyHtml, extraHead = '') {
   return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
-<title>${esc(title)}</title>
+<title>${esc(title)}</title>${extraHead}
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
   body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#0A0E1A;color:#0A0E1A;line-height:1.5;}
@@ -238,6 +241,43 @@ function stateCard(accent, emoji, title, body) {
 
 // The E-SIGN / UETA consent the signer must affirm before signing (used on the remote page + app).
 const CONSENT_TEXT = 'I have read and agree to the terms above. By signing below I consent to use electronic records and signatures for this transaction. I understand this electronic signature is legally binding under the Electronic Signatures in Global and National Commerce Act (E-SIGN Act, 15 U.S.C. § 7001 et seq.) and the Uniform Electronic Transactions Act (UETA).';
+
+// Social-preview SVG (1200x630) for signing links. Always returns valid XML — & escaped, missing
+// data falls back to generic Pricr branding.
+function ogSvg(bizName, total, accent) {
+  const xml = (sv) => String(sv == null ? '' : sv).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const ac = /^#[0-9a-fA-F]{3,8}$/.test(String(accent || '')) ? accent : '#2979FF';
+  const hasBiz = !!(bizName && String(bizName).trim());
+  const name = hasBiz ? xml(String(bizName).trim().slice(0, 24)) : 'Your Quote is Ready';
+  const totalText = (hasBiz && total != null) ? '$' + (Math.round(Number(total) || 0)).toLocaleString('en-US') : '';
+  const sub = hasBiz ? 'Quote Ready to Sign' : '';
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0A0E1A"/>
+  <rect x="0" y="0" width="8" height="630" fill="${xml(ac)}"/>
+  <text x="48" y="72" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="bold" fill="#FFFFFF">Pricr.</text>
+  <text x="48" y="200" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="bold" fill="#FFFFFF">${name}</text>
+  ${sub ? `<text x="48" y="270" font-family="Arial, Helvetica, sans-serif" font-size="28" fill="#8892A4">${xml(sub)}</text>` : ''}
+  ${totalText ? `<text x="48" y="420" font-family="Arial, Helvetica, sans-serif" font-size="96" font-weight="bold" fill="#00E5FF">${xml(totalText)}</text>` : ''}
+  <text x="48" y="510" font-family="Arial, Helvetica, sans-serif" font-size="24" fill="#8892A4">Tap to review and sign &#8594;</text>
+  <text x="1100" y="600" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="rgba(255,255,255,0.2)" text-anchor="end">Pricr</text>
+</svg>`;
+}
+
+async function handleOgImage(res, token) {
+  const headers = { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=3600', 'Access-Control-Allow-Origin': '*' };
+  try {
+    const ctx = await loadSigningContext(token);
+    if (!ctx) { res.writeHead(200, headers); res.end(ogSvg(null, null, '#2979FF')); return; }
+    const pres = (ctx.quote.quote_data && ctx.quote.quote_data.presentation) || {};
+    const accent = pres.brandColor || '#2979FF';
+    const bizName = pres.businessName || (ctx.business && ctx.business.name) || '';
+    const total = pres.total != null ? pres.total : (ctx.quote.total != null ? ctx.quote.total : null);
+    res.writeHead(200, headers); res.end(ogSvg(bizName, total, accent));
+  } catch (_) {
+    res.writeHead(200, headers); res.end(ogSvg(null, null, '#2979FF'));
+  }
+}
 
 function signingPage(token, quote, business) {
   const pres = (quote.quote_data && quote.quote_data.presentation) || {};
@@ -437,7 +477,19 @@ ${reviewStep}
   }
 })();
 </script>`;
-  return pageShell('Sign your quote — ' + bizName, body);
+  // Open Graph / Twitter preview so the shared signing link unfurls with a branded card + total.
+  const ogImg = `${SIGNING_BASE}/og-image/${encodeURIComponent(token)}`;
+  const ogDesc = `${bizName} sent you a quote for ${money(total)}. Tap to review and sign.`;
+  const ogTags = `
+<meta property="og:title" content="Sign your quote — ${esc(bizName)}"/>
+<meta property="og:description" content="${esc(ogDesc)}"/>
+<meta property="og:image" content="${esc(ogImg)}"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta property="og:type" content="website"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="${esc(ogImg)}"/>`;
+  return pageShell('Sign your quote — ' + bizName, body, ogTags);
 }
 
 // ── Audit-trail derived values + emails + signed-document HTML ──────────────────
@@ -739,8 +791,8 @@ async function handleSignSubmit(req, res, token, rawBody) {
           signer_ip: ip || ctx.quote.signer_ip || null, signer_user_agent: ua || null, document_hash: docHash,
         });
         const accent = (merged.presentation && merged.presentation.brandColor) || '#2979FF';
-        const host = (req.headers && req.headers.host) || '';
-        const certificateUrl = host ? `https://${host}/sign/${encodeURIComponent(token)}/certificate` : '';
+        // Use the clean signing base for the certificate link in emails (falls back to the Railway URL).
+        const certificateUrl = `${SIGNING_BASE}/sign/${encodeURIComponent(token)}/certificate`;
         const tokenShort = String(token).slice(0, 8).toUpperCase();
         // EMAIL 1 — customer confirmation (only if they provided an address) with the signed agreement attached.
         if (signer_email) {
@@ -1188,13 +1240,16 @@ async function handleCreateCheckoutSession(res, buf) {
   const stripe = getStripe();
   if (!stripe) return sendJson(res, 503, { error: 'Billing not configured' });
   const body = parseJsonBody(buf);
+  const plan = body.plan === 'annual' ? 'annual' : 'monthly';
+  const price = plan === 'annual' ? process.env.STRIPE_ANNUAL_PRICE_ID : process.env.STRIPE_PRICE_ID;
+  if (!price) return sendJson(res, 503, { error: 'Billing not configured' });
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'], mode: 'subscription',
-      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      line_items: [{ price, quantity: 1 }],
       success_url: (process.env.APP_URL || '') + '/billing-success?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: (process.env.APP_URL || '') + '/billing-cancel',
-      metadata: { businessCode: String(body.businessCode || '') },
+      metadata: { businessCode: String(body.businessCode || ''), plan },
     });
     return sendJson(res, 200, { url: session.url, sessionId: session.id });
   } catch (e) { console.warn('[billing] checkout error:', e && e.message); return sendJson(res, 500, { error: 'checkout failed' }); }
@@ -1221,10 +1276,10 @@ async function handleBillingStatus(res, businessCode) {
     const status = (row && (row.subscription_status || (row.config && row.config.subscriptionStatus))) || 'trial';
     const startedRaw = row && (row.trial_started_at || (row.config && row.config.trialStartedAt));
     const started = startedRaw ? new Date(startedRaw).getTime() : Date.now();
-    const trialDaysLeft = Math.max(0, 14 - Math.floor((Date.now() - started) / 86400000));
+    const trialDaysLeft = Math.max(0, 3 - Math.floor((Date.now() - started) / 86400000));
     const isVeraaClient = !!(row && row.config && row.config.isVeraaClient) || status === 'veraa';
-    return sendJson(res, 200, { status, trialDaysLeft, isVeraaClient });
-  } catch (_) { return sendJson(res, 200, { status: 'trial', trialDaysLeft: 14, isVeraaClient: false }); }
+    return sendJson(res, 200, { status, trialDaysLeft, isVeraaClient, monthlyAvailable: !!process.env.STRIPE_PRICE_ID, annualAvailable: !!process.env.STRIPE_ANNUAL_PRICE_ID });
+  } catch (_) { return sendJson(res, 200, { status: 'trial', trialDaysLeft: 3, isVeraaClient: false, monthlyAvailable: !!process.env.STRIPE_PRICE_ID, annualAvailable: !!process.env.STRIPE_ANNUAL_PRICE_ID }); }
 }
 
 const ADMIN_HANDLERS = {
@@ -1275,6 +1330,7 @@ const server = http.createServer((req, res) => {
   const requestCodeMatch = path.match(/^\/sign\/([^/]+)\/request-code\/?$/);
   const verifyCodeMatch = path.match(/^\/sign\/([^/]+)\/verify-code\/?$/);
   const certMatch = path.match(/^\/sign\/([^/]+)\/certificate\/?$/);
+  const ogImageMatch = path.match(/^\/og-image\/([^/]+)\/?$/);
   const pageMatch = path.match(/^\/sign\/([^/]+)\/?$/);
 
   const readBody = (cb) => { const body = []; req.on('data', (c) => body.push(c)); req.on('end', () => cb(Buffer.concat(body))); };
@@ -1314,7 +1370,7 @@ const server = http.createServer((req, res) => {
   if (path === '/billing/webhook' && req.method === 'POST') { readBody((buf) => handleStripeWebhook(req, res, buf).catch(() => sendJson(res, 500, { error: 'webhook failed' }))); return; }
   if (path === '/billing/status' && req.method === 'GET') {
     const code = new URLSearchParams((req.url || '').split('?')[1] || '').get('businessCode') || '';
-    handleBillingStatus(res, code).catch(() => sendJson(res, 200, { status: 'trial', trialDaysLeft: 14, isVeraaClient: false }));
+    handleBillingStatus(res, code).catch(() => sendJson(res, 200, { status: 'trial', trialDaysLeft: 3, isVeraaClient: false }));
     return;
   }
 
@@ -1328,6 +1384,10 @@ const server = http.createServer((req, res) => {
   }
   if (submitMatch && req.method === 'POST') {
     readBody((buf) => handleSignSubmit(req, res, decodeURIComponent(submitMatch[1]), buf));
+    return;
+  }
+  if (ogImageMatch && req.method === 'GET') {
+    handleOgImage(res, decodeURIComponent(ogImageMatch[1])).catch(() => { try { res.writeHead(200, { 'Content-Type': 'image/svg+xml' }); res.end(ogSvg(null, null, '#2979FF')); } catch (_) {} });
     return;
   }
   if (certMatch && req.method === 'GET') {

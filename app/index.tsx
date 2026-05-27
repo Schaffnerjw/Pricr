@@ -640,6 +640,8 @@ export default function Index() {
     <DoneScreen
       business={business} currentUser={currentUser} primaryColor={primaryColor} secondaryColor={secondaryColor}
       showTestPrompt={justBuilt} isDemoMode={isDemoMode}
+      trialDaysLeft={!isDemoMode && business.subscriptionStatus === "trial" ? trialDaysLeft(business.trialStartedAt) : undefined}
+      onChoosePlan={() => { setPaywallMode("signup"); setScreen("paywall"); }}
       onOpenQuoteTool={() => { setJustBuilt(false); setQuoteInitialValues(undefined); setScreen("quote"); }}
       onQuoteHistory={() => { setJustBuilt(false); setScreen("history"); }}
       onStats={() => { setJustBuilt(false); setScreen("stats"); }}
@@ -661,13 +663,19 @@ export default function Index() {
       primaryColor={primaryColor}
       mode={paywallMode}
       trialDays={business.subscriptionStatus === "trial" ? trialDaysLeft(business.trialStartedAt) : undefined}
-      onStartTrial={() => setScreen("choose_setup")}
-      onContinue={paywallMode === "signup" ? () => setScreen("choose_setup") : undefined}
+      onSelectPlan={async (plan) => {
+        if (!business) return;
+        const updated: Business = { ...business, selectedPlan: plan };
+        setBusiness(updated);
+        try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] plan save failed", e instanceof Error ? e.message : String(e)); }
+      }}
+      onStartTrial={() => setScreen(business.schema ? "done" : "choose_setup")}
+      onContinue={() => setScreen(business.schema ? "done" : "choose_setup")}
       onVeraaApplied={async (code) => {
         const updated: Business = { ...business, isVeraaClient: true, subscriptionStatus: "veraa", partnerCodeUsed: code };
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }
         setBusiness(updated);
-        setScreen(paywallMode === "expired" ? "done" : "choose_setup");
+        setScreen(updated.schema ? "done" : "choose_setup");
       }}
     />
   );

@@ -35,10 +35,12 @@ export default function Root({ children }: PropsWithChildren) {
           #root { min-height: 100vh; min-height: -webkit-fill-available; display: flex; flex-direction: column; }
         ` }} />
 
-        {/* Register the service worker (caches the app shell; never caches API calls). */}
+        {/* Register the service worker (caches the app shell; never caches API calls). When a new
+            version installs while the app is open, fire 'pricr-update-available' so the app can offer
+            a refresh banner. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){});});}`,
+            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').then(function(reg){reg.addEventListener('updatefound',function(){var nw=reg.installing;if(!nw)return;nw.addEventListener('statechange',function(){if(nw.state==='installed'&&navigator.serviceWorker.controller){window.dispatchEvent(new CustomEvent('pricr-update-available'));}});});}).catch(function(){});});}`,
           }}
         />
       </head>

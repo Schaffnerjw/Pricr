@@ -4,8 +4,9 @@ import * as WebBrowser from "expo-web-browser";
 import { SIGN_BASE } from "../constants/brand";
 import { logger } from "./logger";
 
+export type PlanId = "monthly" | "annual";
 export interface PromoResult { valid: boolean; type: "veraa" | "unknown"; message: string }
-export interface BillingStatus { status: "active" | "veraa" | "trial" | "expired"; trialDaysLeft: number; isVeraaClient: boolean }
+export interface BillingStatus { status: "active" | "veraa" | "trial" | "expired"; trialDaysLeft: number; isVeraaClient: boolean; annualAvailable?: boolean; monthlyAvailable?: boolean }
 
 // Validate a promo / Veraa partner code. Never throws — returns invalid on any failure.
 export async function validatePromoCode(code: string): Promise<PromoResult> {
@@ -18,11 +19,11 @@ export async function validatePromoCode(code: string): Promise<PromoResult> {
   } catch (e) { logger.error("[billing] validate failed"); return { valid: false, type: "unknown", message: "Couldn't reach the server" }; }
 }
 
-// Open Stripe Checkout in the browser for the given business. Returns false if billing isn't configured.
-export async function openCheckout(businessCode: string): Promise<boolean> {
+// Open Stripe Checkout in the browser for the given business + plan. Returns false if billing isn't configured.
+export async function openCheckout(businessCode: string, plan: PlanId = "monthly"): Promise<boolean> {
   try {
     const res = await fetch(`${SIGN_BASE}/billing/create-checkout-session`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ businessCode }),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ businessCode, plan }),
     });
     if (!res.ok) return false;
     const data = await res.json();
@@ -38,14 +39,17 @@ export async function getBillingStatus(businessCode: string): Promise<BillingSta
     const data = await res.json();
     return {
       status: ["active", "veraa", "trial", "expired"].includes(data?.status) ? data.status : "trial",
-      trialDaysLeft: typeof data?.trialDaysLeft === "number" ? data.trialDaysLeft : 14,
+      trialDaysLeft: typeof data?.trialDaysLeft === "number" ? data.trialDaysLeft : TRIAL_DAYS,
       isVeraaClient: !!data?.isVeraaClient,
+      annualAvailable: data?.annualAvailable !== false,
+      monthlyAvailable: data?.monthlyAvailable !== false,
     };
-  } catch { return { status: "trial", trialDaysLeft: 14, isVeraaClient: false }; }
+  } catch { return { status: "trial", trialDaysLeft: TRIAL_DAYS, isVeraaClient: false }; }
 }
 
-// Days remaining in a 14-day trial from a start timestamp.
+// Days remaining in the 3-day trial from a start timestamp.
+export const TRIAL_DAYS = 3;
 export function trialDaysLeft(trialStartedAt?: number): number {
-  if (!trialStartedAt) return 14;
-  return Math.max(0, 14 - Math.floor((Date.now() - trialStartedAt) / 86400000));
+  if (!trialStartedAt) return TRIAL_DAYS;
+  return Math.max(0, TRIAL_DAYS - Math.floor((Date.now() - trialStartedAt) / 86400000));
 }

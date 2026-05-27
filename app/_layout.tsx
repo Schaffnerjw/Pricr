@@ -14,6 +14,7 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { InstallPrompt } from "../src/components/InstallPrompt";
+import { UpdateBanner } from "../src/components/UpdateBanner";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -41,6 +42,7 @@ export default function RootLayout() {
     <>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#0A0E1A" } }} />
       <InstallPrompt />
+      <UpdateBanner />
     </>
   );
 }
