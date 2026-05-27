@@ -12,7 +12,7 @@ import { formatMoney } from "../utils/helpers";
 
 const monthYear = () => new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
-export function StatsScreen({ business, onBack }: { business: Business; onBack: () => void }) {
+export function StatsScreen({ business, onBack, onBuildQuote }: { business: Business; onBack: () => void; onBuildQuote?: () => void }) {
   const a = useBusinessAnalytics(business.code);
   const pal = getBrandPalette(business);
   const primary = pal.primary, secondary = pal.secondary, text = pal.text, muted = pal.textMuted;
@@ -100,6 +100,26 @@ export function StatsScreen({ business, onBack }: { business: Business; onBack: 
 
       {a.loading ? (
         <View style={s.centered}><ActivityIndicator color={primary} /></View>
+      ) : a.quotesAllTime === 0 ? (
+        // Encouraging empty state for brand-new accounts (zeros look broken).
+        <ScrollView contentContainerStyle={{ padding: 24, gap: 18, alignItems: "center", paddingTop: 48 }}>
+          <Text style={{ fontSize: 44 }}>🎯</Text>
+          <Text style={{ color: text, fontSize: 20, fontWeight: "800", fontFamily: "Syne_700Bold", textAlign: "center" }}>Your stats will appear here after your first quote</Text>
+          <Text style={{ color: muted, fontSize: 14, fontFamily: "DMSans_400Regular", textAlign: "center" }}>Most contractors see results within their first week.</Text>
+          <View style={{ backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 16, padding: 18, gap: 8, width: "100%", marginTop: 4 }}>
+            <Text style={{ color: muted, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>After your first quote you&apos;ll see:</Text>
+            {["Total quoted amount", "Close rate", "Jobs closed this month"].map(t => (
+              <View key={t} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Feather name="bar-chart-2" size={15} color={primary} /><Text style={{ color: text, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>{t}</Text>
+              </View>
+            ))}
+          </View>
+          {onBuildQuote && (
+            <TouchableOpacity style={[s.btn, { backgroundColor: primary, width: "100%", flexDirection: "row", justifyContent: "center", gap: 8 }]} onPress={onBuildQuote}>
+              <Feather name="plus" size={18} color="#fff" /><Text style={s.btnText}>Build Your First Quote →</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 48 }}>
           {/* ── THE BRAG CARD (screenshot target) ── */}

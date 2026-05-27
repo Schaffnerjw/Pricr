@@ -38,6 +38,7 @@ import { isSupabaseConfigured } from "../src/lib/supabase";
 import { addQuote, clearCurrentUser, clearImportProgress, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
 import { BrandConfig, Business, DemoBusiness, QuoteSchema, QuoteTemplate, SavedQuote, Screen, User } from "../src/types";
 import { addTemplate, templateToInitialValues } from "../src/utils/quoteTemplates";
+import { isValidEmail, isValidPhone } from "../src/utils/contactValidation";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
@@ -90,6 +91,8 @@ export default function Index() {
   const [setupPricing, setSetupPricing] = useState("");
 
   const [authName, setAuthName] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPhone, setAuthPhone] = useState("");
   const [authUsername, setAuthUsername] = useState("");
   const [authPin, setAuthPin] = useState("");           // now a password (8+ chars); legacy accounts may have a short PIN
   const [authPinConfirm, setAuthPinConfirm] = useState(""); // confirmation field on account creation
@@ -159,14 +162,6 @@ export default function Index() {
     ]);
   };
   // Dashboard "Configure Quote Tool" → action sheet (Kit / manual editor / import).
-  const openConfigureQuoteTool = () => {
-    Alert.alert("Configure Quote Tool", "How would you like to set up your quote tool?", [
-      { text: "Chat with Kit", onPress: () => { setSettingsFocusTerms(false); startSetupChoice(true); } },
-      { text: "Edit manually", onPress: openSchemaEditor },
-      { text: "Import price sheet", onPress: () => { setIsReconfiguring(true); setScreen("import"); } },
-      { text: "Cancel", style: "cancel" },
-    ]);
-  };
   const scrollRef = useRef<ScrollView>(null);
 
   // ── Real-time incremental schema building ──
@@ -205,7 +200,12 @@ export default function Index() {
     saveBusiness(updated).catch(() => { });
   };
 
-  useEffect(() => { setHydrated(true); runStartupMigrations().then(checkSession); }, []);
+  useEffect(() => {
+    setHydrated(true);
+    runStartupMigrations().then(checkSession);
+    // Warm the Railway proxy so it's hot before the user needs Kit/signing. Fire-and-forget.
+    fetch(`${SIGN_BASE}/health`, { method: "GET" }).catch(() => { });
+  }, []);
 
   const checkSession = async () => {
     try {
@@ -311,8 +311,11 @@ export default function Index() {
       const adminPinHash = await hashPin(username, authPin);
       const user: User = { id: Date.now().toString(), name: authName, role: "admin", businessCode: code, username, pinHash: adminPinHash };
       const biz: Business = {
-        code, name: signupBizName, ownerName: authName, adminPin: "", username, adminPinHash,
-        brand: { ...signupBrand, primaryColor: finalColor },
+        code, name: signupBizName, ownerName: authName,
+        ownerEmail: authEmail.trim() || undefined, ownerPhone: authPhone.trim() || undefined,
+        notificationEmail: authEmail.trim() || undefined, // pre-fill signing-notification email with the owner's
+        adminPin: "", username, adminPinHash,
+        brand: { ...signupBrand, primaryColor: finalColor, email: authEmail.trim() || signupBrand.email },
         schema: null, createdAt: Date.now(), brandConfigured,
         subscriptionStatus: "trial", trialStartedAt: Date.now(), // 14-day trial; paywall gates after
       };
@@ -727,7 +730,7 @@ export default function Index() {
 
   // ── BUSINESS STATS (admin only — brag card + deep dive) ─────────────────────────
   if (screen === "stats" && business && currentUser && isAdmin) {
-    return <StatsScreen business={business} onBack={() => setScreen("done")} />;
+    return <StatsScreen business={business} onBack={() => setScreen("done")} onBuildQuote={startBlankQuote} />;
   }
 
   // Until hydrated (and during the initial splash), render the deterministic splash so the server's
@@ -765,7 +768,9 @@ export default function Index() {
       onDismissTestPrompt={() => setJustBuilt(false)}
       onOpenSettings={() => { setJustBuilt(false); setSettingsFocusTerms(false); setScreen("settings"); }}
       onSetupTerms={() => { setJustBuilt(false); setSettingsFocusTerms(true); setScreen("settings"); }}
-      onConfigureQuoteTool={isAdmin && !isDemoMode && business.schema ? openConfigureQuoteTool : undefined}
+      onAskKit={!isDemoMode ? () => { setSettingsFocusTerms(false); startSetupChoice(true); } : undefined}
+      onEditSchema={isAdmin && !isDemoMode && business.schema ? openSchemaEditor : undefined}
+      onImport={!isDemoMode ? () => { setIsReconfiguring(true); setScreen("import"); } : undefined}
     />
   );
 
@@ -917,11 +922,13 @@ export default function Index() {
 
   if (screen === "signup") return (
     <SignupScreen
-      bizName={signupBizName} name={authName} username={authUsername} pin={authPin} confirm={authPinConfirm} error={authError}
-      onBizNameChange={setSignupBizName} onNameChange={setAuthName} onUsernameChange={setAuthUsername} onPinChange={setAuthPin} onConfirmChange={setAuthPinConfirm}
+      bizName={signupBizName} name={authName} email={authEmail} phone={authPhone} username={authUsername} pin={authPin} confirm={authPinConfirm} error={authError}
+      onBizNameChange={setSignupBizName} onNameChange={setAuthName} onEmailChange={setAuthEmail} onPhoneChange={setAuthPhone} onUsernameChange={setAuthUsername} onPinChange={setAuthPin} onConfirmChange={setAuthPinConfirm}
       onBack={() => { setAuthError(""); setScreen("get_started"); }}
       onContinue={() => {
         if (!signupBizName.trim() || !authName.trim() || !authUsername.trim() || !authPin.trim()) { setAuthError("Please fill in all fields."); return; }
+        if (!isValidEmail(authEmail)) { setAuthError("Please enter a valid email."); return; }
+        if (!isValidPhone(authPhone)) { setAuthError("Please enter a valid phone number."); return; }
         if (authPin.length < 8) { setAuthError("Password must be at least 8 characters."); return; }
         if (authPin !== authPinConfirm) { setAuthError("Passwords don't match."); return; }
         setAuthError("");

@@ -87,8 +87,10 @@ export function generateQuotePDF(d: QuotePDFData): string {
        </div>`
     : "";
   const contactBits = [d.phone, d.email, d.address].filter(Boolean).map(esc).join("&nbsp;&nbsp;·&nbsp;&nbsp;");
+  // The business name always renders, so the header is readable even if a remote logo can't load
+  // offline; onerror hides a broken logo image cleanly. PDF generates with zero internet.
   const mark = d.logoUri
-    ? `<img class="logo" src="${esc(d.logoUri)}" /><div class="biz">${esc(d.businessName)}</div>`
+    ? `<img class="logo" src="${esc(d.logoUri)}" onerror="this.style.display='none'" /><div class="biz">${esc(d.businessName)}</div>`
     : `<div class="biz">${esc(d.businessName)}</div>`;
 
   return `<!DOCTYPE html>

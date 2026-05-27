@@ -1455,16 +1455,18 @@ function emailShell(bodyHtml, accent) {
 }
 const ctaButton = (label, href, accent) => `<a href="${esc(href)}" style="display:inline-block;background:${esc(accent)};color:#fff;text-decoration:none;font-weight:700;font-size:16px;padding:14px 28px;border-radius:12px;margin:18px 0;">${esc(label)}</a>`;
 // Internal owner notification: a new business just signed up. Sent once per business (welcome gate).
-function ownerSignupEmailHtml({ businessName, ownerName, trade, code, joined, trialEnds }) {
+function ownerSignupEmailHtml({ businessName, ownerName, ownerEmail, ownerPhone, trade, code, joined, trialEnds }) {
   return emailShell(`
     <p style="margin:0 0 14px;">A new business just joined Pricr.</p>
     <p style="margin:0 0 6px;"><b>Business:</b> ${esc(businessName)}</p>
     <p style="margin:0 0 6px;"><b>Owner:</b> ${esc(ownerName)}</p>
+    <p style="margin:0 0 6px;"><b>Email:</b> ${esc(ownerEmail || '—')}</p>
+    <p style="margin:0 0 6px;"><b>Phone:</b> ${esc(ownerPhone || '—')}</p>
     <p style="margin:0 0 6px;"><b>Trade:</b> ${esc(trade)}</p>
     <p style="margin:0 0 6px;"><b>Joined:</b> ${esc(joined)}</p>
     <p style="margin:0 0 6px;"><b>Trial ends:</b> ${esc(trialEnds)}</p>
     <p style="margin:14px 0 6px;"><b>Their business ID:</b> ${esc(code)}</p>
-    <p style="margin:14px 0 0;">This is a great time to reach out personally and help them get their first quote built.</p>
+    <p style="margin:14px 0 0;">Reply to their welcome email or text them to help them get their first quote built.</p>
     <p style="margin:14px 0 0;">— Pricr</p>`, '#2979FF');
 }
 function welcomeEmailHtml(ownerName, accent) {
@@ -1526,10 +1528,12 @@ async function handleOnboardingCheck(res, rawBody) {
     const bizName = row.name || businessCode;
     const trade = (config.schema && config.schema.trade) || 'Not set yet';
     const realOwner = config.ownerName || '—';
+    const ownerEmail = config.ownerEmail || config.notificationEmail || (config.brand && config.brand.email) || '';
+    const ownerPhone = config.ownerPhone || '';
     const joined = new Date(createdMs).toLocaleString('en-US');
     const trialEnds = new Date(started + 3 * 86400000).toLocaleDateString('en-US');
-    sendEmail({ to: OWNER_EMAIL, subject: `🎉 New Pricr signup — ${bizName}`, html: ownerSignupEmailHtml({ businessName: bizName, ownerName: realOwner, trade, code: businessCode, joined, trialEnds }), from: ONBOARD_FROM });
-    sendPushNotification(process.env.OWNER_PUSH_TOKEN, '🎉 New Pricr signup!', `${bizName} just joined. Trade: ${trade}. Trial ends in 3 days.`);
+    sendEmail({ to: OWNER_EMAIL, subject: `🎉 New Pricr signup — ${bizName}`, html: ownerSignupEmailHtml({ businessName: bizName, ownerName: realOwner, ownerEmail, ownerPhone, trade, code: businessCode, joined, trialEnds }), from: ONBOARD_FROM });
+    sendPushNotification(process.env.OWNER_PUSH_TOKEN, '🎉 New Pricr signup!', `${bizName} · ${trade} · ${ownerPhone || ownerEmail || 'no contact'}`);
   }
   if (!onboarding.day2 && ageMs >= 2 * 86400000) {
     sendEmail({ to, subject: 'The #1 way contractors close more jobs with Pricr', html: day2EmailHtml(ownerName, accent), from: ONBOARD_FROM });

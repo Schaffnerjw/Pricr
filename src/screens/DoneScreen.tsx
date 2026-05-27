@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
-import { Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Modal, Platform, Pressable, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { BrandHeader } from "../components/BrandHeader";
 import { KitIntroBubble } from "../components/KitIntroBubble";
 import { B } from "../constants/brand";
@@ -9,6 +9,8 @@ import { getQuotes } from "../storage";
 import { s } from "../styles";
 import { Business, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
+import { configureOptions } from "../utils/configureOptions";
+import { getPendingCount } from "../utils/offlineSignatures";
 import { generateKitInsights } from "../utils/kitInsights";
 import { getPushPermissionStatus, registerForPushNotifications } from "../utils/pushNotifications";
 
@@ -40,7 +42,7 @@ function subtextFor(st: DashStats | null): string {
   return "You're all set — let's close some jobs.";
 }
 
-export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly, trialDaysLeft, onChoosePlan, hasPushToken, onPushToken, onConfigureQuoteTool }: {
+export function DoneScreen({ business, currentUser, primaryColor, secondaryColor, showTestPrompt, isDemoMode, onOpenQuoteTool, onQuoteHistory, onQuotePipeline, onManageTeam, onReconfigure, onTestQuote, onDismissTestPrompt, onOpenSettings, onSetupTerms, schemaWarning, onFixSchema, onStats, quotesOverride, viewOnly, trialDaysLeft, onChoosePlan, hasPushToken, onPushToken, onAskKit, onEditSchema, onImport }: {
   business: Business; currentUser: User; primaryColor: string; secondaryColor: string; showTestPrompt: boolean; isDemoMode?: boolean;
   onOpenQuoteTool: () => void; onQuoteHistory: () => void; onQuotePipeline?: () => void; onManageTeam: () => void; onReconfigure: () => void;
   onTestQuote: () => void; onDismissTestPrompt: () => void; onOpenSettings: () => void; onSetupTerms?: () => void;
@@ -52,8 +54,8 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   trialDaysLeft?: number; onChoosePlan?: () => void;
   // Push notifications: whether a token is stored + a callback when one is obtained via the banner.
   hasPushToken?: boolean; onPushToken?: (token: string) => void;
-  // Opens the "Configure Quote Tool" action sheet (Kit / manual editor / import).
-  onConfigureQuoteTool?: () => void;
+  // Configure Quote Tool bottom-sheet actions (Modal, web-safe — no Alert.alert). "Edit manually" admin only.
+  onAskKit?: () => void; onEditSchema?: () => void; onImport?: () => void;
 }) {
   const isAdmin = currentUser.role === "admin" || currentUser.role === "superadmin";
   const pal = getBrandPalette(business);
@@ -64,6 +66,9 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   const [dismissed, setDismissed] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [showPushBanner, setShowPushBanner] = useState(false);
+  const [showConfigSheet, setShowConfigSheet] = useState(false);
+  const [pendingSigs, setPendingSigs] = useState(0);
+  useEffect(() => { let m = true; getPendingCount().then(n => { if (m) setPendingSigs(n); }); return () => { m = false; }; }, []);
   const [dismissedInsights, setDismissedInsights] = useState<string[]>([]);
 
   useEffect(() => {
@@ -83,10 +88,13 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
     });
     return () => { mounted = false; };
   }, []);
-  const insights = useMemo(
-    () => (isDemoMode || viewOnly ? [] : generateKitInsights(rawQuotes, business.schema, business)),
-    [rawQuotes, business, isDemoMode, viewOnly],
-  );
+  // Deferred so it never blocks first paint of the dashboard (computed 500ms after quotes settle).
+  const [insights, setInsights] = useState<import("../utils/kitInsights").KitInsight[]>([]);
+  useEffect(() => {
+    if (isDemoMode || viewOnly) { setInsights([]); return; }
+    const t = setTimeout(() => setInsights(generateKitInsights(rawQuotes, business.schema, business)), 500);
+    return () => clearTimeout(t);
+  }, [rawQuotes, business, isDemoMode, viewOnly]);
   const activeInsight = insights.find(i => !dismissedInsights.includes(i.id)) || null;
   const dismissInsight = async (id: string) => {
     const next = [...dismissedInsights, id];
@@ -152,10 +160,18 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
             </Text>
           </TouchableOpacity>
         )}
+        {/* Offline signatures waiting to sync (amber; disappears once all synced). */}
+        {pendingSigs > 0 && (
+          <View style={[s.brandBanner, { borderColor: "#F59E0B", backgroundColor: "#F59E0B1A", flexDirection: "row", alignItems: "center", gap: 10 }]}>
+            <Feather name="upload-cloud" size={18} color="#F59E0B" />
+            <Text style={[s.brandBannerText, { color: pal.text, flex: 1 }]}>{pendingSigs} signature{pendingSigs === 1 ? "" : "s"} waiting to sync — will upload when you&apos;re back online.</Text>
+          </View>
+        )}
+
         {/* Notifications opt-in — a Pricr SYSTEM notification, so it uses Pricr's own dark palette
             (never the business brand) to stay readable on ANY custom background. */}
         {showPushBanner && (
-          <View style={{ backgroundColor: "#0A0E1A", borderLeftWidth: 3, borderLeftColor: "#2979FF", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10, ...(Platform.OS === "web" ? { backdropFilter: "blur(8px)" } as any : {}) }}>
+          <View style={{ backgroundColor: "rgba(0,0,0,0.80)", borderLeftWidth: 3, borderLeftColor: "#2979FF", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10, ...(Platform.OS === "web" ? { backdropFilter: "blur(8px)" } as any : {}) }}>
             <Feather name="bell" size={18} color="#2979FF" />
             <Text style={{ color: "#FFFFFF", fontSize: 14, fontFamily: "DMSans_600SemiBold", flex: 1 }}>Enable notifications to know when clients sign ✓</Text>
             <TouchableOpacity onPress={enablePush}><Text style={{ color: "#2979FF", fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Enable</Text></TouchableOpacity>
@@ -315,9 +331,9 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
           )}
         </View>
 
-        {/* Configure Quote Tool — opens an action sheet (Kit / manual editor / import). Admin only. */}
-        {isAdmin && onConfigureQuoteTool && (
-          <TouchableOpacity onPress={onConfigureQuoteTool} style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 4 }}>
+        {/* Configure Quote Tool — opens a Modal bottom sheet (web-safe; Alert.alert fails on web). */}
+        {(onAskKit || onEditSchema || onImport) && (
+          <TouchableOpacity onPress={() => setShowConfigSheet(true)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 4 }}>
             <Feather name="sliders" size={15} color={secondaryColor} />
             <Text style={{ color: secondaryColor, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Configure Quote Tool →</Text>
           </TouchableOpacity>
@@ -337,6 +353,28 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
       </ScrollView>
 
       {isAdmin && !viewOnly && <KitIntroBubble business={business} onSetupTerms={onSetupTerms ?? onOpenSettings} />}
+
+      {/* Configure Quote Tool — bottom sheet (Modal, not Alert.alert → works on web). */}
+      <Modal visible={showConfigSheet} transparent animationType="slide" onRequestClose={() => setShowConfigSheet(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)" }} onPress={() => setShowConfigSheet(false)}>
+          <Pressable style={{ position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: pal.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 8 }} onPress={() => {}}>
+            <Text style={{ color: pal.text, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold", marginBottom: 8 }}>Configure Quote Tool</Text>
+            {configureOptions(isAdmin).map(opt => {
+              const handler = opt.key === "kit" ? onAskKit : opt.key === "edit" ? onEditSchema : onImport;
+              if (!handler) return null;
+              return (
+                <TouchableOpacity key={opt.key} onPress={() => { setShowConfigSheet(false); handler(); }} style={{ flexDirection: "row", alignItems: "center", gap: 14, padding: 16, backgroundColor: pal.background, borderColor: pal.border, borderWidth: 1, borderRadius: 12, marginBottom: 4 }}>
+                  <Feather name={opt.icon as any} size={20} color={primaryColor} />
+                  <Text style={{ color: pal.text, fontSize: 16, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{opt.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity onPress={() => setShowConfigSheet(false)} style={{ padding: 16, alignItems: "center" }}>
+              <Text style={{ color: pal.textMuted, fontSize: 15, fontFamily: "DMSans_400Regular" }}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }

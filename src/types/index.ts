@@ -10,7 +10,7 @@ export interface DocPrefs { style: "detailed"|"summary"|"custom"; showLineItems:
 // selected built-in labels; `other` is free text for the "Other" option. Unset => nothing shown.
 export interface PaymentMethods { methods: string[]; other?: string; }
 export type SubscriptionStatus = "active" | "veraa" | "trial" | "expired";
-export interface Business { code: string; name: string; ownerName: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; paymentMethods?: PaymentMethods; hasGeneratedQuote?: boolean; notificationEmail?: string; requireSmsVerification?: boolean; suspended?: boolean;
+export interface Business { code: string; name: string; ownerName: string; ownerEmail?: string; ownerPhone?: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; paymentMethods?: PaymentMethods; hasGeneratedQuote?: boolean; notificationEmail?: string; requireSmsVerification?: boolean; suspended?: boolean;
   // Billing / partner (stored in config jsonb; subscription_status also mirrored to a column — migration 0007).
   isVeraaClient?: boolean; promoCode?: string; subscriptionStatus?: SubscriptionStatus; stripeCustomerId?: string; trialStartedAt?: number; partnerCodeUsed?: string; selectedPlan?: "monthly" | "annual";
   // Kit conversation history (per business; cross-device when cloud is configured).

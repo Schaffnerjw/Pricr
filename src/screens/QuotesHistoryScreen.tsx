@@ -6,6 +6,7 @@ import { QuoteRow, QuoteStatus, useQuotes } from "../hooks/useQuotes";
 import { s } from "../styles";
 import { LostReason, QuoteOutcome } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
+import { filterQuotes, HistorySort, HistoryStatusFilter } from "../utils/quoteFilter";
 import { formatDate, formatMoney } from "../utils/helpers";
 import { shareQuotePDF } from "../utils/shareQuotePDF";
 
@@ -93,6 +94,9 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
 }) {
   const { quotes, updateQuoteStatus, updateQuoteData, loading, error } = useQuotes(businessId);
   const [selected, setSelected] = useState<QuoteRow | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("all");
+  const [sort, setSort] = useState<HistorySort>("newest");
   const accent = accentColor || B.blue;
   const pal = getBrandPalette({ brand: { primaryColor: accent, secondaryColor: accent, backgroundColor: backgroundColor || "#0A0E1A", logoUri: null, tagline: "", phone: "", email: "", address: "" } });
 
@@ -210,9 +214,46 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
         </ScrollView>
       ) : quotes.length === 0 ? (
         <View style={s.centered}><Text style={[s.emptyText, { color: pal.textMuted }]}>No quotes yet.</Text></View>
-      ) : (
+      ) : (() => {
+        const visible = filterQuotes(quotes, { search, status: statusFilter, sort });
+        const STATUSES: { key: HistoryStatusFilter; label: string }[] = [
+          { key: "all", label: "All" }, { key: "pending", label: "Pending" }, { key: "sent", label: "Sent" }, { key: "signed", label: "Signed" }, { key: "expired", label: "Expired" },
+        ];
+        const SORTS: { key: HistorySort; label: string }[] = [
+          { key: "newest", label: "Newest" }, { key: "oldest", label: "Oldest" }, { key: "highest", label: "Highest" }, { key: "lowest", label: "Lowest" },
+        ];
+        return (
         <ScrollView contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 96 }}>
-          {quotes.map(q => {
+          {/* Search */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12 }}>
+            <Feather name="search" size={16} color={pal.textMuted} />
+            <TextInput style={{ flex: 1, color: pal.text, paddingVertical: 10, fontFamily: "DMSans_400Regular", fontSize: 15 }} placeholder="Search by client name or amount" placeholderTextColor={pal.textMuted} value={search} onChangeText={setSearch} />
+            {search.length > 0 && <TouchableOpacity onPress={() => setSearch("")} hitSlop={8}><Feather name="x" size={16} color={pal.textMuted} /></TouchableOpacity>}
+          </View>
+          {/* Status filters */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {STATUSES.map(f => { const on = statusFilter === f.key; return (
+              <TouchableOpacity key={f.key} onPress={() => setStatusFilter(f.key)} style={{ borderWidth: 1, borderColor: on ? accent : pal.border, backgroundColor: on ? accent : "transparent", borderRadius: 18, paddingVertical: 6, paddingHorizontal: 13 }}>
+                <Text style={{ color: on ? ON_PRIMARY : pal.textMuted, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{f.label}</Text>
+              </TouchableOpacity>
+            ); })}
+          </ScrollView>
+          {/* Sort + count */}
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={{ color: pal.textMuted, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>{visible.length === quotes.length ? `${quotes.length} quotes` : `${visible.length} of ${quotes.length} quotes`}</Text>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {SORTS.map(so => { const on = sort === so.key; return (
+                <TouchableOpacity key={so.key} onPress={() => setSort(so.key)}><Text style={{ color: on ? accent : pal.textMuted, fontSize: 12, fontWeight: on ? "800" : "600", fontFamily: "DMSans_600SemiBold" }}>{so.label}</Text></TouchableOpacity>
+              ); })}
+            </View>
+          </View>
+
+          {visible.length === 0 ? (
+            <View style={{ alignItems: "center", paddingVertical: 40, gap: 10 }}>
+              <Text style={{ color: pal.textMuted, fontSize: 15, fontFamily: "DMSans_400Regular", textAlign: "center" }}>No quotes matching {search ? `"${search}"` : "these filters"}</Text>
+              <TouchableOpacity onPress={() => { setSearch(""); setStatusFilter("all"); }}><Text style={{ color: accent, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Clear filters</Text></TouchableOpacity>
+            </View>
+          ) : visible.map(q => {
             const notes = (q.quote_data?.notes as string | undefined) || (q.quote_data?.presentation?.notes as string | undefined);
             const outcome = q.quote_data?.outcome as QuoteOutcome | undefined;
             const showOutcomePrompt = !outcome && (q.status === "declined" || isExpiredRow(q));
@@ -244,7 +285,8 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
             );
           })}
         </ScrollView>
-      )}
+        );
+      })()}
     </SafeAreaView>
   );
 }

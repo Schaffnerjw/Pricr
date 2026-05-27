@@ -4,13 +4,16 @@ import PricrLogo from "../components/PricrLogo";
 import { PasswordField } from "../components/PasswordField";
 import { B } from "../constants/brand";
 import { s } from "../styles";
+import { formatPhone, isValidEmail, isValidPhone } from "../utils/contactValidation";
 
-export function SignupScreen({ bizName, name, username, pin, confirm, error, onBizNameChange, onNameChange, onUsernameChange, onPinChange, onConfirmChange, onBack, onContinue }: {
-  bizName: string; name: string; username: string; pin: string; confirm: string; error: string;
-  onBizNameChange: (v: string) => void; onNameChange: (v: string) => void; onUsernameChange: (v: string) => void; onPinChange: (v: string) => void; onConfirmChange: (v: string) => void;
+export function SignupScreen({ bizName, name, email, phone, username, pin, confirm, error, onBizNameChange, onNameChange, onEmailChange, onPhoneChange, onUsernameChange, onPinChange, onConfirmChange, onBack, onContinue }: {
+  bizName: string; name: string; email: string; phone: string; username: string; pin: string; confirm: string; error: string;
+  onBizNameChange: (v: string) => void; onNameChange: (v: string) => void; onEmailChange: (v: string) => void; onPhoneChange: (v: string) => void; onUsernameChange: (v: string) => void; onPinChange: (v: string) => void; onConfirmChange: (v: string) => void;
   onBack: () => void; onContinue: () => void;
 }) {
-  const disabled = !bizName || !name || !username.trim() || pin.length < 8 || pin !== confirm;
+  const emailValid = isValidEmail(email);
+  const phoneValid = isValidPhone(phone);
+  const disabled = !bizName || !name || !emailValid || !phoneValid || !username.trim() || pin.length < 8 || pin !== confirm;
   return (
     <SafeAreaView style={s.container}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -30,6 +33,16 @@ export function SignupScreen({ bizName, name, username, pin, confirm, error, onB
           <View style={{ gap: 6, marginBottom: 16 }}>
             <Text style={s.formLabel}>Your Name</Text>
             <TextInput style={s.input} placeholder="First and last name" placeholderTextColor={B.gray3} value={name} onChangeText={onNameChange} />
+          </View>
+          <View style={{ gap: 6, marginBottom: 16 }}>
+            <Text style={s.formLabel}>Your email</Text>
+            <TextInput style={s.input} placeholder="matt@hemmadecks.com" placeholderTextColor={B.gray3} value={email} onChangeText={onEmailChange} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} />
+            {email.length > 0 && !emailValid ? <Text style={{ color: B.red, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Please enter a valid email</Text> : null}
+          </View>
+          <View style={{ gap: 6, marginBottom: 16 }}>
+            <Text style={s.formLabel}>Your phone number</Text>
+            <TextInput style={s.input} placeholder="(330) 555-0182" placeholderTextColor={B.gray3} value={phone} onChangeText={v => onPhoneChange(formatPhone(v))} keyboardType="phone-pad" />
+            {phone.length > 0 && !phoneValid ? <Text style={{ color: B.red, fontSize: 12, fontFamily: "DMSans_400Regular" }}>Please enter a valid phone number</Text> : null}
           </View>
           <View style={{ gap: 6, marginBottom: 16 }}>
             <Text style={s.formLabel}>Username</Text>

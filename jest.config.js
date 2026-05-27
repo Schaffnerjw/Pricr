@@ -7,6 +7,7 @@ module.exports = {
   // Native-only modules pulled in transitively (e.g. via logger) are stubbed so the pure tests run.
   moduleNameMapper: {
     "^@sentry/react-native$": "<rootDir>/src/test/sentryStub.ts",
+    "^@react-native-async-storage/async-storage$": "<rootDir>/src/test/asyncStorageMock.ts",
   },
   transform: {
     "^.+\\.tsx?$": ["ts-jest", {
