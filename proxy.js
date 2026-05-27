@@ -1316,7 +1316,7 @@ async function handleGenerateVeraaCode(res, buf) {
   const slug = clientName.toUpperCase().replace(/[^A-Z]/g, '');
   if (!slug) return sendJson(res, 400, { error: 'clientName must contain letters' });
   const code = `VERAA-${slug}-${String(Math.floor(1000 + Math.random() * 9000))}`;
-  console.log('[Veraa] generating code for:', clientName, '→', code);
+  console.log('[Veraa] generating code →', code); // log the code only — don't log the client/business name (PII minimization)
   // Explicit columns (created_at/revoked have DB defaults, but send them so the row is complete even
   // if a default is ever missing). The proxy uses the SERVICE ROLE client (supabaseRequest), which
   // bypasses RLS — so this insert is not subject to any anon/authenticated policy.
