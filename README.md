@@ -13,6 +13,16 @@ To enable subscription self-management (cancel, update payment) from Settings �
 
 (The proxy also needs `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_ANNUAL_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, and `APP_URL` set in Railway — see `.env.example`.)
 
+### Free-trial with card upfront
+
+Checkout collects the card immediately and starts a Stripe-managed **3-day trial** (`trial_period_days: 3`) — no charge for 3 days, auto-charges after unless cancelled. Subscription state is driven entirely by webhooks. In the Stripe dashboard → **Developers → Webhooks → your endpoint** (`<proxy-url>/billing/webhook`), enable these events:
+
+- `checkout.session.completed` — card collected, trial started → `trialing`
+- `customer.subscription.trial_will_end` — trial ending → `active` + notify the contractor
+- `customer.subscription.updated` — status changes (active / canceled) sync to the business
+- `customer.subscription.deleted` — subscription ended → `expired` + email
+- `invoice.payment_failed` — flags the business + emails the contractor to update their card
+
 ## Error monitoring (Sentry)
 
 1. Create a free account at sentry.io and add a **React Native** project.

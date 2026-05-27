@@ -1377,6 +1377,11 @@ async function handleCreateCheckoutSession(res, buf) {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'], mode: 'subscription',
       line_items: [{ price, quantity: 1 }],
+      // Collect the card NOW, but don't charge for 3 days (Stripe-managed trial). If the customer
+      // cancels before the trial ends they're never charged; otherwise Stripe auto-charges on day 3.
+      // missing_payment_method:'cancel' is belt-and-suspenders (we already force card collection).
+      subscription_data: { trial_period_days: 3, trial_settings: { end_behavior: { missing_payment_method: 'cancel' } } },
+      payment_method_collection: 'always',
       // Redirect back to the app root with a flag the SPA detects on load (Option A). The webhook is the
       // source of truth for activation; this flag just triggers an immediate status re-check.
       success_url: (process.env.APP_URL || '') + '?billing-success=1&session_id={CHECKOUT_SESSION_ID}',
@@ -1400,17 +1405,77 @@ async function handleCustomerPortal(res, buf) {
     return sendJson(res, 200, { url: session.url });
   } catch (e) { console.warn('[billing] portal error:', e && e.message); return sendJson(res, 500, { error: 'portal failed' }); }
 }
+// Find the business that owns a Stripe customer id (subscription.* events carry the customer, not our
+// business code). Returns { code, config } or null.
+async function businessByStripeCustomer(customerId) {
+  if (!customerId) return null;
+  try {
+    const r = await supabaseRequest('GET', `/rest/v1/businesses?select=code,config&stripe_customer_id=eq.${encodeURIComponent(customerId)}`);
+    return (Array.isArray(r.json) && r.json[0]) ? r.json[0] : null;
+  } catch (_) { return null; }
+}
+// Map a Stripe subscription status → our subscriptionStatus.
+function mapStripeStatus(s) {
+  if (s === 'active') return 'active';
+  if (s === 'trialing') return 'trialing';
+  if (s === 'canceled' || s === 'unpaid' || s === 'incomplete_expired') return 'expired';
+  return null; // past_due / incomplete → don't downgrade access; handled via payment_failed flag/email
+}
+function subEndedEmailHtml() {
+  return emailShell('<p style="margin:0 0 14px;">Your Pricr subscription has ended.</p><p style="margin:0 0 14px;">Your quote tool, history, and signed documents are safe. Resubscribe anytime to pick up right where you left off.</p>' + ctaButton('Resubscribe →', APP_URL, '#2979FF'), '#2979FF');
+}
+function paymentFailedEmailHtml() {
+  return emailShell('<p style="margin:0 0 14px;">We couldn\'t process your latest Pricr payment.</p><p style="margin:0 0 14px;">Please update your card to keep your account active — open Pricr → Settings → Manage Billing.</p>' + ctaButton('Update payment →', APP_URL, '#EF4444'), '#EF4444');
+}
+
 async function handleStripeWebhook(req, res, rawBuf) {
   const stripe = getStripe();
   if (!stripe) return sendJson(res, 503, { error: 'Billing not configured' });
   let event;
   try { event = stripe.webhooks.constructEvent(rawBuf, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET); }
   catch (e) { console.warn('[billing] webhook signature failed:', e && e.message); return sendJson(res, 400, { error: 'bad signature' }); }
+  // Always 200 quickly so Stripe doesn't retry; do the work best-effort.
   try {
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const businessCode = session.metadata && session.metadata.businessCode;
-      if (businessCode) await updateBusinessSubscription(businessCode, { subscriptionStatus: 'active', stripeCustomerId: session.customer });
+    const obj = event.data && event.data.object;
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        // Card collected + trial started → trialing (NOT active yet; auto-charges on day 3).
+        const code = obj.metadata && obj.metadata.businessCode;
+        if (code) await updateBusinessSubscription(code, { subscriptionStatus: 'trialing', stripeCustomerId: obj.customer, stripeSubscriptionId: obj.subscription || undefined, paymentFailed: false });
+        break;
+      }
+      case 'customer.subscription.trial_will_end': {
+        // The trial is ending → the customer will be charged. Mark active + notify.
+        const biz = await businessByStripeCustomer(obj.customer);
+        if (biz) {
+          await updateBusinessSubscription(biz.code, { subscriptionStatus: 'active', paymentFailed: false });
+          sendPushNotification(businessPushToken(biz), 'Your Pricr trial has ended', "You've been charged for your subscription — thank you for subscribing! 🎉");
+        }
+        break;
+      }
+      case 'customer.subscription.updated': {
+        const biz = await businessByStripeCustomer(obj.customer);
+        const mapped = mapStripeStatus(obj.status);
+        if (biz && mapped) await updateBusinessSubscription(biz.code, { subscriptionStatus: mapped, ...(mapped === 'active' ? { paymentFailed: false } : {}) });
+        break;
+      }
+      case 'customer.subscription.deleted': {
+        const biz = await businessByStripeCustomer(obj.customer);
+        if (biz) {
+          await updateBusinessSubscription(biz.code, { subscriptionStatus: 'expired' });
+          const to = onboardingEmailFor(biz.config); if (to) sendEmail({ to, subject: 'Your Pricr subscription has ended', html: subEndedEmailHtml(), from: ONBOARD_FROM });
+        }
+        break;
+      }
+      case 'invoice.payment_failed': {
+        const biz = await businessByStripeCustomer(obj.customer);
+        if (biz) {
+          await updateBusinessSubscription(biz.code, { paymentFailed: true });
+          const to = onboardingEmailFor(biz.config); if (to) sendEmail({ to, subject: 'Action needed — your Pricr payment failed', html: paymentFailedEmailHtml(), from: ONBOARD_FROM });
+        }
+        break;
+      }
+      default: break;
     }
   } catch (e) { console.warn('[billing] webhook handler error:', e && e.message); }
   return sendJson(res, 200, { received: true });

@@ -9,10 +9,12 @@ export interface DocPrefs { style: "detailed"|"summary"|"custom"; showLineItems:
 // Accepted payment methods (admin sets once in Settings, shown on every quote). `methods` holds the
 // selected built-in labels; `other` is free text for the "Other" option. Unset => nothing shown.
 export interface PaymentMethods { methods: string[]; other?: string; }
-export type SubscriptionStatus = "active" | "veraa" | "trial" | "expired";
+// "trial" = trial started WITHOUT a card (legacy); "trialing" = card on file, Stripe-managed trial,
+// auto-charges on day 3; "active" = paying; "veraa" = partner; "expired" = ended/payment lapsed.
+export type SubscriptionStatus = "active" | "veraa" | "trial" | "trialing" | "expired";
 export interface Business { code: string; name: string; ownerName: string; ownerEmail?: string; ownerPhone?: string; adminPin: string; brand: BrandConfig; schema: QuoteSchema|null; createdAt: number; kitUpdates?: number; kitSummary?: string; brandConfigured?: boolean; termsAndConditions?: string; username?: string; adminPinHash?: string; docPrefs?: DocPrefs; members?: User[]; paymentMethods?: PaymentMethods; hasGeneratedQuote?: boolean; notificationEmail?: string; requireSmsVerification?: boolean; suspended?: boolean;
   // Billing / partner (stored in config jsonb; subscription_status also mirrored to a column — migration 0007).
-  isVeraaClient?: boolean; promoCode?: string; subscriptionStatus?: SubscriptionStatus; stripeCustomerId?: string; trialStartedAt?: number; partnerCodeUsed?: string; selectedPlan?: "monthly" | "annual";
+  isVeraaClient?: boolean; promoCode?: string; subscriptionStatus?: SubscriptionStatus; stripeCustomerId?: string; stripeSubscriptionId?: string; paymentFailed?: boolean; trialStartedAt?: number; partnerCodeUsed?: string; selectedPlan?: "monthly" | "annual";
   // Kit conversation history (per business; cross-device when cloud is configured).
   kitChatHistory?: { role: "user" | "assistant"; content: string; timestamp: number }[];
   // Quote validity window (days) — default 30; undefined/0 with "Never" selected → no expiry.

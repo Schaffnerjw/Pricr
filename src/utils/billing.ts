@@ -7,7 +7,7 @@ import { logger } from "./logger";
 
 export type PlanId = "monthly" | "annual";
 export interface PromoResult { valid: boolean; type: "veraa" | "unknown"; message: string }
-export interface BillingStatus { status: "active" | "veraa" | "trial" | "expired"; trialDaysLeft: number; isVeraaClient: boolean; annualAvailable?: boolean; monthlyAvailable?: boolean }
+export interface BillingStatus { status: "active" | "veraa" | "trial" | "trialing" | "expired"; trialDaysLeft: number; isVeraaClient: boolean; annualAvailable?: boolean; monthlyAvailable?: boolean }
 
 // Validate a promo / Veraa partner code. Never throws — returns invalid on any failure.
 export async function validatePromoCode(code: string): Promise<PromoResult> {
@@ -59,7 +59,7 @@ export async function getBillingStatus(businessCode: string): Promise<BillingSta
     const res = await fetch(`${SIGN_BASE}/billing/status?businessCode=${encodeURIComponent(businessCode)}`);
     const data = await res.json();
     return {
-      status: ["active", "veraa", "trial", "expired"].includes(data?.status) ? data.status : "trial",
+      status: ["active", "veraa", "trial", "trialing", "expired"].includes(data?.status) ? data.status : "trial",
       trialDaysLeft: typeof data?.trialDaysLeft === "number" ? data.trialDaysLeft : TRIAL_DAYS,
       isVeraaClient: !!data?.isVeraaClient,
       annualAvailable: data?.annualAvailable !== false,

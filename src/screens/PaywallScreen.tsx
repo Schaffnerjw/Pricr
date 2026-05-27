@@ -17,7 +17,7 @@ const FEATURES = [
 
 // Shown between signup_brand and choose_setup (and on trial expiry / from the dashboard banner). A
 // valid Veraa partner code skips the paywall entirely (Pricr is included in the client's Veraa plan).
-export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onStartTrial, onSelectPlan, onVeraaApplied, onContinue, onPaid }: {
+export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onStartTrial, onSelectPlan, onVeraaApplied, onContinue, onPaid, cancelled }: {
   businessCode: string;
   primaryColor: string;
   mode?: "signup" | "expired";              // "signup" continues into setup; "expired" requires subscribe/Veraa
@@ -27,6 +27,7 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
   onVeraaApplied: (code: string) => void;    // valid Veraa code → mark veraa + continue
   onContinue?: () => void;                   // continue mid-trial without paying yet
   onPaid?: () => void;                       // status flipped to active (payment confirmed) → leave the gate
+  cancelled?: boolean;                       // returned from Stripe via the cancel URL
 }) {
   const [showPromo, setShowPromo] = useState(false);
   const [promo, setPromo] = useState("");
@@ -58,7 +59,7 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
       await new Promise(r => setTimeout(r, 3000));
       try {
         const st = await getBillingStatus(businessCode);
-        if (st.status === "active" || st.status === "veraa") { setPolling(false); onPaid?.(); return; }
+        if (st.status === "active" || st.status === "veraa" || st.status === "trialing") { setPolling(false); onPaid?.(); return; }
       } catch { /* keep polling */ }
     }
     setPolling(false); setProcessing(true);
@@ -110,7 +111,7 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
       )}
       <TouchableOpacity style={[s.btn, { backgroundColor: recommended ? primaryColor : "transparent", borderWidth: recommended ? 0 : 1, borderColor: primaryColor, paddingVertical: 11, alignItems: "center" }]} onPress={() => choosePlan(plan)} disabled={launching !== null}>
         {launching === plan ? <ActivityIndicator color={recommended ? ON_PRIMARY : primaryColor} size="small" />
-          : <Text style={{ color: recommended ? ON_PRIMARY : primaryColor, fontWeight: "700", fontSize: 13, fontFamily: "DMSans_700Bold", textAlign: "center" }}>{mode === "expired" ? "Subscribe" : "Start 3-day free trial"}</Text>}
+          : <Text style={{ color: recommended ? ON_PRIMARY : primaryColor, fontWeight: "700", fontSize: 13, fontFamily: "DMSans_700Bold", textAlign: "center" }}>{mode === "expired" ? "Subscribe" : "Start Free Trial — Enter Card"}</Text>}
       </TouchableOpacity>
     </View>
   );
@@ -139,6 +140,19 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
           <PlanCard plan="monthly" price="$49" per="/month" billed="Billed monthly" />
           {annualAvailable && <PlanCard plan="annual" price="$490" per="/year" billed="Billed annually" recommended badge="Save $98 — 2 months free" />}
         </View>
+
+        {/* Crystal-clear trial expectations (signup mode collects the card via Stripe). */}
+        {mode !== "expired" && (
+          <Text style={{ color: B.gray2, fontSize: 13, lineHeight: 19, textAlign: "center", fontFamily: "DMSans_400Regular" }}>
+            Your card won&apos;t be charged for 3 days. Cancel anytime before then — no charge.{"\n"}After 3 days: $49/month (or $490/year).
+          </Text>
+        )}
+
+        {cancelled && (
+          <View style={{ backgroundColor: B.card, borderColor: B.border, borderWidth: 1, borderRadius: 12, padding: 14 }}>
+            <Text style={{ color: B.gray1, fontSize: 14, textAlign: "center", fontFamily: "DMSans_400Regular" }}>No worries — you can start your trial whenever you&apos;re ready.</Text>
+          </View>
+        )}
 
         {/* Promo / partner code */}
         {!showPromo ? (

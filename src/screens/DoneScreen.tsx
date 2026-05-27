@@ -160,6 +160,15 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
             </Text>
           </TouchableOpacity>
         )}
+        {/* Payment failed — Stripe couldn't charge the card. Route to Settings → Manage Billing. */}
+        {isAdmin && business.paymentFailed && (
+          <TouchableOpacity onPress={onOpenSettings} style={[s.brandBanner, { borderColor: B.red, backgroundColor: B.red + "1A", flexDirection: "row", alignItems: "center", gap: 10 }]}>
+            <Feather name="alert-triangle" size={18} color={B.red} />
+            <Text style={[s.brandBannerText, { color: pal.text, flex: 1 }]}>Payment failed — update your card in Settings to keep your account active.</Text>
+            <Feather name="chevron-right" size={18} color={pal.textMuted} />
+          </TouchableOpacity>
+        )}
+
         {/* Offline signatures waiting to sync (amber; disappears once all synced). */}
         {pendingSigs > 0 && (
           <View style={[s.brandBanner, { borderColor: "#F59E0B", backgroundColor: "#F59E0B1A", flexDirection: "row", alignItems: "center", gap: 10 }]}>
