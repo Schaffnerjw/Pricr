@@ -296,7 +296,7 @@ export async function attachQuotePresentation(code: string, appId: string, prese
 export async function saveSignature(code: string, appId: string, signatureData: string, customerName?: string): Promise<void> {
   const signedAt = Date.now();
   if (!isCloudEnabled(code)) {
-    await updateQuote(code, appId, { signatureData, signedAt, status: "won", ...(customerName ? { customerName } : {}) });
+    await updateQuote(code, appId, { signatureData, signedAt, status: "won", outcome: "won", ...(customerName ? { customerName } : {}) });
     return;
   }
   await ensureSession(code);
@@ -305,7 +305,7 @@ export async function saveSignature(code: string, appId: string, signatureData: 
     .eq("business_id", bizId).eq("quote_data->>id", appId).maybeSingle();
   if (selErr) throw selErr;
   if (!data) throw new Error("Quote not found — signature not saved."); // never report a signed quote that didn't persist
-  const merged: SavedQuote = { ...(data.quote_data as SavedQuote), signatureData, signedAt, status: "won", ...(customerName ? { customerName } : {}) };
+  const merged: SavedQuote = { ...(data.quote_data as SavedQuote), signatureData, signedAt, status: "won", outcome: "won", ...(customerName ? { customerName } : {}) };
   const { error } = await supabase!.from("quotes").update({
     signature_data: signatureData,
     signed_at: new Date(signedAt).toISOString(),

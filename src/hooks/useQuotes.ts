@@ -64,5 +64,15 @@ export function useQuotes(businessId?: string) {
     if (err) setError(err.message);
   };
 
-  return { quotes, saveQuote, updateQuoteStatus, loading, error, reload: load };
+  // Merge a partial into a quote's quote_data jsonb (used for win/loss outcome). Optimistic.
+  const updateQuoteData = async (id: string, patch: Record<string, any>): Promise<void> => {
+    if (!supabase) return;
+    const row = quotes.find(x => x.id === id);
+    const merged = { ...(row?.quote_data || {}), ...patch };
+    setQuotes(q => q.map(x => (x.id === id ? { ...x, quote_data: merged } : x)));
+    const { error: err } = await supabase.from("quotes").update({ quote_data: merged, updated_at: new Date().toISOString() }).eq("id", id);
+    if (err) setError(err.message);
+  };
+
+  return { quotes, saveQuote, updateQuoteStatus, updateQuoteData, loading, error, reload: load };
 }

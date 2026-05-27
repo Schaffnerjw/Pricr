@@ -51,6 +51,10 @@ export function generateQuotePDF(d: QuotePDFData): string {
          <div class="sig-cap">Accepted &amp; signed</div>
        </div>`
     : "";
+  // Project notes — free-text job details, shown before the signature block. Only when present.
+  const notesBlock = d.notes && d.notes.trim()
+    ? `<div class="notes"><div class="notes-title">Project Notes</div><div class="notes-body">${esc(d.notes.trim()).replace(/\n/g, "<br/>")}</div></div>`
+    : "";
   // Clickable remote-signing link at the bottom of page 1.
   const signLinkBlock = d.signingLink
     ? `<div class="sign-link">Review &amp; sign online: <a href="${esc(d.signingLink)}">${esc(d.signingLink)}</a></div>`
@@ -116,6 +120,9 @@ export function generateQuotePDF(d: QuotePDFData): string {
   .dep-sub { color: #475569; font-size: 12px; margin-top: 2px; }
   .dep-amt { font-size: 22px; font-weight: 800; color: ${accent}; }
   .valid { color: #64748B; font-size: 12px; margin-top: 18px; }
+  .notes { margin-top: 24px; padding: 16px 18px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; }
+  .notes-title { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 800; color: ${accent}; margin-bottom: 8px; }
+  .notes-body { font-size: 13px; line-height: 1.6; color: #1E2640; }
   .footer { margin-top: 36px; padding-top: 16px; border-top: 1px solid #E2E8F0; color: #475569; font-size: 12px; }
   .sig-wrap { margin-top: 32px; padding-top: 8px; max-width: 320px; }
   .sig-img { max-height: 90px; max-width: 300px; display: block; }
@@ -155,6 +162,7 @@ export function generateQuotePDF(d: QuotePDFData): string {
       <tr class="total-row"><td class="li">Total</td><td class="amt">${formatMoney(d.total)}</td></tr>
     </table>
     ${depositBlock}
+    ${notesBlock}
     ${signatureBlock}
     <div class="valid">${d.validThrough > 0 ? `Quote valid until ${esc(formatLongDate(d.validThrough))}` : "This quote does not expire"}</div>
     ${signLinkBlock}

@@ -11,6 +11,7 @@ import { getContrastColor, isReadable, ON_PRIMARY } from "../utils/colorUtils";
 import { PAYMENT_OPTIONS, resolveDocPrefs } from "../utils/helpers";
 import { fieldRate } from "../utils/quote";
 import { openCheckout, openCustomerPortal, PlanId, trialDaysLeft, validatePromoCode } from "../utils/billing";
+import { buildTheme, THEME_PRESETS } from "../utils/theme";
 
 const BG_PRESETS = [
   { label: "Dark Navy", hex: "#0A0E1A" },
@@ -23,7 +24,7 @@ const BG_PRESETS = [
 // keystroke and loses focus. Holds its own draft text and only commits a COMPLETE valid hex up to
 // the parent (live preview when 6-char valid, plus a commit on blur), so partial typing never
 // triggers the parent re-render cycle.
-function HexColorRow({ label, initial, valid, onCommit }: { label: string; initial: string; valid: string; onCommit: (v: string) => void }) {
+function HexColorRow({ label, helper, initial, valid, onCommit }: { label: string; helper?: string; initial: string; valid: string; onCommit: (v: string) => void }) {
   const [local, setLocal] = useState(initial);
   // Re-sync when the parent value changes externally (preset buttons, reset to defaults).
   useEffect(() => { setLocal(initial); }, [initial]);
@@ -36,6 +37,7 @@ function HexColorRow({ label, initial, valid, onCommit }: { label: string; initi
   return (
     <View style={{ gap: 6 }}>
       <Text style={s.formLabel}>{label}</Text>
+      {helper ? <Text style={s.formHint}>{helper}</Text> : null}
       <View style={s.setColorRow}>
         <View style={[s.setSwatch, { backgroundColor: valid }]} />
         <TextInput style={s.setHexInput} value={local} onChangeText={handleChange} onBlur={() => { if (isValidHex(local)) onCommit(local); }} placeholder="#000000" placeholderTextColor={B.gray3} autoCapitalize="characters" maxLength={7} />
@@ -96,6 +98,8 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   // Live contrast result for the chosen background — drives the preview + the unreadable warning.
   const previewText = getContrastColor(bg);
   const bgReadable = isReadable(previewText, bg);
+  // Full theme derived from the in-progress colors — drives the live preview's surface/muted tones.
+  const previewTheme = buildTheme({ ...business.brand, primaryColor: pc, secondaryColor: sc, backgroundColor: bg });
 
   const doSave = () => { save(); };
   const onSavePress = () => {
@@ -184,13 +188,19 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
               )}
               <Text style={{ color: previewText, opacity: 0.7, fontSize: 11, fontFamily: "DMSans_400Regular" }}>Preview</Text>
             </View>
+            <Text style={{ color: previewTheme.textMuted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Quote ready to send</Text>
             <Text style={{ color: previewText, fontSize: 26, fontWeight: "800", fontFamily: "Syne_800ExtraBold" }}>$2,400</Text>
+            {/* Section card sample on the derived surface color. */}
+            <View style={{ backgroundColor: previewTheme.surface, borderColor: previewTheme.border, borderWidth: 1, borderRadius: 10, padding: 10, flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Feather name="check-circle" size={16} color={sc} />
+              <Text style={{ color: previewText, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Section card</Text>
+            </View>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1, backgroundColor: pc, borderRadius: 10, paddingVertical: 10, alignItems: "center" }}>
-                <Text style={{ color: ON_PRIMARY, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Primary</Text>
+                <Text style={{ color: ON_PRIMARY, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Primary Button</Text>
               </View>
               <View style={{ flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: "center", borderWidth: 1, borderColor: sc }}>
-                <Text style={{ color: sc, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Secondary</Text>
+                <Text style={{ color: sc, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Highlight</Text>
               </View>
             </View>
           </View>
@@ -236,9 +246,24 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
         {/* Brand colors */}
         <View style={{ gap: 12 }}>
           <Text style={s.sectionTitle}>BRAND COLORS</Text>
-          <HexColorRow label="Primary" initial={primary} valid={pc} onCommit={setPrimary} />
-          <HexColorRow label="Secondary" initial={secondary} valid={sc} onCommit={setSecondary} />
-          <HexColorRow label="Background" initial={background} valid={bg} onCommit={setBackground} />
+          {/* Preset themes — tap a swatch to set all three colors at once. */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+            {THEME_PRESETS.map(p => {
+              const active = pc.toUpperCase() === p.primary.toUpperCase() && bg.toUpperCase() === p.background.toUpperCase();
+              const applyPreset = () => { setPrimary(p.primary); setSecondary(p.secondary); setBackground(p.background); };
+              return (
+                <TouchableOpacity key={p.name} onPress={applyPreset} style={{ alignItems: "center", gap: 5, width: 58 }}>
+                  <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: p.background, borderWidth: active ? 3 : 1, borderColor: active ? p.primary : B.border, alignItems: "center", justifyContent: "center" }}>
+                    <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: p.primary }} />
+                  </View>
+                  <Text numberOfLines={1} style={{ color: active ? B.white : B.muted, fontSize: 10, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{p.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <HexColorRow label="Buttons & Accents" helper="Buttons, selected items, active states" initial={primary} valid={pc} onCommit={setPrimary} />
+          <HexColorRow label="Highlights & Icons" helper="Accent colors, icons, highlights" initial={secondary} valid={sc} onCommit={setSecondary} />
+          <HexColorRow label="App Background" helper="Main background of your app" initial={background} valid={bg} onCommit={setBackground} />
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {BG_PRESETS.map(p => {
               const active = bg.toUpperCase() === p.hex.toUpperCase();

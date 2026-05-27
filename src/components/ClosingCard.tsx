@@ -19,8 +19,8 @@ const CONSENT_TEXT = "I have read and agree to the terms above. By signing below
 type Totals = { ctx: Record<string, any>; taxRate: number; tax: number; total: number; depositPct: number; deposit: number };
 
 // The slide-up "proposal" sheet shown when reviewing a quote. Owns its own entrance animation.
-export function ClosingCard({ schema, business, primaryColor, customerName, totals, selectedAddOns, discount, paymentMethods, saved, onSave, prepareShare, onSign, termsAndConditions, onClose, onNewQuote }: {
-  schema: any; business: Business; primaryColor: string; customerName: string;
+export function ClosingCard({ schema, business, primaryColor, customerName, notes, totals, selectedAddOns, discount, paymentMethods, saved, onSave, prepareShare, onSign, termsAndConditions, onClose, onNewQuote }: {
+  schema: any; business: Business; primaryColor: string; customerName: string; notes?: string;
   totals: Totals; selectedAddOns: string[]; discount?: { amount: number; reason?: string }; paymentMethods?: string[]; saved: boolean; onSave: () => void;
   prepareShare?: (presentation: QuotePresentation) => Promise<{ signingLink: string | null }>;
   onSign?: (signatureData: string, presentation: QuotePresentation) => Promise<void>;
@@ -95,6 +95,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
     trade: schema?.trade,
     date: Date.now(),
     validThrough: validTs,
+    notes: notes && notes.trim() ? notes.trim() : undefined,
     lineItems: buildLineItems(),
     taxRate: t.taxRate,
     tax: t.tax,
@@ -236,6 +237,15 @@ export function ClosingCard({ schema, business, primaryColor, customerName, tota
                 {validThrough ? <Text style={[s.ccValid, { color: theme.lineColor }]}>Valid until {validThrough}</Text> : null}
               </View>
             )}
+
+            {/* ── Job notes (only if set) ── */}
+            {notes && notes.trim() ? (
+              <View style={{ gap: 6 }}>
+                <View style={[s.closingDivider, { backgroundColor: theme.dividerColor }]} />
+                <Text style={[s.ccTerms, { color: theme.lineColor, fontWeight: "700" }]}>Job Notes</Text>
+                <Text style={{ color: theme.valueColor, fontSize: 13, lineHeight: 19, fontFamily: "DMSans_400Regular" }}>{notes.trim()}</Text>
+              </View>
+            ) : null}
 
             {/* ── Terms & conditions (only if the business has set them) ── */}
             {hasTerms && (

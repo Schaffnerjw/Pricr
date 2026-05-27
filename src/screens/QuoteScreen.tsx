@@ -37,6 +37,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 }) {
   const readOnly = !!previewMode; // confirmation-preview render: real QuoteScreen, non-interactive
   const [customerName, setCustomerName] = useState("");
+  const [notes, setNotes] = useState(""); // free-text job notes, flows to the proposal/PDF/signing page
   const [fieldValues, setFieldValues] = useState<Record<string, any>>(initialValues ?? {});
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -254,6 +255,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       id: Date.now().toString(), timestamp: Date.now(), customerName,
       trade: schema?.trade, total: t.total, deposit: t.deposit, fieldValues,
       userId: currentUser.id, repName: currentUser.name, status: "open",
+      ...(notes.trim() ? { notes: notes.trim() } : {}),
       ...(expiryDays > 0 ? { expiresAt: Date.now() + expiryDays * 24 * 60 * 60 * 1000 } : {}),
       ...(discount.value > 0 ? { discount: { mode: discount.mode, value: discount.value, reason: discount.reason || undefined } } : {}),
     };
@@ -280,6 +282,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       else if (f.type === "selector" && f.options?.length) defaults[f.id] = useNewLayout ? "" : (smart[f.id] ?? f.options[0]);
     }
     setCustomerName("");
+    setNotes("");
     setFieldValues(defaults);
     setSelectedAddOns([]);
     setActiveSections({});
@@ -1030,6 +1033,22 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           </View>
         ) : (
           <>
+            {/* Job notes — free-text, optional. Flows into the PDF, proposal, and signing page. */}
+            {!readOnly && (
+              <View style={{ gap: 8 }}>
+                <Text style={[s.fieldLabel, { color: pal.textMuted }]}>JOB NOTES (OPTIONAL)</Text>
+                <TextInput
+                  style={{ backgroundColor: pal.surface, color: pal.text, borderColor: pal.border, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: Platform.OS === "ios" ? 12 : 8, fontFamily: "DMSans_400Regular", fontSize: 15, minHeight: 44, maxHeight: 96 }}
+                  placeholder="e.g. Customer wants TimberTech in Mocha color, gate on south side, deck off master bedroom"
+                  placeholderTextColor={pal.textMuted}
+                  value={notes}
+                  onChangeText={t => setNotes(t.slice(0, 500))}
+                  multiline
+                  maxLength={500}
+                  textAlignVertical="top"
+                />
+              </View>
+            )}
             {useNewLayout ? renderNewBody() : sections.map(sec => {
               // #2: a section gated by an "Include X" toggle collapses its other fields when that toggle is off.
               const controller = sec.fields.find((f: any) => f.type === "toggle" && /\b(include|includes|add|with|has)\b/i.test(`${f.id} ${f.label}`));
@@ -1135,7 +1154,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </KeyboardAvoidingView>
 
       {showTotal && !readOnly && (
-        <ClosingCard schema={presentationSchema} business={business} primaryColor={primaryColor} customerName={customerName} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
+        <ClosingCard schema={presentationSchema} business={business} primaryColor={primaryColor} customerName={customerName} notes={notes.trim() || undefined} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} />
       )}
 
       {/* ── Section overview / negotiation screen — review subtotals, edit any section, see the live total ── */}

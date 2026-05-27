@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { BrandHeader } from "../components/BrandHeader";
 import { KitIntroBubble } from "../components/KitIntroBubble";
@@ -9,9 +9,11 @@ import { getQuotes } from "../storage";
 import { s } from "../styles";
 import { Business, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
+import { generateKitInsights } from "../utils/kitInsights";
 import { getPushPermissionStatus, registerForPushNotifications } from "../utils/pushNotifications";
 
 const PUSH_PROMPT_DISMISSED = "pricr_push_prompt_dismissed";
+const DISMISSED_INSIGHTS = "pricr_dismissed_insights";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -56,16 +58,39 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
   const onPrimary = ON_PRIMARY; // brand look: always white on the primary color
   const bg = pal.background;
   const [stats, setStats] = useState<DashStats | null>(quotesOverride ? computeStats(quotesOverride) : null);
+  const [rawQuotes, setRawQuotes] = useState<SavedQuote[]>(quotesOverride ?? []);
   const [dismissed, setDismissed] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [showPushBanner, setShowPushBanner] = useState(false);
+  const [dismissedInsights, setDismissedInsights] = useState<string[]>([]);
 
   useEffect(() => {
-    if (quotesOverride) { setStats(computeStats(quotesOverride)); return; }
+    if (quotesOverride) { setStats(computeStats(quotesOverride)); setRawQuotes(quotesOverride); return; }
     let mounted = true;
-    getQuotes(business.code).then(qs => { if (mounted) setStats(computeStats(qs)); });
+    getQuotes(business.code).then(qs => { if (mounted) { setStats(computeStats(qs)); setRawQuotes(qs); } });
     return () => { mounted = false; };
   }, [business.code, quotesOverride]);
+
+  // Kit proactive insights — never in demo / view-only. One at a time, highest priority first;
+  // dismissing rotates to the next. Dismissed ids persist in AsyncStorage.
+  useEffect(() => {
+    let mounted = true;
+    AsyncStorage.getItem(DISMISSED_INSIGHTS).then(raw => {
+      if (!mounted || !raw) return;
+      try { const arr = JSON.parse(raw); if (Array.isArray(arr)) setDismissedInsights(arr); } catch { /* ignore */ }
+    });
+    return () => { mounted = false; };
+  }, []);
+  const insights = useMemo(
+    () => (isDemoMode || viewOnly ? [] : generateKitInsights(rawQuotes, business.schema, business)),
+    [rawQuotes, business, isDemoMode, viewOnly],
+  );
+  const activeInsight = insights.find(i => !dismissedInsights.includes(i.id)) || null;
+  const dismissInsight = async (id: string) => {
+    const next = [...dismissedInsights, id];
+    setDismissedInsights(next);
+    try { await AsyncStorage.setItem(DISMISSED_INSIGHTS, JSON.stringify(next.slice(-50))); } catch { /* ignore */ }
+  };
 
   // Decide whether to offer the notifications opt-in: admin, not view-only/demo, no token yet,
   // permission still undetermined, and not previously dismissed.
@@ -231,6 +256,30 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={onOpenQuoteTool}>
           <Text style={[s.btnText, { color: onPrimary }]}>Open My Quote Tool</Text>
         </TouchableOpacity>
+
+        {/* Kit noticed something — one proactive insight at a time (highest priority). */}
+        {isAdmin && activeInsight && (
+          <View style={[s.configCard, { backgroundColor: pal.surface, borderColor: primaryColor + "55", gap: 10 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: primaryColor, alignItems: "center", justifyContent: "center" }}>
+                  <Feather name="zap" size={14} color={onPrimary} />
+                </View>
+                <Text style={{ fontSize: 14, fontWeight: "800", color: pal.text, fontFamily: "Syne_700Bold" }}>Kit noticed something</Text>
+              </View>
+              <TouchableOpacity onPress={() => dismissInsight(activeInsight.id)} hitSlop={8}>
+                <Feather name="x" size={18} color={pal.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[s.body, { color: pal.text }]}>{activeInsight.message}</Text>
+            {activeInsight.action && onReconfigure && (
+              <TouchableOpacity style={[s.btnSecondary, { borderColor: primaryColor, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={() => { dismissInsight(activeInsight.id); onReconfigure(); }}>
+                <Feather name="message-circle" size={15} color={primaryColor} />
+                <Text style={[s.btnSecondaryText, { color: primaryColor }]}>{activeInsight.action.label}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
         {/* My Stats — prominent, admin only (shareable brag card + deep dive). */}
         {isAdmin && onStats && (

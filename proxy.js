@@ -102,13 +102,13 @@ const APP_URL = 'https://app.pricr.veraa.io';
 const SIGNING_BASE = process.env.SIGN_BASE_URL || 'https://pricr-production.up.railway.app';
 // Sends an email via Resend. Never throws into the caller — errors are logged only, so a mail
 // failure can never block or fail the signing response. No-ops cleanly if RESEND_API_KEY is unset.
-function sendEmail({ to, subject, html, attachments }) {
+function sendEmail({ to, subject, html, attachments, from }) {
   try {
     const key = process.env.RESEND_API_KEY;
     if (!key || !to) return;
     let resendClient = null;
     try { const { Resend } = require('resend'); resendClient = new Resend(key); } catch (_) { resendClient = null; }
-    const payload = { from: FROM_EMAIL, to, subject, html };
+    const payload = { from: from || FROM_EMAIL, to, subject, html };
     if (attachments && attachments.length) payload.attachments = attachments;
     if (resendClient) {
       resendClient.emails.send(payload).catch((e) => console.warn('[sign] email send failed:', e && e.message));
@@ -207,9 +207,21 @@ function pageShell(title, bodyHtml, extraHead = '') {
   body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#0A0E1A;color:#0A0E1A;line-height:1.5;}
   .wrap{max-width:560px;margin:0 auto;padding:16px;}
   .card{background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.35);}
-  .hd{background:#0A0E1A;color:#fff;padding:24px 22px;border-bottom:4px solid var(--accent,#2979FF);}
+  .hd{background:#0A0E1A;color:#fff;padding:28px 22px;border-bottom:4px solid var(--accent,#2979FF);text-align:center;}
   .hd img{max-height:42px;max-width:200px;display:block;margin-bottom:8px;}
-  .hd .biz{font-size:22px;font-weight:800;letter-spacing:-.4px;}
+  .hd .biz{font-size:24px;font-weight:800;letter-spacing:-.4px;}
+  .logo-circle{width:80px;height:80px;border-radius:50%;object-fit:cover;background:#fff;margin:0 auto 12px;display:block;border:3px solid var(--accent,#2979FF);}
+  .tagline{font-size:13px;color:#94A3B8;margin-top:4px;}
+  .rating{font-size:13px;color:#FACC15;margin-top:8px;font-weight:600;}
+  .rating span{color:#94A3B8;font-weight:400;}
+  .pmsg{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;padding:16px 18px;margin-top:18px;font-size:14px;color:#1E2640;line-height:1.6;white-space:pre-line;}
+  .trustbar{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-top:18px;padding:14px;background:#F8FAFC;border-radius:12px;}
+  .trustbar .ti{font-size:12px;font-weight:600;color:#1E2640;}
+  .trustbar .ti b{color:var(--accent,#2979FF);}
+  .social{text-align:center;font-size:13px;color:#475569;margin-top:14px;font-weight:600;}
+  .notes-sec{margin-top:22px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:12px;padding:14px 16px;}
+  .notes-sec .nl{font-size:13px;font-weight:700;color:#92400E;margin-bottom:6px;}
+  .notes-sec .nb{font-size:13.5px;color:#1E2640;line-height:1.6;white-space:pre-line;}
   .bd{padding:22px;}
   .ttl{font-size:11px;letter-spacing:1.5px;font-weight:700;color:var(--accent,#2979FF);text-transform:uppercase;}
   .cust{font-size:20px;font-weight:800;margin:4px 0 14px;}
@@ -302,11 +314,17 @@ async function handleOgImage(res, token) {
   }
 }
 
-function signingPage(token, quote, business) {
+function signingPage(token, quote, business, signedCount = 0) {
   const pres = (quote.quote_data && quote.quote_data.presentation) || {};
   const accent = pres.brandColor || '#2979FF';
   const bizName = pres.businessName || (business && business.name) || 'Your Contractor';
-  const logo = pres.logoUri || (business && business.config && business.config.brand && business.config.brand.logoUri) || '';
+  const cfg = (business && business.config) || {};
+  const brandCfg = cfg.brand || {};
+  const logo = pres.logoUri || brandCfg.logoUri || '';
+  const tagline = (brandCfg.tagline || '').toString().trim();
+  const ownerName = (cfg.ownerName || '').toString().trim();
+  const customerName = pres.customerName || quote.customer_name || '';
+  const notes = (pres.notes || '').toString().trim();
   const terms = (business && business.terms_and_conditions) || '';
   const lineItems = Array.isArray(pres.lineItems) ? pres.lineItems : [];
   const total = pres.total != null ? pres.total : (quote.total || 0);
@@ -321,7 +339,19 @@ function signingPage(token, quote, business) {
   const paySec = payMethods.length
     ? `<div class="sec"><div class="lbl">Payment Methods Accepted</div><div class="pay">${esc(payMethods.join(', '))}</div></div>`
     : '';
-  const header = (logo ? `<img src="${esc(logo)}" alt="${esc(bizName)}"/>` : '') + `<div class="biz">${esc(bizName)}</div>`;
+  const header = (logo ? `<img class="logo-circle" src="${esc(logo)}" alt="${esc(bizName)}"/>` : '')
+    + `<div class="biz">${esc(bizName)}</div>`
+    + (tagline ? `<div class="tagline">${esc(tagline)}</div>` : '')
+    + `<div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733; <span>Trusted contractor</span></div>`;
+  // Warm personal intro before the quote details.
+  const greetName = customerName || 'there';
+  const signOff = ownerName ? `\n\nLooking forward to working with you,\n${ownerName}` : '\n\nLooking forward to working with you.';
+  const personalMsg = `<div class="pmsg">Hi ${esc(greetName)},\n\nThank you for considering ${esc(bizName)} for your project. I've put together this quote based on our conversation. Please review everything below and sign when you're ready.${esc(signOff)}</div>`;
+  // Notes from the contractor (only if present).
+  const notesSec = notes ? `<div class="notes-sec"><div class="nl">Notes from ${esc(bizName)}</div><div class="nb">${esc(notes)}</div></div>` : '';
+  // Trust signals bar + optional social proof (>= 5 completed projects).
+  const trustBar = `<div class="trustbar"><span class="ti"><b>&#10003;</b> Licensed &amp; Insured</span><span class="ti"><b>&#10003;</b> E-SIGN Compliant</span><span class="ti"><b>&#10003;</b> Secure &amp; Encrypted</span></div>`;
+  const socialProof = signedCount >= 5 ? `<div class="social">${esc(bizName)} has completed ${signedCount} projects</div>` : '';
   const termsSec = terms.trim()
     ? `<div class="sec"><div class="lbl">Terms &amp; Conditions</div><div class="terms">${esc(terms)}</div></div>`
     : '';
@@ -355,11 +385,15 @@ function signingPage(token, quote, business) {
   const reviewStep = `
   <div class="bd" id="step3" style="--accent:${esc(accent)};${requireSms ? 'display:none;' : ''}">
     <div class="step-ind">Step ${reviewStepNo} of ${totalSteps} — Review and Sign</div>
-    <div class="ttl" style="margin-top:8px;">Fixed price estimate</div>
+    ${personalMsg}
+    <div class="ttl" style="margin-top:18px;">Fixed price estimate</div>
     <div class="cust">${esc(pres.customerName || quote.customer_name || 'Your Quote')}</div>
     ${rows}
     <div class="total"><span class="l">Total</span><span class="a">${money(total)}</span></div>
     ${dep}
+    ${notesSec}
+    ${trustBar}
+    ${socialProof}
     ${paySec}
     ${termsSec}
     <div class="sec">
@@ -968,7 +1002,13 @@ async function handleSignPage(req, res, token) {
     });
     // FEATURE 5: count views + notify the contractor on the first open (fire-and-forget).
     trackQuoteView(token, ctx).catch((e) => console.warn('[view] track failed:', e && e.message));
-    return sendHtml(res, 200, signingPage(token, ctx.quote, ctx.business));
+    // FEATURE 6: best-effort count of completed (signed) projects for the social-proof line.
+    let signedCount = 0;
+    try {
+      const sc = await supabaseRequest('GET', `/rest/v1/quotes?business_id=eq.${encodeURIComponent(ctx.quote.business_id)}&status=eq.accepted&select=id`);
+      signedCount = Array.isArray(sc.json) ? sc.json.length : 0;
+    } catch (_) { /* social proof is optional */ }
+    return sendHtml(res, 200, signingPage(token, ctx.quote, ctx.business, signedCount));
   } catch (e) {
     return sendHtml(res, 500, stateCard('#2979FF', '!', 'Something went wrong', 'We could not load this quote right now. Please try again shortly.'));
   }
@@ -1360,6 +1400,98 @@ async function handleBillingStatus(res, businessCode) {
   } catch (_) { return sendJson(res, 200, { status: 'trial', trialDaysLeft: 3, isVeraaClient: false, monthlyAvailable: !!process.env.STRIPE_PRICE_ID, annualAvailable: !!process.env.STRIPE_ANNUAL_PRICE_ID }); }
 }
 
+// ── FEATURE 3: onboarding email sequence (Resend, fire-and-forget) ──────────────
+// Three lifecycle emails, sent at most once each, tracked in config.onboardingEmails. The app
+// calls POST /onboarding/check on login/open; this decides which (if any) are now due and sends.
+const ONBOARD_FROM = 'Christian at Pricr <christian@veraa.io>';
+// Resolve the recipient from the business config (same precedence as signing notifications).
+function onboardingEmailFor(config) {
+  const c = config || {};
+  return (c.notificationEmail || c.email || (c.brand && c.brand.email) || '').toString().trim();
+}
+function emailShell(bodyHtml, accent) {
+  const ac = /^#[0-9a-fA-F]{3,8}$/.test(String(accent || '')) ? accent : '#2979FF';
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;background:#F1F5F9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0A0E1A;">
+<div style="max-width:560px;margin:0 auto;padding:24px;">
+  <div style="background:#0A0E1A;color:#fff;border-radius:16px 16px 0 0;padding:24px;border-bottom:4px solid ${ac};">
+    <div style="font-size:22px;font-weight:800;">Pricr</div>
+  </div>
+  <div style="background:#fff;border-radius:0 0 16px 16px;padding:28px 24px;line-height:1.6;font-size:15px;">${bodyHtml}</div>
+  <div style="text-align:center;color:#94A3B8;font-size:12px;padding:16px;">Pricr · The AI quote tool that pays for itself</div>
+</div></body></html>`;
+}
+const ctaButton = (label, href, accent) => `<a href="${esc(href)}" style="display:inline-block;background:${esc(accent)};color:#fff;text-decoration:none;font-weight:700;font-size:16px;padding:14px 28px;border-radius:12px;margin:18px 0;">${esc(label)}</a>`;
+function welcomeEmailHtml(ownerName, accent) {
+  return emailShell(`
+    <p style="margin:0 0 14px;">Hi ${esc(ownerName)},</p>
+    <p style="margin:0 0 14px;">You're set up and ready to go. Here's how to build your first quote:</p>
+    <p style="margin:0 0 8px;">📋 <b>1. Import your price list</b> (or use the wizard)</p>
+    <p style="margin:0 0 8px;">✅ <b>2. Tap the sections that apply</b> to your job</p>
+    <p style="margin:0 0 8px;">✍️ <b>3. Get it signed on the spot</b></p>
+    ${ctaButton('Build Your First Quote →', APP_URL, accent)}
+    <p style="margin:14px 0 0;color:#475569;font-size:13px;">P.S. Reply to this email anytime — I read every one.</p>`, accent);
+}
+function day2EmailHtml(ownerName, accent) {
+  return emailShell(`
+    <p style="margin:0 0 14px;">Hi ${esc(ownerName)},</p>
+    <p style="margin:0 0 14px;">The contractors who close the most jobs do one thing differently — they show the client the quote while they're still on site.</p>
+    <p style="margin:0 0 14px;">Turn your phone around and tap <b>Show Customer</b> — let them see the total update as you add sections.</p>
+    <p style="margin:0 0 14px;">Then tap <b>Review → Sign Now</b>. The whole thing takes 60 seconds.</p>
+    ${ctaButton('Try it on your next job →', APP_URL, accent)}`, accent);
+}
+function trialEndingEmailHtml(ownerName, accent) {
+  return emailShell(`
+    <p style="margin:0 0 14px;">Hi ${esc(ownerName)},</p>
+    <p style="margin:0 0 14px;">Your 3-day trial ends tomorrow.</p>
+    <p style="margin:0 0 8px;">Here's what you keep when you upgrade:</p>
+    <p style="margin:0 0 6px;">• Unlimited quotes</p>
+    <p style="margin:0 0 6px;">• Legal e-signatures</p>
+    <p style="margin:0 0 6px;">• SMS verification</p>
+    <p style="margin:0 0 14px;">• Everything you've set up stays</p>
+    <p style="margin:0 0 14px;"><b>Monthly:</b> $49/month &nbsp;·&nbsp; <b>Annual:</b> $490/year (save $98)</p>
+    ${ctaButton('Upgrade Now →', APP_URL, accent)}
+    <p style="margin:14px 0 0;color:#475569;font-size:13px;">Questions? Reply to this email.</p>`, accent);
+}
+async function handleOnboardingCheck(res, rawBody) {
+  const { businessCode } = parseJsonBody(rawBody) || {};
+  if (!businessCode) return sendJson(res, 400, { error: 'missing businessCode' });
+  const enc = encodeURIComponent(businessCode);
+  const r = await supabaseRequest('GET', `/rest/v1/businesses?code=eq.${enc}&select=name,config,created_at,trial_started_at&limit=1`);
+  const row = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+  if (!row) return sendJson(res, 200, { ok: true, sent: [] });
+  const config = row.config || {};
+  const to = onboardingEmailFor(config);
+  if (!to) return sendJson(res, 200, { ok: true, sent: [] }); // no recipient on file → nothing to do
+  const accent = (config.brand && config.brand.primaryColor) || '#2979FF';
+  const ownerName = config.ownerName || row.name || 'there';
+  const onboarding = config.onboardingEmails || { welcome: null, day2: null, trialEnding: null };
+  const createdMs = row.created_at ? new Date(row.created_at).getTime() : Date.now();
+  const ageMs = Date.now() - createdMs;
+  const startedRaw = row.trial_started_at || config.trialStartedAt;
+  const started = startedRaw ? new Date(startedRaw).getTime() : createdMs;
+  const trialDaysLeft = Math.max(0, 3 - Math.floor((Date.now() - started) / 86400000));
+  const status = config.subscriptionStatus || 'trial';
+  const sent = [];
+  if (!onboarding.welcome) {
+    sendEmail({ to, subject: 'Welcome to Pricr — build your first quote in 5 minutes', html: welcomeEmailHtml(ownerName, accent), from: ONBOARD_FROM });
+    onboarding.welcome = Date.now(); sent.push('welcome');
+  }
+  if (!onboarding.day2 && ageMs >= 2 * 86400000) {
+    sendEmail({ to, subject: 'The #1 way contractors close more jobs with Pricr', html: day2EmailHtml(ownerName, accent), from: ONBOARD_FROM });
+    onboarding.day2 = Date.now(); sent.push('day2');
+  }
+  if (!onboarding.trialEnding && trialDaysLeft <= 1 && status !== 'veraa' && status !== 'active') {
+    sendEmail({ to, subject: 'Your Pricr trial ends tomorrow', html: trialEndingEmailHtml(ownerName, accent), from: ONBOARD_FROM });
+    onboarding.trialEnding = Date.now(); sent.push('trialEnding');
+  }
+  if (sent.length) {
+    config.onboardingEmails = onboarding;
+    try { await supabaseRequest('PATCH', `/rest/v1/businesses?code=eq.${enc}`, { config }); } catch (_) { /* best-effort; re-sends guarded by created_at windows */ }
+  }
+  return sendJson(res, 200, { ok: true, sent });
+}
+
 const ADMIN_HANDLERS = {
   stats: (res) => handleAdminStats(res),
   'generate-veraa-code': (res, buf) => handleGenerateVeraaCode(res, buf),
@@ -1452,6 +1584,9 @@ const server = http.createServer((req, res) => {
     handleBillingStatus(res, code).catch(() => sendJson(res, 200, { status: 'trial', trialDaysLeft: 3, isVeraaClient: false }));
     return;
   }
+
+  // ── Onboarding emails (fire-and-forget from the app on login/open) ──
+  if (path === '/onboarding/check' && req.method === 'POST') { readBody((buf) => handleOnboardingCheck(res, buf).catch(() => sendJson(res, 200, { ok: false }))); return; }
 
   if (requestCodeMatch && req.method === 'POST') {
     readBody((buf) => handleRequestCode(req, res, decodeURIComponent(requestCodeMatch[1]), buf));

@@ -1,12 +1,55 @@
 import { Feather } from "@expo/vector-icons";
 import { useState } from "react";
-import { ActivityIndicator, Linking, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Linking, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { B, SIGN_BASE } from "../constants/brand";
 import { QuoteRow, QuoteStatus, useQuotes } from "../hooks/useQuotes";
 import { s } from "../styles";
+import { LostReason, QuoteOutcome } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { formatDate, formatMoney } from "../utils/helpers";
 import { shareQuotePDF } from "../utils/shareQuotePDF";
+
+// A quote is "expired" if its validity window passed and it was never signed/accepted.
+const isExpiredRow = (q: QuoteRow): boolean => {
+  const exp = q.quote_data?.expiresAt as number | undefined;
+  return !!exp && exp < Date.now() && !q.signed_at && q.status !== "accepted";
+};
+
+// Non-intrusive win/loss prompt shown under declined/expired quotes with no recorded outcome.
+const LOSS_OPTIONS: { label: string; outcome: QuoteOutcome; reason: LostReason }[] = [
+  { label: "Too expensive", outcome: "lost", reason: "too_expensive" },
+  { label: "Went with competitor", outcome: "lost", reason: "competitor" },
+  { label: "Project cancelled", outcome: "cancelled", reason: "project_cancelled" },
+  { label: "No response", outcome: "lost", reason: "no_response" },
+];
+function OutcomePrompt({ pal, accent, onRecord }: { pal: { surface: string; border: string; text: string; textMuted: string }; accent: string; onRecord: (patch: { outcome: QuoteOutcome; lostReason: LostReason; lostNote?: string }) => void }) {
+  const [otherOpen, setOtherOpen] = useState(false);
+  const [note, setNote] = useState("");
+  return (
+    <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: pal.border, paddingTop: 10, gap: 8 }}>
+      <Text style={{ color: pal.textMuted, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>What happened with this quote?</Text>
+      {otherOpen ? (
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <TextInput style={{ flex: 1, backgroundColor: pal.surface, color: pal.text, borderColor: pal.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontFamily: "DMSans_400Regular", fontSize: 14 }} placeholder="What happened?" placeholderTextColor={pal.textMuted} value={note} onChangeText={t => setNote(t.slice(0, 200))} autoFocus />
+          <TouchableOpacity style={{ backgroundColor: accent, borderRadius: 10, paddingHorizontal: 16, justifyContent: "center" }} onPress={() => onRecord({ outcome: "lost", lostReason: "other", lostNote: note.trim() || undefined })}>
+            <Text style={{ color: ON_PRIMARY, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Save</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+          {LOSS_OPTIONS.map(o => (
+            <TouchableOpacity key={o.reason} style={{ borderWidth: 1, borderColor: pal.border, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 11 }} onPress={() => onRecord({ outcome: o.outcome, lostReason: o.reason })}>
+              <Text style={{ color: pal.text, fontSize: 12, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{o.label}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity style={{ borderWidth: 1, borderColor: pal.border, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 11 }} onPress={() => setOtherOpen(true)}>
+            <Text style={{ color: pal.textMuted, fontSize: 12, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>Other</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
 
 const STATUS_COLOR: Record<QuoteStatus, string> = {
   draft: B.gray3, sent: B.blue, accepted: B.green, declined: B.red,
@@ -46,7 +89,7 @@ const viewPill = (q: QuoteRow): { label: string; color: string } => {
 export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, backgroundColor, termsAndConditions }: {
   businessId?: string; isAdmin: boolean; onBack: () => void; accentColor?: string; backgroundColor?: string; termsAndConditions?: string;
 }) {
-  const { quotes, updateQuoteStatus, loading, error } = useQuotes(businessId);
+  const { quotes, updateQuoteStatus, updateQuoteData, loading, error } = useQuotes(businessId);
   const [selected, setSelected] = useState<QuoteRow | null>(null);
   const accent = accentColor || B.blue;
   const pal = getBrandPalette({ brand: { primaryColor: accent, secondaryColor: accent, backgroundColor: backgroundColor || "#0A0E1A", logoUri: null, tagline: "", phone: "", email: "", address: "" } });
@@ -161,26 +204,37 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
         <View style={s.centered}><Text style={[s.emptyText, { color: pal.textMuted }]}>No quotes yet.</Text></View>
       ) : (
         <ScrollView contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 96 }}>
-          {quotes.map(q => (
-            <TouchableOpacity key={q.id} style={[s.historyCard, { backgroundColor: pal.surface, borderColor: pal.border }]} onPress={() => setSelected(q)}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <Text style={[s.historyName, { color: pal.text }]}>{q.customer_name || "No name"}</Text>
-                    <Badge status={q.status} />
-                    {q.phone_verified && <SmsBadge />}
-                    {isNewSignature(q) && <NewBadge />}
+          {quotes.map(q => {
+            const notes = (q.quote_data?.notes as string | undefined) || (q.quote_data?.presentation?.notes as string | undefined);
+            const outcome = q.quote_data?.outcome as QuoteOutcome | undefined;
+            const showOutcomePrompt = !outcome && (q.status === "declined" || isExpiredRow(q));
+            return (
+            <View key={q.id} style={[s.historyCard, { backgroundColor: pal.surface, borderColor: pal.border }]}>
+              <TouchableOpacity onPress={() => setSelected(q)}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <Text style={[s.historyName, { color: pal.text }]}>{q.customer_name || "No name"}</Text>
+                      <Badge status={q.status} />
+                      {q.phone_verified && <SmsBadge />}
+                      {isNewSignature(q) && <NewBadge />}
+                    </View>
+                    <Text style={[s.historyMeta, { marginTop: 4, color: pal.textMuted }]}>{formatDate(new Date(q.created_at).getTime())}</Text>
+                    {notes ? <Text numberOfLines={1} style={{ color: pal.textMuted, fontSize: 12, fontFamily: "DMSans_400Regular", marginTop: 4 }}>📝 {notes}</Text> : null}
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                      {(() => { const ep = expiryPill(q); return ep ? <View style={{ borderWidth: 1, borderColor: ep.color, borderRadius: 20, paddingVertical: 2, paddingHorizontal: 8 }}><Text style={{ color: ep.color, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{ep.label}</Text></View> : null; })()}
+                      {(() => { const vp = viewPill(q); return <View style={{ borderWidth: 1, borderColor: vp.color, borderRadius: 20, paddingVertical: 2, paddingHorizontal: 8 }}><Text style={{ color: vp.color, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{vp.label}</Text></View>; })()}
+                    </View>
                   </View>
-                  <Text style={[s.historyMeta, { marginTop: 4, color: pal.textMuted }]}>{formatDate(new Date(q.created_at).getTime())}</Text>
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                    {(() => { const ep = expiryPill(q); return ep ? <View style={{ borderWidth: 1, borderColor: ep.color, borderRadius: 20, paddingVertical: 2, paddingHorizontal: 8 }}><Text style={{ color: ep.color, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{ep.label}</Text></View> : null; })()}
-                    {(() => { const vp = viewPill(q); return <View style={{ borderWidth: 1, borderColor: vp.color, borderRadius: 20, paddingVertical: 2, paddingHorizontal: 8 }}><Text style={{ color: vp.color, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{vp.label}</Text></View>; })()}
-                  </View>
+                  <Text style={[s.historyTotal, { color: accent }]}>{formatMoney(q.total || 0)}</Text>
                 </View>
-                <Text style={[s.historyTotal, { color: accent }]}>{formatMoney(q.total || 0)}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
+              </TouchableOpacity>
+              {showOutcomePrompt && (
+                <OutcomePrompt pal={pal} accent={accent} onRecord={patch => updateQuoteData(q.id, patch)} />
+              )}
+            </View>
+            );
+          })}
         </ScrollView>
       )}
     </SafeAreaView>

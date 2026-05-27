@@ -1,6 +1,8 @@
 export type Role = "admin" | "rep" | "superadmin";
 export type Screen = "splash"|"welcome"|"get_started"|"signup"|"signup_brand"|"login"|"rep_join"|"set_username"|"upgrade_password"|"setup"|"choose_setup"|"wizard"|"import"|"meet_kit"|"building"|"confirm_schema"|"done"|"quote"|"history"|"pipeline"|"users"|"settings"|"stats"|"master"|"super_analytics"|"view_as"|"paywall";
-export interface User { id: string; name: string; role: Role; businessCode: string; username?: string; pinHash?: string; }
+export interface User { id: string; name: string; role: Role; businessCode: string; username?: string; pinHash?: string;
+  // Multi-location foundation (data model only): which location this rep works at.
+  assignedLocationCode?: string; }
 export interface BrandConfig { primaryColor: string; secondaryColor: string; logoUri: string|null; tagline: string; phone: string; email: string; address: string; backgroundColor?: string; }
 // Controls what the customer sees on the quote document (PDF + in-app ClosingCard). Unset => detailed/all.
 export interface DocPrefs { style: "detailed"|"summary"|"custom"; showLineItems: boolean; showPricing: boolean; showSubtotal: boolean; showContact: boolean; }
@@ -16,7 +18,10 @@ export interface Business { code: string; name: string; ownerName: string; admin
   // Quote validity window (days) — default 30; undefined/0 with "Never" selected → no expiry.
   quoteExpiryDays?: number;
   // Expo push token for client-signed / quote-viewed / trial notifications.
-  pushToken?: string; }
+  pushToken?: string;
+  // Multi-location / franchise foundation (data model only — no UI yet). A "headquarters" business
+  // can have child "location" businesses; a "single" business stands alone.
+  locationType?: "single" | "headquarters" | "location"; parentBusinessCode?: string; locationName?: string; childLocationCodes?: string[]; }
 // Optional render metadata for the single-page job walkthrough. When absent (legacy/demo schemas),
 // QuoteScreen falls back to the classic flat field list. Field ids referenced here exist in fields[].
 export type SectionPattern = "MATERIAL_MEASUREMENT" | "SYSTEM_CONFIG_QUANTITY" | "FLAT_RATE" | "LABOR";
@@ -45,12 +50,17 @@ export interface QuotePresentation {
   businessName: string; brandColor: string; logoUri?: string|null;
   phone?: string; email?: string; address?: string;
   customerName: string; trade?: string; date: number; validThrough: number;
+  notes?: string; // free-text job notes, shown on the proposal/PDF/signing page
   lineItems: { label: string; amount: number }[];
   taxRate: number; tax: number; total: number; depositPct: number; deposit: number; balanceDue: number;
   docPrefs?: DocPrefs;
   paymentMethods?: string[]; // resolved accepted-payment labels, shown on the proposal/PDF
 }
 export interface QuoteDiscount { mode: "amount"|"percent"; value: number; reason?: string }
-export interface SavedQuote { id: string; timestamp: number; customerName: string; trade: string; total: number; deposit: number; fieldValues: Record<string,any>; userId: string; repName: string; isSample?: boolean; status?: QuoteStatus; signatureData?: string; signedAt?: number; presentation?: QuotePresentation; discount?: QuoteDiscount; expiresAt?: number; firstViewedAt?: number; viewCount?: number; }
+export type QuoteOutcome = "won" | "lost" | "expired" | "cancelled";
+export type LostReason = "too_expensive" | "competitor" | "project_cancelled" | "no_response" | "other";
+export interface SavedQuote { id: string; timestamp: number; customerName: string; trade: string; total: number; deposit: number; fieldValues: Record<string,any>; userId: string; repName: string; isSample?: boolean; status?: QuoteStatus; signatureData?: string; signedAt?: number; presentation?: QuotePresentation; discount?: QuoteDiscount; expiresAt?: number; firstViewedAt?: number; viewCount?: number; notes?: string;
+  // Win/loss tracking — `outcome` is set automatically on sign (won) or recorded by the contractor.
+  outcome?: QuoteOutcome; lostReason?: LostReason; lostNote?: string; }
 export interface DemoBusiness { name: string; trade: string; color: string; emoji: string; tagline: string; phone: string; schema: QuoteSchema; }
 export interface CardTheme { cardBg: string; cardBorder: string; bizColor: string; customerColor: string; lineColor: string; valueColor: string; dividerColor: string; totalColor: string; depositBg: string; depositBorder: string; depositLabelColor: string; depositAmountColor: string; }

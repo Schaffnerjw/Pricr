@@ -5,7 +5,7 @@ import { BrandHeader } from "../src/components/BrandHeader";
 import { BuildingScreen } from "../src/screens/BuildingScreen";
 import { DoneScreen } from "../src/screens/DoneScreen";
 import { GetStartedScreen } from "../src/screens/GetStartedScreen";
-import { API_URL, B, DEFAULT_BRAND } from "../src/constants/brand";
+import { API_URL, B, DEFAULT_BRAND, SIGN_BASE } from "../src/constants/brand";
 import { KIT_CONVERSATION_PROMPT, SCHEMA_BUILDER_PROMPT } from "../src/constants/prompts";
 import { HistoryScreen } from "../src/screens/HistoryScreen";
 import { LoginScreen } from "../src/screens/LoginScreen";
@@ -19,6 +19,7 @@ import { QuoteScreen } from "../src/screens/QuoteScreen";
 import { QuotesHistoryScreen } from "../src/screens/QuotesHistoryScreen";
 import { RepJoinScreen } from "../src/screens/RepJoinScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
+import { ThemeProvider } from "../src/contexts/ThemeContext";
 import { SetUsernameScreen } from "../src/screens/SetUsernameScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
 import { SignupBrandScreen } from "../src/screens/SignupBrandScreen";
@@ -164,6 +165,10 @@ export default function Index() {
           if (biz.suspended) { await clearCurrentUser(); setTimeout(() => setScreen("welcome"), 600); return; }
           setCurrentUser(user);
           setBusiness(biz);
+          // Onboarding email sequence — fire-and-forget; never blocks login (Feature 3).
+          if (biz.code !== "DEMO") {
+            fetch(`${SIGN_BASE}/onboarding/check`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ businessCode: biz.code }) }).catch(() => { });
+          }
           // Grandfather clause: a business created before billing has no subscriptionStatus → mark it
           // 'active' (one-time, best-effort) so it's never paywalled.
           let bizWithSub = biz;
@@ -587,6 +592,8 @@ export default function Index() {
   }, [screen, isAdmin, currentUser]);
 
   // ── SCREEN ROUTING ────────────────────────────────────────────────────────────
+  // Themed from the active business brand so useTheme() works app-wide (no restart on color change).
+  const content = (() => {
   if (screen === "users" && business && currentUser) return <UsersScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} />;
   if (screen === "history" && business && currentUser) return <HistoryScreen business={business} currentUser={currentUser} onBack={() => setScreen("done")} onNewQuote={() => setScreen("quote")} />;
   if (screen === "pipeline" && business && currentUser) return <QuotesHistoryScreen businessId={codeToUuid(business.code)} isAdmin={isAdmin} accentColor={primaryColor} backgroundColor={business.brand.backgroundColor} termsAndConditions={business.termsAndConditions} onBack={() => setScreen("done")} />;
@@ -888,4 +895,6 @@ export default function Index() {
       onMasterLogin={handleMasterLogin}
     />
   );
+  })();
+  return <ThemeProvider brand={business?.brand}>{content}</ThemeProvider>;
 }

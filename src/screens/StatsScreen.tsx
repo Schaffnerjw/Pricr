@@ -199,6 +199,31 @@ export function StatsScreen({ business, onBack }: { business: Business; onBack: 
                 </Section>
               )}
 
+              {a.outcomesRecorded >= 5 && a.lostTotal > 0 && (() => {
+                const reasons = [
+                  { label: "Too expensive", key: "too_expensive" as const, color: B.red },
+                  { label: "Competitor", key: "competitor" as const, color: "#F59E0B" },
+                  { label: "Cancelled", key: "project_cancelled" as const, color: muted },
+                  { label: "No response", key: "no_response" as const, color: secondary },
+                ];
+                const pricePct = Math.round((a.lossReasons.too_expensive / a.lostTotal) * 100);
+                // If price objections were removed, the remaining lost quotes would have closed instead.
+                const wouldBe = a.sent > 0 ? Math.round(((a.accepted + a.lossReasons.too_expensive) / a.sent) * 100) : 0;
+                return (
+                  <Section id="loss" title="Why quotes are lost">
+                    <View style={{ flexDirection: "row", height: 12, borderRadius: 6, overflow: "hidden", backgroundColor: pal.border }}>
+                      {reasons.map(r => a.lossReasons[r.key] > 0 ? <View key={r.key} style={{ flexGrow: a.lossReasons[r.key] / a.lostTotal, backgroundColor: r.color }} /> : null)}
+                    </View>
+                    {reasons.map(r => <Row key={r.key} label={r.label} value={`${Math.round((a.lossReasons[r.key] / a.lostTotal) * 100)}%`} valueColor={r.color === muted ? text : r.color} />)}
+                    {pricePct > 0 && (
+                      <Text style={{ color: secondary, fontSize: 13, fontFamily: "DMSans_600SemiBold", marginTop: 6 }}>
+                        Your close rate would be {wouldBe}% if you reduced price objections.
+                      </Text>
+                    )}
+                  </Section>
+                );
+              })()}
+
               <Section id="discount" title="Discount Usage">
                 <Row label="Quotes with a discount" value={`${a.discountPctOfQuotes}%`} />
                 <Row label="Average discount" value={a.avgDiscountPct > 0 ? `${a.avgDiscountPct}%` : "—"} />

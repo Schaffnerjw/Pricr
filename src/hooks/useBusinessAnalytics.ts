@@ -39,13 +39,20 @@ export interface BusinessAnalytics {
   hoursSaved: number;
   badges: Badge[];
   monthly: { sent: MetricPair; revenue: MetricPair; closed: MetricPair; closeRate: MetricPair };
+  // Win/loss analysis (Feature 4): outcomes the contractor recorded + why quotes were lost.
+  outcomesRecorded: number;
+  lossReasons: { too_expensive: number; competitor: number; project_cancelled: number; no_response: number; other: number };
+  lostTotal: number;
 }
+
+const EMPTY_LOSS = { too_expensive: 0, competitor: 0, project_cancelled: 0, no_response: 0, other: 0 };
 
 const EMPTY: BusinessAnalytics = {
   loading: true, totalQuoted: 0, quotesAllTime: 0, quotesThisMonth: 0, accepted: 0, declined: 0, sent: 0, drafted: 0,
   closeRate: 0, avgQuoteValue: 0, timeToSignHours: 0, largestQuote: 0, commonRange: null, streakDays: 0, fastestCloseMin: null,
   topServices: [], reps: [], discountPctOfQuotes: 0, avgDiscountPct: 0, totalDiscounted: 0, hoursSaved: 0, badges: [],
   monthly: { sent: { now: 0, prev: 0, change: 0 }, revenue: { now: 0, prev: 0, change: 0 }, closed: { now: 0, prev: 0, change: 0 }, closeRate: { now: 0, prev: 0, change: 0 } },
+  outcomesRecorded: 0, lossReasons: { ...EMPTY_LOSS }, lostTotal: 0,
 };
 
 // A quote counts as "accepted/closed" if it's won or has a signature; "declined" if lost.
@@ -128,6 +135,12 @@ export function computeBusinessAnalytics(all: SavedQuote[]): BusinessAnalytics {
   const closeRate = pct(accepted.length, sent.length);
   const hoursSaved = quotesAllTime * 2;
 
+  // Win/loss: tally recorded outcomes and why quotes were lost.
+  const withOutcome = quotes.filter(q => !!q.outcome);
+  const lossReasons = { ...EMPTY_LOSS };
+  for (const q of quotes) { if (q.lostReason && q.lostReason in lossReasons) lossReasons[q.lostReason]++; }
+  const lostTotal = Object.values(lossReasons).reduce((a, b) => a + b, 0);
+
   // Milestone badges (show up to 3, most impressive first).
   const badges: Badge[] = [];
   if (streakDays >= 2) badges.push({ icon: "🔥", label: `${streakDays} day streak` });
@@ -149,6 +162,7 @@ export function computeBusinessAnalytics(all: SavedQuote[]): BusinessAnalytics {
       closed: { now: closedNow, prev: closedPrev, change: changePct(closedNow, closedPrev) },
       closeRate: { now: crNow, prev: crPrev, change: Math.round(crNow - crPrev) },
     },
+    outcomesRecorded: withOutcome.length, lossReasons, lostTotal,
   };
 }
 
