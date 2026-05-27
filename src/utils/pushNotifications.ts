@@ -29,6 +29,8 @@ export async function registerForPushNotifications(): Promise<string | null> {
     if (finalStatus !== "granted") return null;
     const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
     const token = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+    // Logged so the Pricr owner can copy their own token for OWNER_PUSH_TOKEN (see .env.example).
+    logger.debug("[Push] registered token:", token.data);
     return token.data || null;
   } catch (e) {
     logger.error("[push] register failed", e instanceof Error ? e.message : String(e));

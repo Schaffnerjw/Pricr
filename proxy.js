@@ -1434,6 +1434,8 @@ async function handleBillingStatus(res, businessCode) {
 // Three lifecycle emails, sent at most once each, tracked in config.onboardingEmails. The app
 // calls POST /onboarding/check on login/open; this decides which (if any) are now due and sends.
 const ONBOARD_FROM = 'Christian at Pricr <christian@veraa.io>';
+// Where new-signup notifications go (the Pricr owner). Defaults to christian@veraa.io.
+const OWNER_EMAIL = process.env.OWNER_EMAIL || 'christian@veraa.io';
 // Resolve the recipient from the business config (same precedence as signing notifications).
 function onboardingEmailFor(config) {
   const c = config || {};
@@ -1452,6 +1454,19 @@ function emailShell(bodyHtml, accent) {
 </div></body></html>`;
 }
 const ctaButton = (label, href, accent) => `<a href="${esc(href)}" style="display:inline-block;background:${esc(accent)};color:#fff;text-decoration:none;font-weight:700;font-size:16px;padding:14px 28px;border-radius:12px;margin:18px 0;">${esc(label)}</a>`;
+// Internal owner notification: a new business just signed up. Sent once per business (welcome gate).
+function ownerSignupEmailHtml({ businessName, ownerName, trade, code, joined, trialEnds }) {
+  return emailShell(`
+    <p style="margin:0 0 14px;">A new business just joined Pricr.</p>
+    <p style="margin:0 0 6px;"><b>Business:</b> ${esc(businessName)}</p>
+    <p style="margin:0 0 6px;"><b>Owner:</b> ${esc(ownerName)}</p>
+    <p style="margin:0 0 6px;"><b>Trade:</b> ${esc(trade)}</p>
+    <p style="margin:0 0 6px;"><b>Joined:</b> ${esc(joined)}</p>
+    <p style="margin:0 0 6px;"><b>Trial ends:</b> ${esc(trialEnds)}</p>
+    <p style="margin:14px 0 6px;"><b>Their business ID:</b> ${esc(code)}</p>
+    <p style="margin:14px 0 0;">This is a great time to reach out personally and help them get their first quote built.</p>
+    <p style="margin:14px 0 0;">— Pricr</p>`, '#2979FF');
+}
 function welcomeEmailHtml(ownerName, accent) {
   return emailShell(`
     <p style="margin:0 0 14px;">Hi ${esc(ownerName)},</p>
@@ -1506,6 +1521,15 @@ async function handleOnboardingCheck(res, rawBody) {
   if (!onboarding.welcome) {
     sendEmail({ to, subject: 'Welcome to Pricr — build your first quote in 5 minutes', html: welcomeEmailHtml(ownerName, accent), from: ONBOARD_FROM });
     onboarding.welcome = Date.now(); sent.push('welcome');
+    // First login → notify the Pricr owner of the new signup (email + optional push). Same once-per-
+    // business gate as the welcome email. Both are fire-and-forget and never block the response.
+    const bizName = row.name || businessCode;
+    const trade = (config.schema && config.schema.trade) || 'Not set yet';
+    const realOwner = config.ownerName || '—';
+    const joined = new Date(createdMs).toLocaleString('en-US');
+    const trialEnds = new Date(started + 3 * 86400000).toLocaleDateString('en-US');
+    sendEmail({ to: OWNER_EMAIL, subject: `🎉 New Pricr signup — ${bizName}`, html: ownerSignupEmailHtml({ businessName: bizName, ownerName: realOwner, trade, code: businessCode, joined, trialEnds }), from: ONBOARD_FROM });
+    sendPushNotification(process.env.OWNER_PUSH_TOKEN, '🎉 New Pricr signup!', `${bizName} just joined. Trade: ${trade}. Trial ends in 3 days.`);
   }
   if (!onboarding.day2 && ageMs >= 2 * 86400000) {
     sendEmail({ to, subject: 'The #1 way contractors close more jobs with Pricr', html: day2EmailHtml(ownerName, accent), from: ONBOARD_FROM });

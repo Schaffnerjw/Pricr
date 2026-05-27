@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
+import { Platform, SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { BrandHeader } from "../components/BrandHeader";
 import { KitIntroBubble } from "../components/KitIntroBubble";
 import { B } from "../constants/brand";
@@ -150,13 +150,14 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
             </Text>
           </TouchableOpacity>
         )}
-        {/* Notifications opt-in — know the moment a client views or signs. */}
+        {/* Notifications opt-in — a Pricr SYSTEM notification, so it uses Pricr's own dark palette
+            (never the business brand) to stay readable on ANY custom background. */}
         {showPushBanner && (
-          <View style={[s.brandBanner, { borderColor: primaryColor + "60", flexDirection: "row", alignItems: "center", gap: 10 }]}>
-            <Feather name="bell" size={18} color={primaryColor} />
-            <Text style={[s.brandBannerText, { color: pal.text, flex: 1 }]}>Enable notifications to know when clients sign ✓</Text>
-            <TouchableOpacity onPress={enablePush}><Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Enable</Text></TouchableOpacity>
-            <TouchableOpacity onPress={dismissPush}><Text style={{ color: pal.textMuted, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>Not now</Text></TouchableOpacity>
+          <View style={{ backgroundColor: "#0A0E1A", borderLeftWidth: 3, borderLeftColor: "#2979FF", borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10, ...(Platform.OS === "web" ? { backdropFilter: "blur(8px)" } as any : {}) }}>
+            <Feather name="bell" size={18} color="#2979FF" />
+            <Text style={{ color: "#FFFFFF", fontSize: 14, fontFamily: "DMSans_600SemiBold", flex: 1 }}>Enable notifications to know when clients sign ✓</Text>
+            <TouchableOpacity onPress={enablePush}><Text style={{ color: "#2979FF", fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Enable</Text></TouchableOpacity>
+            <TouchableOpacity onPress={dismissPush}><Text style={{ color: "#94A3B8", fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>Not now</Text></TouchableOpacity>
           </View>
         )}
         {/* Schema validation banner (Parts 6/10) — urgent styling for the $100/placeholder case. */}
