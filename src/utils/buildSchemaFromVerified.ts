@@ -175,7 +175,11 @@ export function deriveSections(
   }
   const toggles = fields.filter(f => f.type === "toggle");
   if (toggles.length) {
-    const options: SchemaOption[] = toggles.map(t => (optionsByField?.[t.id]?.[0]) || { id: t.id, label: t.label, rate: pricing[`${t.id}Rate`] ?? 0, unit: "flat" });
+    const options: SchemaOption[] = toggles.map(t => {
+      const base = (optionsByField?.[t.id]?.[0]) || { id: t.id, label: t.label, rate: pricing[`${t.id}Rate`] ?? 0, unit: "flat" };
+      // Carry linked/derived pricing from the field onto the option so the engine can price it.
+      return { ...base, ...(t.linkedTo ? { linkedTo: t.linkedTo } : {}), ...(typeof t.multiplier === "number" ? { multiplier: t.multiplier } : {}) };
+    });
     out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: toggles.map(f => f.id), options, allowMultiSelect: true });
   }
   return out;

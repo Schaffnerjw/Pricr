@@ -13,6 +13,23 @@ import {
 
 const toCents = (dollars: number): number => Math.round((Number(dollars) || 0) * 100);
 const toDollars = (cents: number): number => Math.round(cents) / 100;
+const normId = (s?: string): string => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// Resolve the quantity entered for the option named `identifier` (by id, then normalized id/label),
+// searching every section's selection. Used for linked/derived pricing. Returns 0 when not found.
+function resolveLinkedQuantity(sections: SchemaSection[], selections: QuoteSelections, identifier: string): number {
+  const ni = normId(identifier);
+  if (!ni) return 0;
+  for (const section of sections || []) {
+    for (const opt of section.options || []) {
+      if (opt.id === identifier || normId(opt.id) === ni || normId(opt.label) === ni) {
+        const q = selections?.[section.id]?.quantities?.[opt.id];
+        return Number(q) || 0;
+      }
+    }
+  }
+  return 0;
+}
 
 const TYPE_FOR_PATTERN: Record<SectionPattern, LineItemType> = {
   MATERIAL_MEASUREMENT: "material",
@@ -58,6 +75,21 @@ export function buildLineItems(
           id: `${section.id}:${optionId}`, sectionId: section.id, sectionName: section.name,
           label: optionId, quantity: 0, unit: section.quantityUnit || "", rate: 0, total: 0,
           type: lineType, optionId, rateSource: "", error: "Rate not found",
+        });
+        continue;
+      }
+      // Linked/derived option: its quantity comes from the source option (linkedTo) and it's priced at
+      // `multiplier` per unit. e.g. Frame Protection = Frame Materials sq ft × $0.50.
+      if (option.linkedTo) {
+        const linkedQty = resolveLinkedQuantity(sections, selections, option.linkedTo);
+        const rate = typeof option.multiplier === "number" ? option.multiplier : option.rate;
+        const unit = section.quantityUnit || option.unit || "";
+        const totalCents = Math.round(linkedQty * toCents(rate));
+        items.push({
+          id: `${section.id}:${option.id}`, sectionId: section.id, sectionName: section.name,
+          label: `${option.label} (${linkedQty.toLocaleString()} ${unit} × $${rate})`.replace(/\s+/g, " ").trim(),
+          quantity: linkedQty, unit, rate, total: toDollars(totalCents),
+          type: lineType, optionId: option.id, rateSource: option.id,
         });
         continue;
       }

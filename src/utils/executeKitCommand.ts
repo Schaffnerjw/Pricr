@@ -13,7 +13,8 @@ import { KitCommand, KitCommandResult } from "./kitCommands";
 
 const lower = (s?: string) => (s || "").toLowerCase().trim();
 // "Frame Protection ($0.50/sqft)" → "frameprotection050sqft". Used for forgiving (but exact-first) matching.
-const normalize = (s?: string) => lower(s).replace(/[^a-z0-9]/g, "");
+// Exported so applyKitSchemaDiff reuses the exact same fuzzy normalization.
+export const normalize = (s?: string) => lower(s).replace(/[^a-z0-9]/g, "");
 
 // Deep-enough clone of the parts a command can touch.
 function cloneSchema(s: QuoteSchema): QuoteSchema {

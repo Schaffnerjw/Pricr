@@ -40,7 +40,10 @@ export interface QuoteSection {
 export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; sections?: QuoteSection[]; }
 export type FieldUnit = "sqft"|"lf"|"each"|"hr"|"flat"|"percent"|"load"|"room"|"vehicle"|"ton";
 export type FieldGroup = "dimensions"|"materials"|"railings"|"lighting"|"fencing"|"extras"|"fees"|"details";
-export interface SchemaField { id: string; label: string; type: "number"|"selector"|"toggle"|"area"; options?: string[]; placeholder?: string; unit?: FieldUnit; group?: FieldGroup; }
+export interface SchemaField { id: string; label: string; type: "number"|"selector"|"toggle"|"area"; options?: string[]; placeholder?: string; unit?: FieldUnit; group?: FieldGroup;
+  // Linked/derived pricing: this field's quantity is the linked field's quantity, priced at `multiplier`
+  // per unit (e.g. Frame Protection = Frame Materials sq ft × $0.50). Read by the pricing engine.
+  linkedTo?: string; multiplier?: number; isOptional?: boolean; }
 export interface AddOn { id: string; label: string; price: number; }
 export interface SummaryLine { label: string; value: string; showIf?: string; }
 export type QuoteStatus = "open"|"won"|"lost";

@@ -21,6 +21,7 @@ import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typi
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { defaultAllowMultiSelect, deriveSections } from "../utils/buildSchemaFromVerified";
 import { applyKitSchemaUpdate } from "../utils/kitSchemaUpdate";
+import { applyKitSchemaDiff } from "../utils/applyKitSchemaDiff";
 import { fetchWithTimeout, isTimeout, KIT_TIMEOUT_MS } from "../utils/fetchTimeout";
 import { checkOnline } from "../hooks/useNetworkStatus";
 import { executeKitCommand } from "../utils/executeKitCommand";
@@ -375,7 +376,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       logger.debug("[KitAgent] sending message to Claude");
       // Send the LAST 20 messages for context (window management), grounding the latest turn with the
       // current schema. Strip any prior change-blocks from history so they don't confuse the model.
-      const stripBlocks = (c: string) => c.replace(/COMMAND_START[\s\S]*?COMMAND_END/g, "").replace(/COMMAND_START[\s\S]*$/g, "").replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/g, "").replace(/CONFIG_UPDATED[\s\S]*$/g, "").trim();
+      const stripBlocks = (c: string) => c.replace(/SCHEMA_DIFF_START[\s\S]*?SCHEMA_DIFF_END/g, "").replace(/SCHEMA_DIFF_START[\s\S]*$/g, "").replace(/COMMAND_START[\s\S]*?COMMAND_END/g, "").replace(/COMMAND_START[\s\S]*$/g, "").replace(/SCHEMA_UPDATE_START[\s\S]*?SCHEMA_UPDATE_END/g, "").replace(/CONFIG_UPDATED[\s\S]*$/g, "").trim();
       let recent = newMessages.slice(-20);
       while (recent.length && recent[0].role !== "user") recent = recent.slice(1); // Anthropic requires a leading user turn
       const apiMessages = recent.map((m, i) =>
@@ -396,12 +397,49 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       // What the user sees is ONLY the text before any machine block — strip from the first marker
       // onward (also covers a missing/garbled END marker). The raw block can never reach the chat UI.
       const markerIdx = (() => {
-        const found = [/COMMAND_START/i, /SCHEMA_UPDATE_START/i, /CONFIG_UPDATED/].map(r => reply.search(r)).filter(i => i >= 0);
+        const found = [/SCHEMA_DIFF_START/i, /COMMAND_START/i, /SCHEMA_UPDATE_START/i, /CONFIG_UPDATED/].map(r => reply.search(r)).filter(i => i >= 0);
         return found.length ? Math.min(...found) : -1;
       })();
       const displayMessage = (markerIdx >= 0 ? reply.slice(0, markerIdx) : reply).replace(/```json/gi, "").replace(/```/g, "").trim();
 
-      // 0) PREFERRED: a structured COMMAND block executed deterministically by executeKitCommand.
+      // 0) PREFERRED (conversational agent): a SCHEMA_DIFF block applied by applyKitSchemaDiff.
+      const diffStart = reply.search(/SCHEMA_DIFF_START/i);
+      if (diffStart >= 0) {
+        const afterDiff = reply.slice(diffStart + "SCHEMA_DIFF_START".length);
+        const diffEnd = afterDiff.search(/SCHEMA_DIFF_END/i);
+        const region = (diffEnd >= 0 ? afterDiff.slice(0, diffEnd) : afterDiff).replace(/```json/gi, "").replace(/```/g, "").trim();
+        const f = region.indexOf("{"), l = region.lastIndexOf("}");
+        const jsonStr = (f >= 0 && l > f) ? region.slice(f, l + 1) : "";
+        let diff: any = null;
+        if (jsonStr) {
+          try { diff = JSON.parse(jsonStr); }
+          catch {
+            // The prompt's diff example uses single quotes — tolerate single-quoted JSON.
+            try { diff = JSON.parse(jsonStr.replace(/'/g, '"')); }
+            catch (e2) { logger.error("[KitApply] SCHEMA_DIFF parse failed:", e2 instanceof Error ? e2.message : String(e2), "raw:", jsonStr.substring(0, 200)); }
+          }
+        }
+        if (diff) {
+          const { schema: nextSchema, changes, errors } = applyKitSchemaDiff(schema, diff);
+          const errLine = errors.length ? `${changes.length ? "\n" : ""}⚠️ Couldn't apply: ${errors.join(", ")}` : "";
+          if (changes.length > 0) {
+            logger.debug("[KitApply] SCHEMA_DIFF applied:", changes.join("; "));
+            await applyKitSchema(nextSchema, "diff");
+            const changeLines = changes.map(c => `✓ ${c}`).join("\n");
+            finish(`${displayMessage ? displayMessage + "\n\n" : ""}${changeLines}${errLine}`);
+          } else if (errors.length > 0) {
+            finish(`${displayMessage ? displayMessage + "\n\n" : ""}⚠️ Couldn't apply: ${errors.join(", ")}`);
+          } else {
+            finish(displayMessage || "Done.");
+          }
+        } else {
+          finish(displayMessage || "I tried to make that change but couldn't read it — tell me again and I'll retry.");
+        }
+        setAgentLoading(false);
+        return;
+      }
+
+      // 0b) BACKWARD COMPAT: a structured COMMAND block executed deterministically by executeKitCommand.
       const cmdStart = reply.search(/COMMAND_START/i);
       if (cmdStart >= 0) {
         const afterCmd = reply.slice(cmdStart + "COMMAND_START".length);
@@ -849,6 +887,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // FLAT_RATE: tap-to-include cards for fixed-price items.
   const renderFlatSection = (sec: any) => {
     const pricing = schema?.pricing || {};
+    const normId = (s?: string) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
     return (
       <View style={{ gap: 10 }}>
         {(sec.itemFieldIds || []).map((id: string) => {
@@ -856,13 +895,22 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
           if (!f) return null;
           const on = !!fieldValues[id];
           const price = pricing[`${id}Rate`] || 0;
+          // Linked/derived field: amount = linked field's quantity × this field's multiplier, live.
+          const linkedField = f.linkedTo ? (schema?.fields || []).find((x: any) => x.id === f.linkedTo || normId(x.id) === normId(f.linkedTo) || normId(x.label) === normId(f.linkedTo)) : null;
+          const mult = typeof f.multiplier === "number" ? f.multiplier : price;
+          const linkedQty = linkedField ? Number(fieldValues[linkedField.id]) || 0 : 0;
+          const derived = linkedField ? linkedQty * mult : 0;
+          const amount = linkedField ? derived : price;
           return (
             <PressableScale key={id} onPress={() => !readOnly && setField(id, !on)} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: on ? primaryColor : pal.surface, borderColor: on ? primaryColor : pal.border, borderWidth: 1, borderRadius: 14, padding: 16 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
                 <Feather name={on ? "check-square" : "square"} size={20} color={on ? onPrimary : pal.textMuted} />
-                <Text style={{ color: on ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{f.label}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: on ? onPrimary : pal.text, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{f.label}</Text>
+                  {linkedField && <Text style={{ color: on ? onPrimary : pal.textMuted, fontSize: 12, fontFamily: "DMSans_400Regular", marginTop: 2 }}>{linkedQty.toLocaleString()} {linkedField.unit || ""} × ${mult}/{f.unit || linkedField.unit || "unit"}</Text>}
+                </View>
               </View>
-              {price > 0 && <Text style={{ color: on ? onPrimary : primaryColor, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>${price.toLocaleString()}</Text>}
+              {amount > 0 && <Text style={{ color: on ? onPrimary : primaryColor, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>${amount.toLocaleString()}</Text>}
             </PressableScale>
           );
         })}

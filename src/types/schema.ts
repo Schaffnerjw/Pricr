@@ -18,6 +18,10 @@ export interface SchemaOption {
   rate: number;          // dollars (whole or fractional); the engine converts to cents internally
   unit: string;          // "sq ft" | "lf" | "hour" | "flat" | "each" | …
   subsystemId?: string;  // SYSTEM_CONFIG_QUANTITY: which system this config belongs to
+  // Linked/derived pricing: when set, this option's quantity is taken from the option named `linkedTo`
+  // and priced at `multiplier` per unit (e.g. Frame Protection = Frame Materials qty × $0.50/sq ft).
+  linkedTo?: string;
+  multiplier?: number;
 }
 
 export interface AddOnDefinition {

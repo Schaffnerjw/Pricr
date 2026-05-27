@@ -39,6 +39,36 @@ describe("pricingEngine — golden scenarios", () => {
     expect(validateQuoteTotal(q).ok).toBe(true);
   });
 
+  test("linked calculation — Frame Protection × Frame Materials", () => {
+    // Frame Materials: 300 sq ft at $3.50 = $1,050.
+    // Frame Protection: linked to Frame Materials, $0.50/sq ft → 300 × $0.50 = $150.
+    const sections: SchemaSection[] = [
+      {
+        id: "frame_materials", name: "Frame Materials", pattern: "MATERIAL_MEASUREMENT", allowMultiSelect: false,
+        quantityUnit: "sq ft", options: [{ id: "frame_materials", label: "Frame Materials", rate: 3.5, unit: "sq ft" }],
+      },
+      {
+        id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", allowMultiSelect: true,
+        options: [{ id: "frame_protection", label: "Frame Protection", rate: 0, unit: "sq ft", linkedTo: "Frame Materials", multiplier: 0.5 }],
+      },
+    ];
+    const selections: QuoteSelections = {
+      frame_materials: { optionIds: ["frame_materials"], quantities: { frame_materials: 300 } },
+      _flat_fees: { optionIds: ["frame_protection"], quantities: {} },
+    };
+    const q = buildLineItems(sections, selections, [], null);
+    const frame = q.lineItems.find(li => li.optionId === "frame_materials")!;
+    const prot = q.lineItems.find(li => li.optionId === "frame_protection")!;
+    expect(frame.total).toBe(1050);
+    expect(prot.quantity).toBe(300);
+    expect(prot.rate).toBe(0.5);
+    expect(prot.total).toBe(150);
+    expect(prot.label).toContain("300");
+    expect(q.subtotal).toBe(1200);
+    expect(q.hasErrors).toBe(false);
+    expect(validateQuoteTotal(q).ok).toBe(true);
+  });
+
   test("Lawn care — Mowing $50 + Fertilizing $65 + Aeration $85", () => {
     const sections: SchemaSection[] = [{
       id: "services", name: "Services", pattern: "FLAT_RATE", allowMultiSelect: true, options: [
