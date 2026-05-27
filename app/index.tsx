@@ -601,6 +601,11 @@ export default function Index() {
       onSignOut={handleSignOut}
       onViewSigningActivity={isSupabaseConfigured && !isDemoMode ? () => { setSettingsFocusTerms(false); setScreen("pipeline"); } : undefined}
       onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
+      onApplyVeraa={async (code) => {
+        const updated: Business = { ...business!, isVeraaClient: true, subscriptionStatus: "veraa", partnerCodeUsed: code };
+        try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }
+        setBusiness(updated); // status flips to "veraa" → SettingsScreen re-renders into the Veraa status card
+      }}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
       onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification, quoteExpiryDays }) => {

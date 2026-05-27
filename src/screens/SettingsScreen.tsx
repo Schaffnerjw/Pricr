@@ -10,7 +10,7 @@ import { isValidHex } from "../utils/color";
 import { getContrastColor, isReadable, ON_PRIMARY } from "../utils/colorUtils";
 import { PAYMENT_OPTIONS, resolveDocPrefs } from "../utils/helpers";
 import { fieldRate } from "../utils/quote";
-import { openCheckout, openCustomerPortal, PlanId, trialDaysLeft } from "../utils/billing";
+import { openCheckout, openCustomerPortal, PlanId, trialDaysLeft, validatePromoCode } from "../utils/billing";
 
 const BG_PRESETS = [
   { label: "Dark Navy", hex: "#0A0E1A" },
@@ -45,7 +45,7 @@ function HexColorRow({ label, initial, valid, onCommit }: { label: string; initi
 }
 
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
-export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, scrollToTerms }: {
+export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, onApplyVeraa, scrollToTerms }: {
   business: Business;
   currentUser?: User;
   onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number }) => void | Promise<void>;
@@ -54,6 +54,7 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   onSignOut?: () => void;
   onViewSigningActivity?: () => void;
   onRebuildQuoteTool?: () => void;
+  onApplyVeraa?: (code: string) => void | Promise<void>; // valid Veraa code entered post-signup → mark veraa + persist
   scrollToTerms?: boolean;
 }) {
   const [name, setName] = useState(business.name);
@@ -119,6 +120,22 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const startCheckout = async (plan: PlanId) => {
     const ok = await openCheckout(business.code, plan);
     if (!ok) Alert.alert("Billing", "Billing isn't available yet — please try again shortly.");
+  };
+  // Partner-code entry for a contractor who signed up without one. Validates via the proxy, then
+  // (on a valid Veraa code) hands off to the parent to mark veraa + persist; the business prop
+  // updating to subscriptionStatus="veraa" re-renders this section into the Veraa status card.
+  const [showPromo, setShowPromo] = useState(false);
+  const [promoCode, setPromoCode] = useState("");
+  const [promoChecking, setPromoChecking] = useState(false);
+  const [promoError, setPromoError] = useState("");
+  const applyPromo = async () => {
+    const code = promoCode.trim().toUpperCase();
+    if (!code) { setPromoError("Enter your code first."); return; }
+    setPromoChecking(true); setPromoError("");
+    const r = await validatePromoCode(code);
+    setPromoChecking(false);
+    if (r.valid && r.type === "veraa") { setPromoError(""); await onApplyVeraa?.(code); return; }
+    setPromoError("Invalid code — check with your Veraa account manager");
   };
   const confirmCancel = () => Alert.alert(
     "Cancel Subscription?",
@@ -440,6 +457,31 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
                     <View style={{ width: `${Math.round(trialFill * 100)}%`, height: 8, backgroundColor: pc }} />
                   </View>
                   <Text style={{ color: B.gray2, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{trialLeft} day{trialLeft === 1 ? "" : "s"} remaining</Text>
+                  {/* Partner-code entry — collapsed link that expands an input + Apply. */}
+                  {!showPromo ? (
+                    <TouchableOpacity onPress={() => setShowPromo(true)} style={{ paddingVertical: 4 }}>
+                      <Text style={{ color: pc, fontSize: 13, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>Have a Veraa or partner code?</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={{ gap: 8 }}>
+                      <View style={{ flexDirection: "row", gap: 8 }}>
+                        <TextInput
+                          style={[s.input, { flex: 1, backgroundColor: B.midnight, color: B.white, borderColor: B.border }]}
+                          placeholder="Enter code (e.g. VERAA-HEMMA-4821)"
+                          placeholderTextColor={B.gray3}
+                          value={promoCode}
+                          onChangeText={v => { setPromoCode(v.toUpperCase()); if (promoError) setPromoError(""); }}
+                          autoCapitalize="characters"
+                          autoCorrect={false}
+                          editable={!promoChecking}
+                        />
+                        <TouchableOpacity style={[s.btn, { backgroundColor: pc, paddingHorizontal: 18, alignSelf: "stretch", justifyContent: "center" }]} onPress={applyPromo} disabled={promoChecking}>
+                          <Text style={[s.btnText, { color: ON_PRIMARY }]}>{promoChecking ? "…" : "Apply"}</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {!!promoError && <Text style={{ color: B.red, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{promoError}</Text>}
+                    </View>
+                  )}
                   <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={() => startCheckout("monthly")}>
                     <Text style={[s.btnText, { color: ON_PRIMARY }]}>Upgrade — $49/month →</Text>
                   </TouchableOpacity>
