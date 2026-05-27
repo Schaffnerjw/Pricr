@@ -90,7 +90,8 @@ export async function shareQuotePDF(data: QuotePDFData, opts?: { message?: strin
     });
   } catch (e) {
     logger.error("[PDF] share failed", e instanceof Error ? e.message : String(e));
-    Alert.alert("Couldn't create PDF", e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    // Never surface the raw technical error to the user — the detail is logged above.
+    Alert.alert("Couldn't create PDF", "Something went wrong preparing the PDF. Please try again.");
   }
 }
 
@@ -112,6 +113,7 @@ export async function previewQuotePDF(data: QuotePDFData): Promise<void> {
     }
   } catch (e) {
     logger.error("[PDF] preview failed", e instanceof Error ? e.message : String(e));
-    Alert.alert("Couldn't open preview", e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    // Never surface the raw technical error to the user — the detail is logged above.
+    Alert.alert("Couldn't open preview", "Something went wrong opening the preview. Please try again.");
   }
 }
