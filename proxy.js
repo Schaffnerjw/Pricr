@@ -1377,8 +1377,10 @@ async function handleCreateCheckoutSession(res, buf) {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'], mode: 'subscription',
       line_items: [{ price, quantity: 1 }],
-      success_url: (process.env.APP_URL || '') + '/billing-success?session_id={CHECKOUT_SESSION_ID}',
-      cancel_url: (process.env.APP_URL || '') + '/billing-cancel',
+      // Redirect back to the app root with a flag the SPA detects on load (Option A). The webhook is the
+      // source of truth for activation; this flag just triggers an immediate status re-check.
+      success_url: (process.env.APP_URL || '') + '?billing-success=1&session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: (process.env.APP_URL || '') + '?billing-cancel=1',
       metadata: { businessCode: String(body.businessCode || ''), plan },
     });
     return sendJson(res, 200, { url: session.url, sessionId: session.id });

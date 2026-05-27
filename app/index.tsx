@@ -43,7 +43,7 @@ import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
 import { logger } from "../src/utils/logger";
 import { authenticateMaster } from "../src/utils/masterAuth";
-import { trialDaysLeft } from "../src/utils/billing";
+import { getBillingStatus, trialDaysLeft } from "../src/utils/billing";
 import { fetchWithTimeout } from "../src/utils/fetchTimeout";
 import { getPushPermissionStatus, registerForPushNotifications } from "../src/utils/pushNotifications";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
@@ -205,6 +205,27 @@ export default function Index() {
     // Warm the Railway proxy so it's hot before the user needs Kit/signing. Fire-and-forget.
     fetch(`${SIGN_BASE}/health`, { method: "GET" }).catch(() => { });
   }, []);
+
+  // Option A (web/PWA): Stripe redirects back to APP_URL?billing-success=1&session_id=… After the
+  // business loads, verify activation with the proxy, flip to active, and leave the paywall. The query
+  // params are then cleared so it doesn't re-trigger.
+  useEffect(() => {
+    if (typeof window === "undefined" || !business?.code || business.code === "DEMO") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("billing-success") !== "1" && !params.has("session_id")) return;
+    (async () => {
+      try {
+        const st = await getBillingStatus(business.code);
+        if (st.status === "active" || st.status === "veraa") {
+          const updated: Business = { ...business, subscriptionStatus: st.status };
+          setBusiness(updated);
+          try { await saveBusiness(updated); } catch { /* best-effort */ }
+          setScreen(updated.schema ? "done" : "choose_setup");
+        }
+      } catch { /* webhook is source of truth; next load will reflect it */ }
+      try { window.history.replaceState({}, "", window.location.pathname); } catch { /* ignore */ }
+    })();
+  }, [business?.code]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const checkSession = async () => {
     try {
@@ -787,6 +808,13 @@ export default function Index() {
       }}
       onStartTrial={() => setScreen(business.schema ? "done" : "choose_setup")}
       onContinue={() => setScreen(business.schema ? "done" : "choose_setup")}
+      onPaid={async () => {
+        // Payment confirmed (poll/redirect) → flip to active + leave the gate.
+        const updated: Business = { ...business, subscriptionStatus: "active" };
+        setBusiness(updated);
+        try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] activate save failed", e instanceof Error ? e.message : String(e)); }
+        setScreen(updated.schema ? "done" : "choose_setup");
+      }}
       onVeraaApplied={async (code) => {
         const updated: Business = { ...business, isVeraaClient: true, subscriptionStatus: "veraa", partnerCodeUsed: code };
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }

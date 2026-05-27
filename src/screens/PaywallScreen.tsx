@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, BackHandler, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
 import { B } from "../constants/brand";
 import { s } from "../styles";
@@ -17,7 +17,7 @@ const FEATURES = [
 
 // Shown between signup_brand and choose_setup (and on trial expiry / from the dashboard banner). A
 // valid Veraa partner code skips the paywall entirely (Pricr is included in the client's Veraa plan).
-export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onStartTrial, onSelectPlan, onVeraaApplied, onContinue }: {
+export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onStartTrial, onSelectPlan, onVeraaApplied, onContinue, onPaid }: {
   businessCode: string;
   primaryColor: string;
   mode?: "signup" | "expired";              // "signup" continues into setup; "expired" requires subscribe/Veraa
@@ -26,6 +26,7 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
   onSelectPlan?: (plan: PlanId) => void;     // persist the chosen plan to the business config
   onVeraaApplied: (code: string) => void;    // valid Veraa code → mark veraa + continue
   onContinue?: () => void;                   // continue mid-trial without paying yet
+  onPaid?: () => void;                       // status flipped to active (payment confirmed) → leave the gate
 }) {
   const [showPromo, setShowPromo] = useState(false);
   const [promo, setPromo] = useState("");
@@ -33,12 +34,35 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
   const [promoError, setPromoError] = useState("");
   const [launching, setLaunching] = useState<PlanId | null>(null);
   const [annualAvailable, setAnnualAvailable] = useState(true); // hidden if STRIPE_ANNUAL_PRICE_ID unset
+  const [polling, setPolling] = useState(false);                // verifying payment after Stripe returns
+  const [processing, setProcessing] = useState(false);          // poll timed out — payment may still be processing
 
   useEffect(() => {
     let live = true;
     getBillingStatus(businessCode).then(st => { if (live) setAnnualAvailable(st.annualAvailable !== false); }).catch(() => {});
     return () => { live = false; };
   }, [businessCode]);
+
+  // HARD GATE: block the Android hardware back button while the paywall is shown — it cannot be
+  // dismissed; the only exits are completing payment or entering a valid Veraa code. (No-op on web.)
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => sub.remove();
+  }, []);
+
+  // Option B: after Stripe Checkout returns (in-app browser closes), the webhook flips the subscription
+  // to active server-side. Poll for that for ~30s; on success leave the gate, else show a wait message.
+  const pollForActivation = async () => {
+    setPolling(true); setProcessing(false); setPromoError("");
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const st = await getBillingStatus(businessCode);
+        if (st.status === "active" || st.status === "veraa") { setPolling(false); onPaid?.(); return; }
+      } catch { /* keep polling */ }
+    }
+    setPolling(false); setProcessing(true);
+  };
 
   const applyPromo = async () => {
     const code = promo.trim().toUpperCase();
@@ -60,7 +84,9 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
     const opened = await openCheckout(businessCode, plan);
     setLaunching(null);
     if (mode === "expired") {
-      if (!opened) setPromoError("Billing isn't available right now. Try again shortly or use a partner code.");
+      if (!opened) { setPromoError("Billing isn't available right now. Try again shortly or use a partner code."); return; }
+      // Stripe returned — verify activation (Option B). Web also catches it via the redirect (Option A).
+      pollForActivation();
       return;
     }
     onStartTrial(plan); // signup: continue into setup (trial active)
@@ -132,6 +158,21 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
         )}
 
         {!!promoError && <Text style={{ color: B.red, fontSize: 13, textAlign: "center", fontFamily: "DMSans_400Regular" }}>{promoError}</Text>}
+
+        {polling && (
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 4 }}>
+            <ActivityIndicator color={primaryColor} size="small" />
+            <Text style={{ color: B.gray2, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>Confirming your payment…</Text>
+          </View>
+        )}
+        {processing && (
+          <View style={{ backgroundColor: B.card, borderColor: B.border, borderWidth: 1, borderRadius: 12, padding: 14, gap: 8 }}>
+            <Text style={{ color: B.gray1, fontSize: 14, fontFamily: "DMSans_400Regular", textAlign: "center" }}>Payment processing… If you completed payment, give it a moment, then tap below to re-check.</Text>
+            <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={pollForActivation}>
+              <Text style={[s.btnText, { color: ON_PRIMARY }]}>I&apos;ve paid — check again</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {trialDays != null && trialDays > 0 && onContinue && (
           <TouchableOpacity onPress={onContinue} style={{ alignItems: "center", paddingVertical: 6 }}>
