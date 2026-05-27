@@ -8,10 +8,12 @@
 import { AddOn, QuoteSchema, QuoteSection, SchemaField } from "../types";
 import { SchemaOption } from "../types/schema";
 import { slugId } from "./helpers";
+import { logger } from "./logger";
 import { KitCommand, KitCommandResult } from "./kitCommands";
 
-const norm = (s?: string) => (s || "").toLowerCase().trim();
-const flatNorm = (s?: string) => norm(s).replace(/[^a-z0-9]/g, "");
+const lower = (s?: string) => (s || "").toLowerCase().trim();
+// "Frame Protection ($0.50/sqft)" → "frameprotection050sqft". Used for forgiving (but exact-first) matching.
+const normalize = (s?: string) => lower(s).replace(/[^a-z0-9]/g, "");
 
 // Deep-enough clone of the parts a command can touch.
 function cloneSchema(s: QuoteSchema): QuoteSchema {
@@ -25,21 +27,56 @@ function cloneSchema(s: QuoteSchema): QuoteSchema {
   };
 }
 
-const matchByIdOrLabel = (idOrLabel: string, id: string, label: string): boolean =>
-  norm(idOrLabel) === norm(id) || norm(idOrLabel) === norm(label) || flatNorm(idOrLabel) === flatNorm(label) || flatNorm(idOrLabel) === flatNorm(id);
-
-function findField(s: QuoteSchema, ident: string): SchemaField | undefined {
-  return (s.fields || []).find(f => matchByIdOrLabel(ident, f.id, f.label));
-}
-function findOption(s: QuoteSchema, ident: string): { section: QuoteSection; option: SchemaOption } | undefined {
-  for (const section of s.sections || []) {
-    const option = (section.options || []).find(o => matchByIdOrLabel(ident, o.id, o.label));
-    if (option) return { section, option };
-  }
+// Tiered match — returns the first item matching at the highest-priority tier. Partial (tier 5) is the
+// LAST resort, so exact id/label matches always win and a partial can never override an exact one.
+function tieredMatch<T>(items: T[], ident: string, idOf: (t: T) => string, labelOf: (t: T) => string): T | undefined {
+  if (!ident) return undefined;
+  const ni = normalize(ident), li = lower(ident);
+  const tiers: ((t: T) => boolean)[] = [
+    t => idOf(t) === ident,                                   // 1: exact id
+    t => lower(labelOf(t)) === li,                            // 2: exact label (case-insensitive)
+    t => normalize(idOf(t)) === ni,                           // 3: normalized id
+    t => normalize(labelOf(t)) === ni,                        // 4: normalized label
+    t => { const nl = normalize(labelOf(t)); return !!nl && !!ni && (nl.includes(ni) || ni.includes(nl)); }, // 5: partial
+  ];
+  for (const tier of tiers) { const m = items.find(tier); if (m) return m; }
   return undefined;
 }
+
+type Target =
+  | { kind: "option"; section: QuoteSection; option: SchemaOption }
+  | { kind: "field"; field: SchemaField }
+  | { kind: "addon"; addon: AddOn };
+const targetId = (t: Target) => (t.kind === "option" ? t.option.id : t.kind === "field" ? t.field.id : t.addon.id);
+const targetLabel = (t: Target) => (t.kind === "option" ? t.option.label : t.kind === "field" ? t.field.label : t.addon.label);
+
+// Resolve a field identifier across ALL locations — section options → fields → add-ons (location
+// priority) and exact-before-partial (tier priority within the flattened list).
+function resolveTarget(s: QuoteSchema, ident: string): Target | null {
+  logger.debug("[KitLookup] searching for:", ident);
+  logger.debug("[KitLookup] schema.fields:", (s.fields || []).map(f => f.id + "|" + f.label));
+  logger.debug("[KitLookup] schema.sections options:", (s.sections || []).flatMap(sec => (sec.options || []).map(o => o.id + "|" + o.label)));
+  logger.debug("[KitLookup] schema.addOns:", (s.addOns || []).map(a => a.id + "|" + a.label));
+  const targets: Target[] = [
+    ...(s.sections || []).flatMap(section => (section.options || []).map(option => ({ kind: "option", section, option } as Target))),
+    ...(s.fields || []).map(field => ({ kind: "field", field } as Target)),
+    ...(s.addOns || []).map(addon => ({ kind: "addon", addon } as Target)),
+  ];
+  return tieredMatch(targets, ident, targetId, targetLabel) || null;
+}
+
+// Comma-separated list of every referenceable name, so a not-found error lets Kit self-correct.
+function availableFields(s: QuoteSchema): string {
+  const labels = [
+    ...(s.sections || []).flatMap(sec => (sec.options || []).map(o => o.label)),
+    ...(s.fields || []).map(f => f.label),
+    ...(s.addOns || []).map(a => a.label),
+  ];
+  return Array.from(new Set(labels.filter(Boolean))).join(", ");
+}
+const notFound = (s: QuoteSchema, ident: string) => `Field "${ident}" not found. Available fields: ${availableFields(s)}`;
 function findAddon(s: QuoteSchema, ident: string): AddOn | undefined {
-  return (s.addOns || []).find(a => matchByIdOrLabel(ident, a.id, a.label));
+  return tieredMatch(s.addOns || [], ident, a => a.id, a => a.label);
 }
 
 const ok = (schema: QuoteSchema, command: KitCommand, description: string): { schema: QuoteSchema; result: KitCommandResult } =>
@@ -66,37 +103,36 @@ export function executeKitCommand(schema: QuoteSchema, command: KitCommand): { s
       return ok(next, command, `Set trade to ${command.trade}`);
 
     case "UPDATE_RATE": {
-      const opt = findOption(next, command.fieldIdentifier);
-      if (opt) {
-        opt.option.rate = command.newRate;
-        if (command.unit) opt.option.unit = command.unit;
-        next.pricing[`${opt.option.id}Rate`] = command.newRate; // keep re-derive consistent
-        return ok(next, command, `Updated ${opt.option.label} to $${command.newRate}`);
+      const t = resolveTarget(next, command.fieldIdentifier);
+      logger.debug("[KitLookup] UPDATE_RATE resolved:", t ? `${t.kind}:${targetId(t)}` : "none");
+      if (!t) return fail(schema, command, notFound(next, command.fieldIdentifier));
+      if (t.kind === "option") {
+        t.option.rate = command.newRate;
+        if (command.unit) t.option.unit = command.unit;
+        next.pricing[`${t.option.id}Rate`] = command.newRate; // keep re-derive consistent
+        return ok(next, command, `Updated ${t.option.label} to $${command.newRate}`);
       }
-      const f = findField(next, command.fieldIdentifier);
-      if (f) {
-        next.pricing[`${f.id}Rate`] = command.newRate;
-        return ok(next, command, `Updated ${f.label} to $${command.newRate}`);
-      }
-      const a = findAddon(next, command.fieldIdentifier);
-      if (a) { a.price = command.newRate; return ok(next, command, `Updated ${a.label} to $${command.newRate}`); }
-      return fail(schema, command, `Field "${command.fieldIdentifier}" not found`);
+      if (t.kind === "field") { next.pricing[`${t.field.id}Rate`] = command.newRate; return ok(next, command, `Updated ${t.field.label} to $${command.newRate}`); }
+      t.addon.price = command.newRate;
+      return ok(next, command, `Updated ${t.addon.label} to $${command.newRate}`);
     }
 
     case "RENAME_FIELD": {
       // Keep the id (and its pricing key) stable; only relabel — renaming the id would orphan rates.
-      const f = findField(next, command.fieldIdentifier);
-      if (f) { f.label = command.newLabel; return ok(next, command, `Renamed to ${command.newLabel}`); }
-      const opt = findOption(next, command.fieldIdentifier);
-      if (opt) { opt.option.label = command.newLabel; return ok(next, command, `Renamed to ${command.newLabel}`); }
-      const a = findAddon(next, command.fieldIdentifier);
-      if (a) { a.label = command.newLabel; return ok(next, command, `Renamed to ${command.newLabel}`); }
-      return fail(schema, command, `Field "${command.fieldIdentifier}" not found`);
+      const t = resolveTarget(next, command.fieldIdentifier);
+      if (!t) return fail(schema, command, notFound(next, command.fieldIdentifier));
+      if (t.kind === "option") t.option.label = command.newLabel;
+      else if (t.kind === "field") t.field.label = command.newLabel;
+      else t.addon.label = command.newLabel;
+      return ok(next, command, `Renamed to ${command.newLabel}`);
     }
 
     case "CHANGE_FIELD_TYPE": {
-      const f = findField(next, command.fieldIdentifier);
-      if (!f) return fail(schema, command, `Field "${command.fieldIdentifier}" not found`);
+      const t = resolveTarget(next, command.fieldIdentifier);
+      if (!t) return fail(schema, command, notFound(next, command.fieldIdentifier));
+      const fieldId = t.kind === "field" ? t.field.id : t.kind === "option" ? t.option.id : null;
+      const f = fieldId ? (next.fields || []).find(x => x.id === fieldId) : null;
+      if (!f) return fail(schema, command, `"${command.fieldIdentifier}" can't change type (no underlying field).`);
       f.type = command.newType === "select" ? "selector" : command.newType;
       if (f.type === "toggle") f.unit = "flat";
       return ok(next, command, `Changed ${f.label} to ${command.newType}`);
@@ -113,26 +149,27 @@ export function executeKitCommand(schema: QuoteSchema, command: KitCommand): { s
       // Mirror into a matching section's options for an immediate view; otherwise create a section so a
       // sections-only schema also reflects the add. QuoteScreen re-derives from fields anyway.
       const option: SchemaOption = { id, label: command.label, rate: command.rate, unit: String(unit) };
-      const sec = (next.sections || []).find(x => matchByIdOrLabel(command.sectionIdentifier, x.id, x.name) || norm(x.name).includes(norm(command.sectionIdentifier)));
+      const sec = tieredMatch(next.sections || [], command.sectionIdentifier, x => x.id, x => x.name);
       if (sec) sec.options = [...(sec.options || []), option];
       else if ((next.sections || []).length) next.sections = [...(next.sections || []), { id: slugId(command.sectionIdentifier || command.label, new Set()), name: command.sectionIdentifier || command.label, pattern: type === "toggle" ? "FLAT_RATE" : "MATERIAL_MEASUREMENT", options: [option], allowMultiSelect: type !== "selector" }];
       return ok(next, command, `Added ${command.label}`);
     }
 
     case "REMOVE_FIELD": {
-      const f = findField(next, command.fieldIdentifier);
-      if (f) {
-        next.fields = (next.fields || []).filter(x => x.id !== f.id);
-        delete next.pricing[`${f.id}Rate`];
+      const t = resolveTarget(next, command.fieldIdentifier);
+      if (!t) return fail(schema, command, notFound(next, command.fieldIdentifier));
+      if (t.kind === "addon") {
+        next.addOns = (next.addOns || []).filter(x => x.id !== t.addon.id);
+        return ok(next, command, `Removed ${t.addon.label}`);
       }
-      const opt = findOption(next, command.fieldIdentifier);
-      if (opt) {
-        opt.section.options = (opt.section.options || []).filter(o => o.id !== opt.option.id);
-        delete next.pricing[`${opt.option.id}Rate`];
-        if ((opt.section.options || []).length === 0) next.sections = (next.sections || []).filter(s => s.id !== opt.section.id);
-      }
-      if (!f && !opt) return fail(schema, command, `Field "${command.fieldIdentifier}" not found`);
-      return ok(next, command, `Removed ${f?.label || opt?.option.label || command.fieldIdentifier}`);
+      const fieldId = t.kind === "option" ? t.option.id : t.field.id;
+      const label = t.kind === "option" ? t.option.label : t.field.label;
+      next.fields = (next.fields || []).filter(x => x.id !== fieldId);
+      delete next.pricing[`${fieldId}Rate`];
+      // Pull the matching option out of every section, then drop any section left with no options.
+      for (const sec of next.sections || []) sec.options = (sec.options || []).filter(o => o.id !== fieldId);
+      next.sections = (next.sections || []).filter(sec => !Array.isArray(sec.options) || sec.options.length > 0);
+      return ok(next, command, `Removed ${label}`);
     }
 
     case "ADD_SECTION": {
@@ -142,7 +179,7 @@ export function executeKitCommand(schema: QuoteSchema, command: KitCommand): { s
     }
 
     case "REMOVE_SECTION": {
-      const sec = (next.sections || []).find(x => matchByIdOrLabel(command.sectionIdentifier, x.id, x.name));
+      const sec = tieredMatch(next.sections || [], command.sectionIdentifier, x => x.id, x => x.name);
       if (!sec) return fail(schema, command, `Section "${command.sectionIdentifier}" not found`);
       next.sections = (next.sections || []).filter(s => s.id !== sec.id);
       return ok(next, command, `Removed section ${sec.name}`);

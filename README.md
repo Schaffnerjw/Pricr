@@ -2,6 +2,17 @@
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
+## Stripe Customer Portal
+
+To enable subscription self-management (cancel, update payment) from Settings → Subscription:
+
+1. Go to dashboard.stripe.com/settings/billing/portal
+2. Toggle Customer portal to Active
+3. Enable: cancellations, plan switching, invoice history
+4. Save settings
+
+(The proxy also needs `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, `STRIPE_ANNUAL_PRICE_ID`, `STRIPE_WEBHOOK_SECRET`, and `APP_URL` set in Railway — see `.env.example`.)
+
 ## Get started
 
 1. Install dependencies

@@ -270,7 +270,11 @@ Command types and their required fields:
 
 "fieldIdentifier" / "addonIdentifier" / "sectionIdentifier" must match a name from the current schema
 (matched case-insensitively). "fieldType" maps Number field/Counter → "number", Yes-No toggle →
-"toggle", Dropdown → "select". The COMMAND block is stripped before the user sees your reply.`;
+"toggle", Dropdown → "select". The COMMAND block is stripped before the user sees your reply.
+
+Use exact field names from the schema summary above. The system handles partial matches, so
+"Frame Protection" will find "frameProtection" automatically. If a field is not found, you will
+receive a list of available fields — use one of those names and retry.`;
 
 // Price-list import (Part 3): converts a pasted price sheet (any format) into a sections/fields schema.
 // {priceList} is replaced with the contractor's pasted text. Returns raw JSON only.

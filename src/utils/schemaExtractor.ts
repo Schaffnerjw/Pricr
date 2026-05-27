@@ -277,14 +277,18 @@ export function humanSchemaSummary(schema?: QuoteSchema | null): string {
   const lines: string[] = [];
   lines.push(`Trade: ${schema.trade || "(not set)"}`);
   const pricing = schema.pricing || {};
-  for (const f of schema.fields || []) {
-    const rate = pricing[`${f.id}Rate`];
-    if (f.type === "selector" && f.options?.length) {
-      lines.push(`- ${f.label}: options ${f.options.join(", ")}`);
-    } else if (typeof rate === "number") {
-      lines.push(`- ${f.label}: $${rate.toLocaleString()}${f.type === "toggle" ? " (flat)" : unitSuffix((f.unit as FieldUnit) || "each")}`);
-    } else {
-      lines.push(`- ${f.label}`);
+  // Prefer the section view (when present) so Kit sees the exact option names it must reference in
+  // commands — e.g. "Deck Components & Trim: [Border Boards, Frame Protection, ...]".
+  const sectionsWithOptions = (schema.sections || []).filter(sec => Array.isArray(sec.options) && sec.options!.length);
+  if (sectionsWithOptions.length) {
+    lines.push("Sections:");
+    for (const sec of sectionsWithOptions) lines.push(`- ${sec.name}: [${sec.options!.map(o => o.label).join(", ")}]`);
+  } else {
+    for (const f of schema.fields || []) {
+      const rate = pricing[`${f.id}Rate`];
+      if (f.type === "selector" && f.options?.length) lines.push(`- ${f.label}: options ${f.options.join(", ")}`);
+      else if (typeof rate === "number") lines.push(`- ${f.label}: $${rate.toLocaleString()}${f.type === "toggle" ? " (flat)" : unitSuffix((f.unit as FieldUnit) || "each")}`);
+      else lines.push(`- ${f.label}`);
     }
   }
   for (const a of schema.addOns || []) lines.push(`- Add-on: ${a.label} — $${Number(a.price || 0).toLocaleString()} (flat)`);

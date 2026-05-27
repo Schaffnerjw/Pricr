@@ -10,6 +10,7 @@ import { isValidHex } from "../utils/color";
 import { getContrastColor, isReadable, ON_PRIMARY } from "../utils/colorUtils";
 import { PAYMENT_OPTIONS, resolveDocPrefs } from "../utils/helpers";
 import { fieldRate } from "../utils/quote";
+import { openCheckout, openCustomerPortal, PlanId, trialDaysLeft } from "../utils/billing";
 
 const BG_PRESETS = [
   { label: "Dark Navy", hex: "#0A0E1A" },
@@ -106,6 +107,23 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
 
   const pickLogo = async () => { const uri = await onPickLogo(); if (uri) setLogoUri(uri); };
   const resetDefaults = () => { setPrimary(DEFAULT_BRAND.primaryColor); setSecondary(DEFAULT_BRAND.secondaryColor); setBackground(DEFAULT_BRAND.backgroundColor); };
+
+  // ── Subscription (admin only) ──
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "superadmin";
+  const subStatus = business.subscriptionStatus;
+  const isVeraa = !!business.isVeraaClient || subStatus === "veraa";
+  const trialLeft = trialDaysLeft(business.trialStartedAt);
+  const trialFill = Math.max(0, Math.min(1, (3 - trialLeft) / 3));
+  const planLabel = business.selectedPlan === "annual" ? "Pricr Annual · $490/year" : business.selectedPlan === "monthly" ? "Pricr Monthly · $49/month" : "Pricr · Active";
+  const startCheckout = async (plan: PlanId) => {
+    const ok = await openCheckout(business.code, plan);
+    if (!ok) Alert.alert("Billing", "Billing isn't available yet — please try again shortly.");
+  };
+  const confirmCancel = () => Alert.alert(
+    "Cancel Subscription?",
+    "You'll keep access until the end of your current billing period.",
+    [{ text: "Keep Subscription", style: "cancel" }, { text: "Cancel Subscription", style: "destructive", onPress: () => openCustomerPortal(business.code) }],
+  );
   const save = async () => {
     try {
       await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms });
@@ -387,6 +405,66 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
             </TouchableOpacity>
           )}
         </View>
+
+        {/* SUBSCRIPTION (admin only) */}
+        {isAdmin && (
+          <View style={{ gap: 12 }}>
+            <Text style={s.sectionTitle}>SUBSCRIPTION</Text>
+            <View style={{ backgroundColor: B.card, borderWidth: 1, borderColor: B.border, borderRadius: 12, padding: 16, gap: 12 }}>
+              {isVeraa ? (
+                <>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Feather name="check-circle" size={18} color={B.green} />
+                    <Text style={{ color: B.white, fontSize: 16, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Included with Veraa</Text>
+                  </View>
+                  <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular", lineHeight: 19 }}>Pricr is included in your Veraa marketing plan. Contact Veraa to make changes.</Text>
+                </>
+              ) : subStatus === "trial" ? (
+                <>
+                  <Text style={{ color: B.white, fontSize: 16, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Free Trial</Text>
+                  <View style={{ height: 8, borderRadius: 4, backgroundColor: B.border, overflow: "hidden" }}>
+                    <View style={{ width: `${Math.round(trialFill * 100)}%`, height: 8, backgroundColor: pc }} />
+                  </View>
+                  <Text style={{ color: B.gray2, fontSize: 13, fontFamily: "DMSans_400Regular" }}>{trialLeft} day{trialLeft === 1 ? "" : "s"} remaining</Text>
+                  <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={() => startCheckout("monthly")}>
+                    <Text style={[s.btnText, { color: ON_PRIMARY }]}>Upgrade — $49/month →</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.btnSecondary, { borderColor: pc }]} onPress={() => startCheckout("annual")}>
+                    <Text style={[s.btnSecondaryText, { color: pc }]}>Upgrade — $490/year (Save $98) →</Text>
+                  </TouchableOpacity>
+                </>
+              ) : subStatus === "active" ? (
+                <>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ color: B.white, fontSize: 15, fontWeight: "700", fontFamily: "DMSans_700Bold", flex: 1 }}>{planLabel}</Text>
+                    <View style={{ backgroundColor: B.green + "22", borderRadius: 20, paddingVertical: 4, paddingHorizontal: 10 }}>
+                      <Text style={{ color: B.green, fontSize: 11, fontWeight: "800", letterSpacing: 0.5, fontFamily: "DMSans_700Bold" }}>ACTIVE</Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={() => openCustomerPortal(business.code)}>
+                    <Text style={[s.btnText, { color: ON_PRIMARY }]}>Manage Billing →</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.btnSecondary, { borderColor: B.border }]} onPress={confirmCancel}>
+                    <Text style={[s.btnSecondaryText, { color: "#EF4444" }]}>Cancel Subscription</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color: B.gray3, fontSize: 11, textAlign: "center", fontFamily: "DMSans_400Regular" }}>Billing is handled securely by Stripe</Text>
+                </>
+              ) : subStatus === "expired" ? (
+                <>
+                  <Text style={{ color: "#EF4444", fontSize: 16, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Subscription Ended</Text>
+                  <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={() => startCheckout("monthly")}>
+                    <Text style={[s.btnText, { color: ON_PRIMARY }]}>Reactivate — $49/month →</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.btnSecondary, { borderColor: pc }]} onPress={() => startCheckout("annual")}>
+                    <Text style={[s.btnSecondaryText, { color: pc }]}>Reactivate — $490/year →</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <Text style={{ color: B.gray2, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Pricr · Active</Text>
+              )}
+            </View>
+          </View>
+        )}
 
         <TouchableOpacity style={[s.btn, { backgroundColor: pc }]} onPress={onSavePress}>
           <Text style={[s.btnText, { color: ON_PRIMARY }]}>Save</Text>

@@ -1254,6 +1254,20 @@ async function handleCreateCheckoutSession(res, buf) {
     return sendJson(res, 200, { url: session.url, sessionId: session.id });
   } catch (e) { console.warn('[billing] checkout error:', e && e.message); return sendJson(res, 500, { error: 'checkout failed' }); }
 }
+// Stripe Customer Portal — lets a subscriber update payment, view invoices, switch plan, or cancel.
+async function handleCustomerPortal(res, buf) {
+  const stripe = getStripe();
+  if (!stripe) return sendJson(res, 503, { error: 'Billing not configured' });
+  const code = String(parseJsonBody(buf).businessCode || '');
+  try {
+    const sel = await supabaseRequest('GET', `/rest/v1/businesses?select=config,stripe_customer_id&code=eq.${encodeURIComponent(code)}`);
+    const row = Array.isArray(sel.json) && sel.json[0] ? sel.json[0] : null;
+    const customer = (row && (row.stripe_customer_id || (row.config && row.config.stripeCustomerId))) || '';
+    if (!customer) return sendJson(res, 404, { error: 'No billing account found' });
+    const session = await stripe.billingPortal.sessions.create({ customer, return_url: process.env.APP_URL || 'https://app.pricr.veraa.io' });
+    return sendJson(res, 200, { url: session.url });
+  } catch (e) { console.warn('[billing] portal error:', e && e.message); return sendJson(res, 500, { error: 'portal failed' }); }
+}
 async function handleStripeWebhook(req, res, rawBuf) {
   const stripe = getStripe();
   if (!stripe) return sendJson(res, 503, { error: 'Billing not configured' });
@@ -1367,6 +1381,7 @@ const server = http.createServer((req, res) => {
   // ── Billing (public — pre-signup / boot checks) ──
   if (path === '/billing/validate-promo' && req.method === 'POST') { readBody((buf) => handleValidatePromo(res, buf).catch(() => sendJson(res, 500, { error: 'validate failed' }))); return; }
   if (path === '/billing/create-checkout-session' && req.method === 'POST') { readBody((buf) => handleCreateCheckoutSession(res, buf).catch(() => sendJson(res, 500, { error: 'checkout failed' }))); return; }
+  if (path === '/billing/customer-portal' && req.method === 'POST') { readBody((buf) => handleCustomerPortal(res, buf).catch(() => sendJson(res, 500, { error: 'portal failed' }))); return; }
   if (path === '/billing/webhook' && req.method === 'POST') { readBody((buf) => handleStripeWebhook(req, res, buf).catch(() => sendJson(res, 500, { error: 'webhook failed' }))); return; }
   if (path === '/billing/status' && req.method === 'GET') {
     const code = new URLSearchParams((req.url || '').split('?')[1] || '').get('businessCode') || '';

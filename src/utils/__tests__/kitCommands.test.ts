@@ -84,6 +84,42 @@ describe("executeKitCommand", () => {
     expect(schema.addOns!.some(a => a.label === "Demolition" && a.price === 500)).toBe(true);
   });
 
+  test("fuzzy lookup: 'Frame Protection' resolves a parenthetical/camelCase field", () => {
+    const schema: QuoteSchema = {
+      trade: "Decking", pricing: { frameProtectionRate: 0.5, depositPercent: 50 }, addOns: [], calculation: "0", summaryLines: [],
+      fields: [{ id: "frameProtection", label: "Frame Protection ($0.50/sqft)", type: "number", unit: "sqft", group: "materials" }],
+      sections: [{ id: "components", name: "Deck Components & Trim", pattern: "MATERIAL_MEASUREMENT", allowMultiSelect: true, options: [
+        { id: "frameProtection", label: "Frame Protection ($0.50/sqft)", rate: 0.5, unit: "sqft" },
+      ] }],
+    };
+    const { schema: out, result } = executeKitCommand(schema, { type: "UPDATE_RATE", fieldIdentifier: "Frame Protection", newRate: 0.75 });
+    expect(result.success).toBe(true);
+    expect(out.pricing!.frameProtectionRate).toBe(0.75);
+  });
+
+  test("exact match wins over partial (no wrong-field match)", () => {
+    const schema: QuoteSchema = {
+      trade: "Decking", pricing: { depositPercent: 50 }, addOns: [], calculation: "0", summaryLines: [],
+      fields: [],
+      sections: [{ id: "s", name: "S", pattern: "MATERIAL_MEASUREMENT", allowMultiSelect: true, options: [
+        { id: "railing", label: "Railing", rate: 10, unit: "lf" },
+        { id: "railingPost", label: "Railing Post Upgrade", rate: 25, unit: "each" },
+      ] }],
+    };
+    const { schema: out, result } = executeKitCommand(schema, { type: "UPDATE_RATE", fieldIdentifier: "Railing", newRate: 12 });
+    expect(result.success).toBe(true);
+    // exact label "Railing" must update the railing option, NOT the partial "Railing Post Upgrade"
+    expect(out.sections![0].options!.find(o => o.id === "railing")!.rate).toBe(12);
+    expect(out.sections![0].options!.find(o => o.id === "railingPost")!.rate).toBe(25);
+  });
+
+  test("not-found error lists available fields", () => {
+    const { result } = executeKitCommand(legacySchema(), { type: "UPDATE_RATE", fieldIdentifier: "Nonexistent Thing", newRate: 9 });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Available fields:");
+    expect(result.error).toContain("Railing");
+  });
+
   test("NO_CHANGE returns the schema unchanged", () => {
     const before = legacySchema();
     const { schema, result } = executeKitCommand(before, { type: "NO_CHANGE" });

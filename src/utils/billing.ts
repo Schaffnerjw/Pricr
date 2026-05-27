@@ -1,5 +1,6 @@
 // Client billing helpers. Stripe Checkout opens in the browser (expo-web-browser) — no native SDK.
 // All secret-key work happens on the proxy; the client only calls these public proxy endpoints.
+import { Alert } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import { SIGN_BASE } from "../constants/brand";
 import { logger } from "./logger";
@@ -30,6 +31,26 @@ export async function openCheckout(businessCode: string, plan: PlanId = "monthly
     if (data?.url) { await WebBrowser.openBrowserAsync(data.url); return true; }
     return false;
   } catch (e) { logger.error("[billing] checkout open failed"); return false; }
+}
+
+// Open the Stripe Customer Portal (manage payment / invoices / cancel) for a business. Returns false
+// (and alerts) if billing isn't configured or there's no Stripe customer yet.
+export async function openCustomerPortal(businessCode: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${SIGN_BASE}/billing/customer-portal`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ businessCode }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.url) { await WebBrowser.openBrowserAsync(data.url); return true; }
+    }
+    Alert.alert("Billing", "Couldn't open billing portal. Try again.");
+    return false;
+  } catch (e) {
+    logger.error("[billing] portal open failed");
+    Alert.alert("Billing", "Couldn't open billing portal. Try again.");
+    return false;
+  }
 }
 
 // Boot-time subscription check. Falls back to a safe default (trial) if the server is unreachable.
