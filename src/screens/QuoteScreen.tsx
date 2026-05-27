@@ -21,7 +21,7 @@ import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typi
 import { evaluateCondition, evaluateFormula } from "../utils/formula";
 import { defaultAllowMultiSelect, deriveSections } from "../utils/buildSchemaFromVerified";
 import { applyKitSchemaUpdate } from "../utils/kitSchemaUpdate";
-import { applyKitSchemaDiff } from "../utils/applyKitSchemaDiff";
+import { applyKitSchemaDiff, KitSchemaDiff } from "../utils/applyKitSchemaDiff";
 import { fetchWithTimeout, isTimeout, KIT_TIMEOUT_MS } from "../utils/fetchTimeout";
 import { checkOnline } from "../hooks/useNetworkStatus";
 import { executeKitCommand } from "../utils/executeKitCommand";
@@ -31,6 +31,40 @@ import { humanSchemaSummary } from "../utils/schemaExtractor";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// Robustly extract a Kit SCHEMA_DIFF block: direct JSON → single-quote-repaired JSON → first {...}.
+// Returns null when no block is present or none of the strategies parse. Never throws.
+export function parseKitDiff(text: string): KitSchemaDiff | null {
+  const match = text.match(/SCHEMA_DIFF_START\s*([\s\S]*?)\s*SCHEMA_DIFF_END/);
+  // Tolerate a missing END marker: fall back to everything after START.
+  const raw = match ? match[1] : (/SCHEMA_DIFF_START/i.test(text) ? text.slice(text.search(/SCHEMA_DIFF_START/i) + "SCHEMA_DIFF_START".length) : null);
+  if (raw == null) return null;
+  const block = raw.replace(/```json/gi, "").replace(/```/g, "").trim();
+
+  // 1) Direct parse.
+  try { return JSON.parse(block) as KitSchemaDiff; } catch { /* try next */ }
+
+  // 2) Repair single-quoted JSON (the prompt's example uses single quotes).
+  try {
+    const fixed = block
+      .replace(/:\s*'([^']*)'/g, ': "$1"')
+      .replace(/,\s*'/g, ', "')
+      .replace(/\[\s*'/g, '["')
+      .replace(/'\s*\]/g, '"]')
+      .replace(/'\s*:/g, '":')
+      .replace(/{\s*'/g, '{"');
+    return JSON.parse(fixed) as KitSchemaDiff;
+  } catch { /* try next */ }
+
+  // 3) Extract the first complete { } object and parse that.
+  try {
+    const objMatch = block.match(/\{[\s\S]*\}/);
+    if (objMatch) return JSON.parse(objMatch[0]) as KitSchemaDiff;
+  } catch { /* fall through */ }
+
+  logger.error("[KitDiff] parse failed:", block.substring(0, 300));
+  return null;
 }
 
 export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, isDemoMode, initialValues, previewMode }: {
@@ -91,7 +125,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const onPrimary = ON_PRIMARY; // brand look: always white text/icons on the primary color
   const PILL_MAX = Platform.OS === "web" ? 180 : 140; // FIX 7: keep pills compact for long material names
   const { width: screenW } = useWindowDimensions();
-  const narrowCards = screenW < 380; // small phones → single-column section list
+  const narrowCards = screenW < 360; // small phones → single-column section list
   const COMPLETE_GREEN = "#22C55E";                   // FIX 3: section-complete accent
   const COMPLETE_TINT = "rgba(34,197,94,0.10)";       // subtle green card tint when a section is done
 
@@ -403,27 +437,16 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       const displayMessage = (markerIdx >= 0 ? reply.slice(0, markerIdx) : reply).replace(/```json/gi, "").replace(/```/g, "").trim();
 
       // 0) PREFERRED (conversational agent): a SCHEMA_DIFF block applied by applyKitSchemaDiff.
-      const diffStart = reply.search(/SCHEMA_DIFF_START/i);
-      if (diffStart >= 0) {
-        const afterDiff = reply.slice(diffStart + "SCHEMA_DIFF_START".length);
-        const diffEnd = afterDiff.search(/SCHEMA_DIFF_END/i);
-        const region = (diffEnd >= 0 ? afterDiff.slice(0, diffEnd) : afterDiff).replace(/```json/gi, "").replace(/```/g, "").trim();
-        const f = region.indexOf("{"), l = region.lastIndexOf("}");
-        const jsonStr = (f >= 0 && l > f) ? region.slice(f, l + 1) : "";
-        let diff: any = null;
-        if (jsonStr) {
-          try { diff = JSON.parse(jsonStr); }
-          catch {
-            // The prompt's diff example uses single quotes — tolerate single-quoted JSON.
-            try { diff = JSON.parse(jsonStr.replace(/'/g, '"')); }
-            catch (e2) { logger.error("[KitApply] SCHEMA_DIFF parse failed:", e2 instanceof Error ? e2.message : String(e2), "raw:", jsonStr.substring(0, 200)); }
-          }
-        }
+      logger.debug("[KitDiff] response contains diff:", reply.includes("SCHEMA_DIFF_START"));
+      if (/SCHEMA_DIFF_START/i.test(reply)) {
+        const diff = parseKitDiff(reply);
+        logger.debug("[KitDiff] parsed diff:", JSON.stringify(diff)?.substring(0, 200));
         if (diff) {
           const { schema: nextSchema, changes, errors } = applyKitSchemaDiff(schema, diff);
+          logger.debug("[KitDiff] apply result — changes:", changes);
+          logger.debug("[KitDiff] apply result — errors:", errors);
           const errLine = errors.length ? `${changes.length ? "\n" : ""}⚠️ Couldn't apply: ${errors.join(", ")}` : "";
           if (changes.length > 0) {
-            logger.debug("[KitApply] SCHEMA_DIFF applied:", changes.join("; "));
             await applyKitSchema(nextSchema, "diff");
             const changeLines = changes.map(c => `✓ ${c}`).join("\n");
             finish(`${displayMessage ? displayMessage + "\n\n" : ""}${changeLines}${errLine}`);
@@ -955,15 +978,13 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                     </PressableScale>
                   );
                 }
-                // Wide: fixed-height 2-column card so rows align regardless of name length.
+                // Wide: 2-column card. Status/+ icon is absolute top-right so it never overlaps the name.
                 return (
-                  <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ width: "47.5%", flexGrow: 1, minWidth: 150, height: 86, justifyContent: "space-between", backgroundColor: cardBg, borderColor: cardBorder, borderWidth: complete || on ? 2 : 1, borderRadius: 16, padding: 12 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                      <Feather name={iconFor(g.name)} size={20} color={complete ? COMPLETE_GREEN : primaryColor} />
-                      {statusIcon}
-                    </View>
-                    <Text numberOfLines={2} style={{ color: pal.text, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold", lineHeight: 15 }}>{g.name}</Text>
-                    <Text style={{ color: COMPLETE_GREEN, fontSize: 12, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{complete ? formatMoney(sub) : " "}</Text>
+                  <PressableScale key={g.id} onPress={() => toggleGroup(g)} style={{ width: "47.5%", flexGrow: 1, minWidth: 150, minHeight: 90, justifyContent: "space-between", backgroundColor: cardBg, borderColor: cardBorder, borderWidth: complete || on ? 2 : 1, borderRadius: 16, padding: 12, position: "relative" }}>
+                    {statusIcon ? <View style={{ position: "absolute", top: 12, right: 12 }}>{statusIcon}</View> : null}
+                    <Feather name={iconFor(g.name)} size={20} color={complete ? COMPLETE_GREEN : primaryColor} />
+                    <Text numberOfLines={2} ellipsizeMode="tail" style={{ color: pal.text, fontSize: 11, fontWeight: "700", fontFamily: "DMSans_700Bold", lineHeight: 14, paddingRight: 20, marginTop: 6 }}>{g.name}</Text>
+                    <Text style={{ color: COMPLETE_GREEN, fontSize: 12, fontWeight: "800", fontFamily: "Syne_700Bold", marginTop: 4 }}>{complete ? formatMoney(sub) : " "}</Text>
                   </PressableScale>
                 );
               })}
@@ -1131,7 +1152,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
             {/* Discount — optional, collapsed by default; available on every quote regardless of trade. */}
             {!readOnly && <View style={{ gap: 14 }}>
               {!discountOpen && t.discountAmount <= 0 ? (
-                <PressableScale onPress={() => setDiscountOpen(true)} style={s.qAddPill}>
+                <PressableScale onPress={() => setDiscountOpen(true)} style={[s.qAddPill, { backgroundColor: "transparent", borderColor: primaryColor }]}>
                   <Feather name="plus" size={16} color={primaryColor} />
                   <Text style={{ fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold", color: primaryColor }}>Add Discount</Text>
                 </PressableScale>
@@ -1247,7 +1268,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
 
               {/* Discount — always accessible on the negotiation screen */}
               {!discountOpen && t.discountAmount <= 0 ? (
-                <TouchableOpacity onPress={() => setDiscountOpen(true)} style={[s.qAddPill, { backgroundColor: pal.surface, borderColor: pal.border, alignSelf: "flex-start" }]}>
+                <TouchableOpacity onPress={() => setDiscountOpen(true)} style={[s.qAddPill, { backgroundColor: "transparent", borderColor: primaryColor, alignSelf: "flex-start" }]}>
                   <Feather name="tag" size={16} color={primaryColor} />
                   <Text style={{ fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold", color: primaryColor }}>Apply Discount</Text>
                 </TouchableOpacity>

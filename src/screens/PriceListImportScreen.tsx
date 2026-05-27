@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Easing, KeyboardAvoidingView, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
 import { API_URL, B } from "../constants/brand";
 import { PRICE_LIST_UNDERSTAND_PROMPT } from "../constants/prompts";
@@ -40,6 +40,88 @@ Examples of what works:
 Or paste a full price sheet — product tables, categories, everything.`;
 
 type Phase = "paste" | "loading" | "verify" | "editor" | "addons";
+
+// Educational content shown while the AI reads the price list — auto-advances every 6s, loops if
+// processing runs long. Stats are real industry averages, framed as such.
+const LOADING_CARDS: { icon: string; title: string; body: string }[] = [
+  { icon: "🔍", title: "Reading your price list...", body: "I'm analyzing every product, price, and category. You'll confirm everything before it saves." },
+  { icon: "📈", title: "Contractors close 3x more jobs on-site", body: "When a contractor presents and signs a quote in person, close rates jump from 20% to over 60%. Pricr makes that possible for every job." },
+  { icon: "⏱", title: "Save 8+ hours every week", body: "The average contractor spends 2 hours writing up each quote manually. Pricr brings that to under 5 minutes — giving you back a full day every week." },
+  { icon: "💰", title: "Average $47,000 more quoted annually", body: "Contractors using Pricr quote more jobs because it's faster. More quotes sent = more jobs closed. The math adds up fast." },
+  { icon: "✍️", title: "Close it before you leave the driveway", body: "Pricr's built-in e-signature is legally binding under the E-SIGN Act. Clients sign on their phone while you're still on site — no chasing people down later." },
+  { icon: "🤖", title: "Kit is your AI business advisor", body: "After setup, Kit stays available 24/7. Ask it anything — pricing strategy, terms and conditions, follow-up messages, or to update your rates instantly." },
+  { icon: "🔄", title: "Show clients options in real time", body: "Tap 'Compare options' on any material to show the client what different choices cost for their exact job — all calculated instantly. Upgrades sell themselves." },
+  { icon: "⚡", title: "Almost ready...", body: "Your quote tool is being built with your exact pricing. You'll review and confirm everything before it saves — nothing goes live without your approval." },
+];
+
+// Full-screen educational loading experience: spinning brand ring, decelerating progress bar (never
+// reaches 100% while waiting, never goes backward), and crossfading content cards that loop.
+function ImportLoadingScreen({ primaryColor, backgroundColor }: { primaryColor: string; backgroundColor?: string }) {
+  const [index, setIndex] = useState(0);
+  const fade = useRef(new Animated.Value(1)).current;
+  const spin = useRef(new Animated.Value(0)).current;
+  const progress = useRef(new Animated.Value(0)).current;
+
+  // Continuous spin for the ring.
+  useEffect(() => {
+    const loop = Animated.loop(Animated.timing(spin, { toValue: 1, duration: 1200, easing: Easing.linear, useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [spin]);
+
+  // Progress fills fast early, decelerates, and is capped below 100% so it never sits stuck at full
+  // while the request is still in flight (the screen unmounts the instant the import completes).
+  useEffect(() => {
+    const anim = Animated.timing(progress, { toValue: 0.92, duration: 60000, easing: Easing.out(Easing.cubic), useNativeDriver: false });
+    anim.start();
+    return () => anim.stop();
+  }, [progress]);
+
+  // Crossfade to the next card every 6s; loops back to the first after the last.
+  useEffect(() => {
+    const id = setInterval(() => {
+      Animated.timing(fade, { toValue: 0, duration: 250, easing: Easing.in(Easing.quad), useNativeDriver: true }).start(() => {
+        setIndex(i => (i + 1) % LOADING_CARDS.length);
+        Animated.timing(fade, { toValue: 1, duration: 250, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+      });
+    }, 6000);
+    return () => clearInterval(id);
+  }, [fade]);
+
+  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+  const barWidth = progress.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] });
+  const card = LOADING_CARDS[index];
+
+  return (
+    <SafeAreaView style={[styles.c, backgroundColor ? { backgroundColor } : null]}>
+      <View style={[styles.center, { gap: 0 }]}>
+        <PricrLogo />
+        {/* Spinning ring in the brand color */}
+        <Animated.View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 4, borderColor: primaryColor + "30", borderTopColor: primaryColor, marginTop: 36, transform: [{ rotate }] }} />
+        <Text style={{ color: B.white, fontSize: 22, fontWeight: "800", fontFamily: "Syne_800ExtraBold", marginTop: 28, textAlign: "center" }}>Building your quote tool...</Text>
+
+        {/* Progress bar */}
+        <View style={{ width: 240, height: 6, borderRadius: 3, backgroundColor: B.border, overflow: "hidden", marginTop: 18 }}>
+          <Animated.View style={{ height: 6, borderRadius: 3, backgroundColor: primaryColor, width: barWidth }} />
+        </View>
+
+        {/* Crossfading content card */}
+        <Animated.View style={{ opacity: fade, alignItems: "center", marginTop: 40, minHeight: 200 }}>
+          <Text style={{ fontSize: 48, textAlign: "center" }}>{card.icon}</Text>
+          <Text style={{ color: primaryColor, fontSize: 20, fontWeight: "800", fontFamily: "Syne_700Bold", textAlign: "center", marginTop: 16 }}>{card.title}</Text>
+          <Text style={{ color: B.muted, fontSize: 15, lineHeight: 22, fontFamily: "DMSans_400Regular", textAlign: "center", maxWidth: 280, marginTop: 10 }}>{card.body}</Text>
+        </Animated.View>
+
+        {/* Dot indicators */}
+        <View style={{ flexDirection: "row", gap: 7, marginTop: 28 }}>
+          {LOADING_CARDS.map((_, i) => (
+            <View key={i} style={{ width: i === index ? 18 : 7, height: 7, borderRadius: 4, backgroundColor: i === index ? primaryColor : B.border }} />
+          ))}
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
 
 export function PriceListImportScreen({ primaryColor, backgroundColor, initialText, resume, onComplete, onBack, onEnterManually }: {
   primaryColor: string; backgroundColor?: string; initialText?: string; resume?: boolean;
@@ -83,15 +165,17 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     const inputLength = text.length;
     const maxTokens = inputLength < 2000 ? 4000
       : inputLength < 5000 ? 8000
-        : inputLength < 10000 ? 12000
-          : 16000;
+        : inputLength < 7000 ? 12000
+          : inputLength < 10000 ? 16000
+            : 20000;
     logger.debug("[Import] input length:", inputLength, "max_tokens:", maxTokens);
     const payload = { model: "claude-sonnet-4-5", max_tokens: maxTokens, system: PRICE_LIST_UNDERSTAND_PROMPT, messages: [{ role: "user", content: text }] };
     const payloadStr = JSON.stringify(payload);
     logger.debug("[Import] Phase 1 starting, request size:", payloadStr.length);
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60000); // 60s ceiling so it can't hang forever
+    // Import gets a generous 90s ceiling (large price lists are slow); Kit chat keeps its own 30s.
+    const timer = setTimeout(() => controller.abort(), 90000);
     try {
       const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: payloadStr, signal: controller.signal });
       clearTimeout(timer);
@@ -147,7 +231,7 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     } catch (e: any) {
       clearTimeout(timer);
       let msg = "Couldn't read your price list automatically. You can enter your pricing manually instead.";
-      if (e?.name === "AbortError") msg = "This is taking too long — try again.";
+      if (e?.name === "AbortError") msg = "This is taking longer than expected. Check your connection and try again — large price lists can take up to 90 seconds.";
       else if (e instanceof ImportError) msg = e.message;
       else if (e instanceof TypeError) msg = "Connection failed — check your internet and try again.";
       logger.error("[Import] Phase 1 failed:", e?.name || "Error", "-", e?.message || String(e));
@@ -184,17 +268,9 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     onComplete(schema, text);
   };
 
-  // ── LOADING ──
+  // ── LOADING (educational experience) ──
   if (phase === "loading") {
-    return (
-      <SafeAreaView style={[styles.c, backgroundColor ? { backgroundColor } : null]}>
-        <View style={styles.center}>
-          <PricrLogo />
-          <ActivityIndicator size="large" color={primaryColor} style={{ marginTop: 36 }} />
-          <Text style={{ color: primaryColor, fontSize: 16, marginTop: 24, fontFamily: "DMSans_600SemiBold" }}>Reading your price list...</Text>
-        </View>
-      </SafeAreaView>
-    );
+    return <ImportLoadingScreen primaryColor={primaryColor} backgroundColor={backgroundColor} />;
   }
 
   const nav = (title: string, onBackPress: () => void) => (

@@ -210,7 +210,9 @@ function pageShell(title, bodyHtml, extraHead = '') {
   .hd{background:#0A0E1A;color:#fff;padding:28px 22px;border-bottom:4px solid var(--accent,#2979FF);text-align:center;}
   .hd img{max-height:42px;max-width:200px;display:block;margin-bottom:8px;}
   .hd .biz{font-size:24px;font-weight:800;letter-spacing:-.4px;}
-  .logo-circle{width:80px;height:80px;border-radius:50%;object-fit:cover;background:#fff;margin:0 auto 12px;display:block;border:3px solid var(--accent,#2979FF);}
+  .business-logo{width:100px;height:100px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#fff;border:3px solid rgba(0,0,0,0.08);margin:0 auto 16px;}
+  .business-logo img{width:100%;height:100%;object-fit:contain;padding:8px;}
+  .business-logo-fallback{width:100px;height:100px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:36px;font-weight:800;color:#fff;font-family:sans-serif;}
   .tagline{font-size:13px;color:#94A3B8;margin-top:4px;}
   .rating{font-size:13px;color:#FACC15;margin-top:8px;font-weight:600;}
   .rating span{color:#94A3B8;font-weight:400;}
@@ -339,7 +341,12 @@ function signingPage(token, quote, business, signedCount = 0) {
   const paySec = payMethods.length
     ? `<div class="sec"><div class="lbl">Payment Methods Accepted</div><div class="pay">${esc(payMethods.join(', '))}</div></div>`
     : '';
-  const header = (logo ? `<img class="logo-circle" src="${esc(logo)}" alt="${esc(bizName)}"/>` : '')
+  // Logo: contained inside a circular white frame (never cropped); falls back to the business initial.
+  const initial = esc((bizName || '?').trim().charAt(0).toUpperCase() || '?');
+  const logoBlock = logo
+    ? `<div class="business-logo"><img src="${esc(logo)}" alt="${esc(bizName)}"/></div>`
+    : `<div class="business-logo-fallback" style="background:${esc(accent)};">${initial}</div>`;
+  const header = logoBlock
     + `<div class="biz">${esc(bizName)}</div>`
     + (tagline ? `<div class="tagline">${esc(tagline)}</div>` : '')
     + `<div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733; <span>Trusted contractor</span></div>`;
