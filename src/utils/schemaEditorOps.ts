@@ -1,10 +1,14 @@
 // Pure, deterministic operations for the manual Schema Editor (Settings only). Each returns a NEW
 // schema (never mutates input) and never throws. Field-adding ops delegate to the already-tested
 // applyKitSchemaDiff so the editor and Kit write through the exact same vetted mutators.
-import { QuoteSchema, SchemaField, SchemaVersion, SchemaVersionSource } from "../types";
+import { QuoteSchema, SchemaField, SchemaVersion, SchemaVersionSource, User } from "../types";
 import { SchemaOption } from "../types/schema";
+import { isAdminRole } from "../hooks/useIsAdmin";
 import { applyKitSchemaDiff } from "./applyKitSchemaDiff";
 import { slugId } from "./helpers";
+
+// Only admins/superadmins may edit the quote tool — the editor renders a permission gate otherwise.
+export const canEditSchema = (user?: Pick<User, "role"> | null): boolean => isAdminRole(user);
 
 // "Something you measure" → a number field priced per unit.
 export function addMeasurementField(schema: QuoteSchema, name: string, rate: number, unit: string): QuoteSchema {

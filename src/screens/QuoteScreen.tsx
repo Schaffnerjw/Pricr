@@ -467,6 +467,14 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       })();
       const displayMessage = (markerIdx >= 0 ? reply.slice(0, markerIdx) : reply).replace(/```json/gi, "").replace(/```/g, "").trim();
 
+      // Admin gate: reps can chat with Kit, but Kit can never APPLY a schema change for them. If a
+      // change block came back, drop it and explain. Informational replies (no marker) pass through.
+      if (markerIdx >= 0 && !isAdmin) {
+        finish(`${displayMessage ? displayMessage + "\n\n" : ""}Only account admins can make changes to the quote tool. Ask your account owner to make this change.`);
+        setAgentLoading(false);
+        return;
+      }
+
       // 0) PREFERRED (conversational agent): a SCHEMA_DIFF block applied by applyKitSchemaDiff.
       logger.debug("[KitDiff] response contains diff:", reply.includes("SCHEMA_DIFF_START"));
       if (/SCHEMA_DIFF_START/i.test(reply)) {
@@ -1267,7 +1275,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       </KeyboardAvoidingView>
 
       {showTotal && !readOnly && (
-        <ClosingCard schema={presentationSchema} business={business} primaryColor={primaryColor} customerName={customerName} notes={notes.trim() || undefined} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} onSaveTemplate={onSaveTemplate ? saveTemplate : undefined} onDuplicate={() => { setShowTotal(false); setCustomerName(""); setNotes(""); setLastSavedId(null); setSaved(false); }} />
+        <ClosingCard schema={presentationSchema} business={business} primaryColor={primaryColor} customerName={customerName} notes={notes.trim() || undefined} totals={t} selectedAddOns={selectedAddOns} discount={{ amount: t.discountAmount, reason: discountReason.trim() }} paymentMethods={resolvePaymentMethods(business.paymentMethods)} saved={saved} onSave={onSavePress} prepareShare={prepareShare} onSign={handleSign} termsAndConditions={business.termsAndConditions} onClose={() => setShowTotal(false)} onNewQuote={handleNewQuote} onSaveTemplate={onSaveTemplate && isAdmin ? saveTemplate : undefined} onDuplicate={() => { setShowTotal(false); setCustomerName(""); setNotes(""); setLastSavedId(null); setSaved(false); }} />
       )}
 
       {/* ── Section overview / negotiation screen — review subtotals, edit any section, see the live total ── */}

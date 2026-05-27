@@ -21,6 +21,7 @@ import { RepJoinScreen } from "../src/screens/RepJoinScreen";
 import { SettingsScreen } from "../src/screens/SettingsScreen";
 import { SchemaEditorScreen } from "../src/screens/SchemaEditorScreen";
 import { ThemeProvider } from "../src/contexts/ThemeContext";
+import { AppProvider } from "../src/contexts/AppContext";
 import { pushSchemaVersion } from "../src/utils/schemaEditorOps";
 import { SetUsernameScreen } from "../src/screens/SetUsernameScreen";
 import { SetupScreen } from "../src/screens/SetupScreen";
@@ -128,13 +129,24 @@ export default function Index() {
     setBusiness(updated);
     try { await saveBusiness(updated); } catch (e) { logger.warn("[template] save failed", e instanceof Error ? e.message : String(e)); }
   };
-  // Commit a manual schema edit: records a version (last 5) + persists. Re-derives sections on load.
-  const onSaveSchemaEdit = async (nextSchema: QuoteSchema, source: "Manual edit" | "Kit" | "Import" = "Manual edit") => {
-    if (!business) return;
-    const versions = pushSchemaVersion(business.schemaVersions, business.schema ?? nextSchema, source === "Manual edit" ? "Manual edit" : source);
-    const updated: Business = { ...business, schema: nextSchema, schemaVersions: versions, kitUpdates: (business.kitUpdates || 0) + 1 };
-    setBusiness(updated);
-    try { await saveBusiness(updated); } catch (e) { logger.warn("[schema] manual save failed", e instanceof Error ? e.message : String(e)); }
+  // Auto-save a manual schema edit (no version, no navigation — fires on every change in the editor).
+  const onSchemaEditorChange = (nextSchema: QuoteSchema) => {
+    setBusiness(prev => {
+      if (!prev) return prev;
+      const updated: Business = { ...prev, schema: nextSchema, kitUpdates: (prev.kitUpdates || 0) + 1 };
+      saveBusiness(updated).catch(e => logger.warn("[schema] auto-save failed", e instanceof Error ? e.message : String(e)));
+      return updated;
+    });
+  };
+  // Open the manual editor — first snapshot the current schema as a restore point (version history).
+  const openSchemaEditor = () => {
+    setBusiness(prev => {
+      if (!prev?.schema) return prev;
+      const updated: Business = { ...prev, schemaVersions: pushSchemaVersion(prev.schemaVersions, prev.schema, "Manual edit") };
+      saveBusiness(updated).catch(() => { });
+      return updated;
+    });
+    setScreen("schema_editor");
   };
   // Dashboard "New Quote" → blank, or start from a saved template (P5).
   const openNewQuote = () => {
@@ -150,7 +162,7 @@ export default function Index() {
   const openConfigureQuoteTool = () => {
     Alert.alert("Configure Quote Tool", "How would you like to set up your quote tool?", [
       { text: "Chat with Kit", onPress: () => { setSettingsFocusTerms(false); startSetupChoice(true); } },
-      { text: "Edit manually", onPress: () => setScreen("schema_editor") },
+      { text: "Edit manually", onPress: openSchemaEditor },
       { text: "Import price sheet", onPress: () => { setIsReconfiguring(true); setScreen("import"); } },
       { text: "Cancel", style: "cancel" },
     ]);
@@ -653,9 +665,8 @@ export default function Index() {
       schema={business.schema}
       primaryColor={primaryColor}
       versions={business.schemaVersions}
-      onSave={(ns) => { onSaveSchemaEdit(ns); setScreen("settings"); }}
+      onChange={onSchemaEditorChange}
       onBack={() => setScreen("settings")}
-      onRestore={(ns) => onSaveSchemaEdit(ns)}
       onAskKit={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
     />
   );
@@ -669,7 +680,7 @@ export default function Index() {
       onSignOut={handleSignOut}
       onViewSigningActivity={isSupabaseConfigured && !isDemoMode ? () => { setSettingsFocusTerms(false); setScreen("pipeline"); } : undefined}
       onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
-      onEditSchema={business.schema ? () => setScreen("schema_editor") : undefined}
+      onEditSchema={business.schema ? openSchemaEditor : undefined}
       onApplyVeraa={async (code) => {
         const updated: Business = { ...business!, isVeraaClient: true, subscriptionStatus: "veraa", partnerCodeUsed: code };
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }
@@ -959,5 +970,5 @@ export default function Index() {
     />
   );
   })();
-  return <ThemeProvider brand={business?.brand}>{content}</ThemeProvider>;
+  return <ThemeProvider brand={business?.brand}><AppProvider currentUser={currentUser}>{content}</AppProvider></ThemeProvider>;
 }
