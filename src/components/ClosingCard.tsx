@@ -289,7 +289,7 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
                   {/* Legally-binding trust badge — tap for details */}
                   <TouchableOpacity onPress={() => setLegalModalOpen(true)} style={{ flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: theme.dividerColor, borderRadius: 10, padding: 12 }}>
                     <Feather name="shield" size={16} color={primaryColor} />
-                    <Text style={{ flex: 1, color: theme.valueColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>🔒 Legally binding e-signature — E-SIGN Act compliant</Text>
+                    <Text style={{ flex: 1, color: theme.valueColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Legally binding e-signature — E-SIGN Act compliant</Text>
                     <Feather name="info" size={15} color={theme.lineColor} />
                   </TouchableOpacity>
                   {/* Optional Pay Now — only when the business configured payment passthrough. Opens the
@@ -312,9 +312,10 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
                 <View style={{ gap: 10 }}>
                   {/* Trust badges */}
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                    {["🔒 256-bit encrypted", "✓ E-SIGN compliant", "📋 Audit logged"].map(b => (
-                      <View key={b} style={{ borderWidth: 1, borderColor: theme.dividerColor, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 10 }}>
-                        <Text style={{ color: theme.lineColor, fontSize: 11, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{b}</Text>
+                    {[{ icon: "lock", label: "256-bit encrypted" }, { icon: "check", label: "E-SIGN compliant" }, { icon: "clipboard", label: "Audit logged" }].map(b => (
+                      <View key={b.label} style={{ flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: theme.dividerColor, borderRadius: 20, paddingVertical: 5, paddingHorizontal: 10 }}>
+                        <Feather name={b.icon as any} size={11} color={theme.lineColor} />
+                        <Text style={{ color: theme.lineColor, fontSize: 11, fontWeight: "600", fontFamily: "DMSans_600SemiBold" }}>{b.label}</Text>
                       </View>
                     ))}
                   </View>

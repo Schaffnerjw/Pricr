@@ -6,8 +6,8 @@ import { s } from "../styles";
 import { QuoteSchema } from "../types";
 import { ON_PRIMARY } from "../utils/colorUtils";
 import { addCalculatedField, addMeasurementField, addSelectField, addToggleField } from "../utils/schemaEditorOps";
+import { CommonField, commonFieldsForTrade, AddType } from "../data/commonFields";
 
-type AddType = "measure" | "yesno" | "pickone" | "calculated";
 const UNITS = ["sq ft", "lf", "hour", "each", "flat"];
 const FIELD_TEMPLATES: { label: string; type: AddType; rate: number; unit: string }[] = [
   { label: "Permit", type: "yesno", rate: 200, unit: "flat" },
@@ -20,13 +20,16 @@ const FIELD_TEMPLATES: { label: string; type: AddType; rate: number; unit: strin
 // Reusable "add a field" bottom sheet — used by the Settings schema editor AND the in-quote editor.
 // Self-contained: it owns the type-card + quick-setup flow, computes the new schema via the tested
 // pure ops, and hands it back via onApply (the caller persists / auto-saves).
-export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply }: {
+export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply, trade }: {
   visible: boolean;
   onClose: () => void;
   primaryColor: string;
   schema: QuoteSchema;
   onApply: (next: QuoteSchema) => void;
+  trade?: string;          // resolves trade-specific Common Fields; falls back to schema.trade
 }) {
+  const tradeKey = trade ?? schema.trade;
+  const commonFields = commonFieldsForTrade(tradeKey);
   const th = useTheme();
   const [addType, setAddType] = useState<AddType | null>(null);
   const [fName, setFName] = useState("");
@@ -38,6 +41,18 @@ export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply 
   const reset = () => { setAddType(null); setFName(""); setFRate(""); setFUnit("sq ft"); setFLinked(""); setFOptions(""); };
   const close = () => { reset(); onClose(); };
   const applyTemplate = (t: typeof FIELD_TEMPLATES[number]) => { setAddType(t.type); setFName(t.label); setFRate(String(t.rate)); setFUnit(t.unit); };
+  // Drop a trade-specific Common Field straight into the schema (blank price + placeholder hint).
+  // Goes through the same schemaEditorOps the Quick Setup flow uses → fully first-class.
+  const dropCommon = (c: CommonField) => {
+    let next = schema;
+    if (c.type === "measure") next = addMeasurementField(schema, c.label, c.rate, c.unit);
+    else if (c.type === "yesno") next = addToggleField(schema, c.label, c.rate);
+    else if (c.type === "calculated") next = addCalculatedField(schema, c.label, "", c.rate);
+    else if (c.type === "pickone") next = addSelectField(schema, c.label, c.options || [{ label: "Option 1", rate: c.rate, unit: c.unit }]);
+    // Attach the placeholder hint ("e.g. $75") to the just-added field so the rep sees it in the quote.
+    if (c.placeholder) next = { ...next, fields: (next.fields || []).map(f => f.label === c.label ? { ...f, placeholder: c.placeholder } : f) };
+    onApply(next); close();
+  };
   const commit = () => {
     const name = fName.trim(); if (!name) return;
     const rate = Number(fRate) || 0;
@@ -78,6 +93,19 @@ export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply 
                     </View>
                   </TouchableOpacity>
                 ))}
+                {commonFields.length > 0 && (
+                  <>
+                    <Text style={{ color: th.textMuted, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold", marginTop: 4 }}>COMMON FOR YOUR TRADE</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                      {commonFields.map(c => (
+                        <TouchableOpacity key={c.label} onPress={() => dropCommon(c)} style={{ flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: primaryColor, backgroundColor: primaryColor + "15", borderRadius: 20, paddingVertical: 8, paddingHorizontal: 14 }}>
+                          <Feather name="plus" size={13} color={primaryColor} />
+                          <Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{c.label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </>
+                )}
                 <Text style={{ color: th.textMuted, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold", marginTop: 4 }}>OR A COMMON FIELD</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                   {FIELD_TEMPLATES.map(t => (

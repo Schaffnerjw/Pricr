@@ -43,15 +43,16 @@ type Phase = "paste" | "loading" | "confirm" | "verify" | "editor" | "addons";
 
 // Educational content shown while the AI reads the price list — auto-advances every 6s, loops if
 // processing runs long. Stats are real industry averages, framed as such.
+// Feather icon names (no emoji in UI chrome). Rendered with <Feather/> below.
 const LOADING_CARDS: { icon: string; title: string; body: string }[] = [
-  { icon: "🔍", title: "Reading your price list...", body: "I'm analyzing every product, price, and category. You'll confirm everything before it saves." },
-  { icon: "📈", title: "Contractors close 3x more jobs on-site", body: "When a contractor presents and signs a quote in person, close rates jump from 20% to over 60%. Pricr makes that possible for every job." },
-  { icon: "⏱", title: "Save 8+ hours every week", body: "The average contractor spends 2 hours writing up each quote manually. Pricr brings that to under 5 minutes — giving you back a full day every week." },
-  { icon: "💰", title: "Average $47,000 more quoted annually", body: "Contractors using Pricr quote more jobs because it's faster. More quotes sent = more jobs closed. The math adds up fast." },
-  { icon: "✍️", title: "Close it before you leave the driveway", body: "Pricr's built-in e-signature is legally binding under the E-SIGN Act. Clients sign on their phone while you're still on site — no chasing people down later." },
-  { icon: "🤖", title: "Kit is your AI business advisor", body: "After setup, Kit stays available 24/7. Ask it anything — pricing strategy, terms and conditions, follow-up messages, or to update your rates instantly." },
-  { icon: "🔄", title: "Show clients options in real time", body: "Tap 'Compare options' on any material to show the client what different choices cost for their exact job — all calculated instantly. Upgrades sell themselves." },
-  { icon: "⚡", title: "Almost ready...", body: "Your quote tool is being built with your exact pricing. You'll review and confirm everything before it saves — nothing goes live without your approval." },
+  { icon: "search", title: "Reading your price list…", body: "I'm analyzing every product, price, and category. You'll confirm everything before it saves." },
+  { icon: "trending-up", title: "Contractors close 3x more jobs on-site", body: "When a contractor presents and signs a quote in person, close rates jump from 20% to over 60%. Pricr makes that possible for every job." },
+  { icon: "clock", title: "Save 8+ hours every week", body: "The average contractor spends 2 hours writing up each quote manually. Pricr brings that to under 5 minutes — giving you back a full day every week." },
+  { icon: "dollar-sign", title: "Average $47,000 more quoted annually", body: "Contractors using Pricr quote more jobs because it's faster. More quotes sent = more jobs closed. The math adds up fast." },
+  { icon: "edit-3", title: "Close it before you leave the driveway", body: "Pricr's built-in e-signature is legally binding under the E-SIGN Act. Clients sign on their phone while you're still on site — no chasing people down later." },
+  { icon: "message-circle", title: "Kit is your AI business advisor", body: "After setup, Kit stays available 24/7. Ask it anything — pricing strategy, terms and conditions, follow-up messages, or to update your rates instantly." },
+  { icon: "refresh-cw", title: "Show clients options in real time", body: "Tap 'Compare options' on any material to show the client what different choices cost for their exact job — all calculated instantly. Upgrades sell themselves." },
+  { icon: "zap", title: "Almost ready…", body: "Your quote tool is being built with your exact pricing. You'll review and confirm everything before it saves — nothing goes live without your approval." },
 ];
 
 // Full-screen educational loading experience: spinning brand ring, decelerating progress bar (never
@@ -107,7 +108,8 @@ function ImportLoadingScreen({ primaryColor, backgroundColor }: { primaryColor: 
 
         {/* Crossfading content card */}
         <Animated.View style={{ opacity: fade, alignItems: "center", marginTop: 40, minHeight: 200 }}>
-          <Text style={{ fontSize: 48, textAlign: "center" }}>{card.icon}</Text>
+          <Feather name={card.icon as any} size={48} color={primaryColor} />
+
           <Text style={{ color: primaryColor, fontSize: 20, fontWeight: "800", fontFamily: "Syne_700Bold", textAlign: "center", marginTop: 16 }}>{card.title}</Text>
           <Text style={{ color: B.muted, fontSize: 15, lineHeight: 22, fontFamily: "DMSans_400Regular", textAlign: "center", maxWidth: 280, marginTop: 10 }}>{card.body}</Text>
         </Animated.View>

@@ -143,12 +143,13 @@ export function computeBusinessAnalytics(all: SavedQuote[]): BusinessAnalytics {
 
   // Milestone badges (show up to 3, most impressive first).
   const badges: Badge[] = [];
-  if (streakDays >= 2) badges.push({ icon: "🔥", label: `${streakDays} day streak` });
-  if (revNow >= 10000) badges.push({ icon: "💰", label: "First $10K month" });
-  if (fastestCloseMin != null && fastestCloseMin > 0) badges.push({ icon: "⚡", label: `Fastest close: ${fastestCloseMin} min` });
+  // Feather icon names (chrome rendered with <Feather name={b.icon}/> — never emoji on the brag card).
+  if (streakDays >= 2) badges.push({ icon: "zap", label: `${streakDays} day streak` });
+  if (revNow >= 10000) badges.push({ icon: "dollar-sign", label: "First $10K month" });
+  if (fastestCloseMin != null && fastestCloseMin > 0) badges.push({ icon: "clock", label: `Fastest close: ${fastestCloseMin} min` });
   const thisYear = quotes.filter(q => new Date(q.timestamp).getFullYear() === now.getFullYear()).length;
-  if (thisYear >= 10) badges.push({ icon: "🏆", label: `${thisYear} quotes this year` });
-  if (sentPrev > 0 && sentNow > sentPrev) badges.push({ icon: "📈", label: `${changePct(sentNow, sentPrev)}% better than last month` });
+  if (thisYear >= 10) badges.push({ icon: "award", label: `${thisYear} quotes this year` });
+  if (sentPrev > 0 && sentNow > sentPrev) badges.push({ icon: "trending-up", label: `${changePct(sentNow, sentPrev)}% better than last month` });
 
   return {
     loading: false, totalQuoted: Math.round(totalQuoted), quotesAllTime, quotesThisMonth,

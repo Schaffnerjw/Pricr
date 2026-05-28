@@ -103,7 +103,7 @@ export function StatsScreen({ business, onBack, onBuildQuote }: { business: Busi
       ) : a.quotesAllTime === 0 ? (
         // Encouraging empty state for brand-new accounts (zeros look broken).
         <ScrollView contentContainerStyle={{ padding: 24, gap: 18, alignItems: "center", paddingTop: 48 }}>
-          <Text style={{ fontSize: 44 }}>🎯</Text>
+          <Feather name="target" size={44} color={primary} />
           <Text style={{ color: text, fontSize: 20, fontWeight: "800", fontFamily: "Syne_700Bold", textAlign: "center" }}>Your stats will appear here after your first quote</Text>
           <Text style={{ color: muted, fontSize: 14, fontFamily: "DMSans_400Regular", textAlign: "center" }}>Most contractors see results within their first week.</Text>
           <View style={{ backgroundColor: pal.surface, borderColor: pal.border, borderWidth: 1, borderRadius: 16, padding: 18, gap: 8, width: "100%", marginTop: 4 }}>
@@ -150,8 +150,9 @@ export function StatsScreen({ business, onBack, onBuildQuote }: { business: Busi
             {a.badges.length > 0 && (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
                 {a.badges.map(b => (
-                  <View key={b.label} style={{ backgroundColor: primary, borderRadius: 20, paddingVertical: 6, paddingHorizontal: 12 }}>
-                    <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{b.icon} {b.label}</Text>
+                  <View key={b.label} style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: primary, borderRadius: 20, paddingVertical: 6, paddingHorizontal: 12 }}>
+                    <Feather name={b.icon as any} size={12} color="#FFFFFF" />
+                    <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{b.label}</Text>
                   </View>
                 ))}
               </View>
