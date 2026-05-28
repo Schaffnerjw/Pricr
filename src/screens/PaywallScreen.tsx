@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, BackHandler, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, BackHandler, Platform, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
 import { B } from "../constants/brand";
 import { s } from "../styles";
@@ -80,19 +80,40 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
   // server confirms the code was claimed — otherwise two contractors could share the same code.
   // Confirmation-gated escape paths so a stray tap doesn't nuke a signup mid-Stripe-redirect or
   // bounce a user out of a paid-once account. Neither path admits past the paywall.
+  //
+  // CRITICAL: Alert.alert is a no-op on react-native-web — its callbacks NEVER fire. The
+  // initial Batch B wiring used Alert.alert unconditionally, which made these links visibly
+  // dead on web (tap → nothing). The fix branches on Platform.OS: web uses window.confirm
+  // (synchronous, actually renders + waits for the user); native keeps Alert.alert with its
+  // proper destructive/cancel styling.
   const handleCancelSignup = () => {
     if (!onCancelSignup) return;
+    const fire = () => { onCancelSignup().catch(() => { /* parent surfaces failure */ }); };
+    if (Platform.OS === "web") {
+      const ok = typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm("Cancel signup?\n\nThis will cancel your signup and you'll need to start over. Continue?")
+        : false;
+      if (ok) fire();
+      return;
+    }
     Alert.alert(
       "Cancel signup?",
       "This will cancel your signup and you'll need to start over. Continue?",
       [
         { text: "Keep signing up", style: "cancel" },
-        { text: "Cancel signup", style: "destructive", onPress: () => { onCancelSignup().catch(() => { /* parent surfaces failure */ }); } },
+        { text: "Cancel signup", style: "destructive", onPress: fire },
       ],
     );
   };
   const handleSignOut = () => {
     if (!onSignOut) return;
+    if (Platform.OS === "web") {
+      const ok = typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm("Sign out?\n\nYou'll need to sign back in to access your account. You can resubscribe from the login screen.")
+        : false;
+      if (ok) onSignOut();
+      return;
+    }
     Alert.alert(
       "Sign out?",
       "You'll need to sign back in to access your account. You can resubscribe from the login screen.",
