@@ -655,7 +655,13 @@ export default function Index() {
     setBusiness(updatedBiz);
     setSchemaWarning(null);
     setIsReconfiguring(false);
-    if (!isBlankSchema(schemaToSave)) { try { for (const q of sampleQuotes(schemaToSave)) await addQuote(updatedBiz.code, q); } catch { } }
+    // Sample Quote 1/2/3 history-seeding is a DEMO-MODE-ONLY guided-tour aid. Previously fired
+    // for every business after schema commit → real contractors who'd sent one $900 quote saw
+    // fake $31k/$45k/$72k samples polluting their history (and their analytics dashboards).
+    // Gated to the magic "DEMO" business code so it stays out of real accounts.
+    if (!isBlankSchema(schemaToSave) && updatedBiz.code === "DEMO") {
+      try { for (const q of sampleQuotes(schemaToSave)) await addQuote(updatedBiz.code, q); } catch { /* best-effort seeding */ }
+    }
     setPendingSchema(null);
     clearImportProgress();
     setJustBuilt(true);
@@ -875,6 +881,16 @@ export default function Index() {
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }
         setBusiness(updated);
         setScreen(updated.schema ? "done" : "choose_setup");
+      }}
+      onSignOut={handleSignOut}
+      onCancelSignup={async () => {
+        // Discards the pending (unpaid) business and signs out. Critical: this MUST NOT bypass
+        // the gate — handleSignOut routes to "welcome", and the business row is deleted so a
+        // subsequent login can't somehow re-admit it. The Stripe-side state is untouched (no
+        // customer/subscription was ever created — the user never made it past the redirect).
+        const codeToDiscard = business.code;
+        try { await deleteBusiness(codeToDiscard); } catch (e) { logger.warn("[signup] discard business failed", e instanceof Error ? e.message : String(e)); }
+        await handleSignOut();
       }}
     />
   );

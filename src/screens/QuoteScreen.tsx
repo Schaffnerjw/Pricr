@@ -27,6 +27,7 @@ import { reorderFields } from "../utils/schemaEditorOps";
 import { applyKitSchemaDiff, KitSchemaDiff } from "../utils/applyKitSchemaDiff";
 import { decideKitDiffResponse } from "../utils/kitResponseRenderer";
 import { sendQuoteLink } from "../utils/sendQuoteLink";
+import { jobNotesPlaceholderForTrade } from "../data/commonFields";
 import { KitSchemaUpdate, legacyKitUpdateToDiff } from "../utils/legacyKitUpdateToDiff";
 import { fetchWithTimeout, isTimeout, KIT_TIMEOUT_MS } from "../utils/fetchTimeout";
 import { checkOnline } from "../hooks/useNetworkStatus";
@@ -1273,7 +1274,7 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
                 <Text style={[s.fieldLabel, { color: pal.textMuted }]}>JOB NOTES (OPTIONAL)</Text>
                 <TextInput
                   style={{ backgroundColor: pal.surface, color: pal.text, borderColor: pal.border, borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: Platform.OS === "ios" ? 12 : 8, fontFamily: "DMSans_400Regular", fontSize: 15, minHeight: 44, maxHeight: 96 }}
-                  placeholder="e.g. Customer wants TimberTech in Mocha color, gate on south side, deck off master bedroom"
+                  placeholder={jobNotesPlaceholderForTrade(schema?.trade)}
                   placeholderTextColor={pal.textMuted}
                   value={notes}
                   onChangeText={t => setNotes(t.slice(0, 500))}

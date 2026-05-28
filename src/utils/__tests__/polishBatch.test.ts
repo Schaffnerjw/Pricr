@@ -39,7 +39,9 @@ describe("common fields per trade in AddFieldSheet", () => {
     expect(tradeIdFromName("Deck Building")).toBe("decks");
     expect(tradeIdFromName("Construction")).toBe("construction");
     expect(tradeIdFromName("Handyman")).toBe("handyman");
-    expect(tradeIdFromName("Cleaning")).toBe("generic");
+    // Cleaning + other trades got their own buckets (Batch B) so they no longer fall through to
+    // generic. tradeIdFromName now resolves the major service trades directly.
+    expect(tradeIdFromName("Cleaning")).toBe("cleaning");
     expect(tradeIdFromName(undefined)).toBe("generic");
   });
 
@@ -56,7 +58,13 @@ describe("common fields per trade in AddFieldSheet", () => {
     const ct = commonFieldsForTrade("Construction").map(c => c.label);
     expect(ct).toEqual(expect.arrayContaining(["Architect fee passthrough", "Engineering fee", "Demolition disposal"]));
 
-    expect(commonFieldsForTrade("Other")).toEqual([]); // Generic gets only the basic chip types
+    // Generic fallback (Batch B): an unrecognized trade gets agnostic chips, not an empty array.
+    // The previous empty-array behavior surfaced deck-only "OR A COMMON FIELD" pills to every
+    // non-deck trade in AddFieldSheet — those hardcoded pills are gone and the agnostic chips
+    // now cover the fallback case.
+    const fb = commonFieldsForTrade("Other").map(c => c.label);
+    expect(fb.length).toBeGreaterThanOrEqual(6);
+    expect(fb).toEqual(expect.arrayContaining(["Travel fee", "Materials markup", "Permit"]));
   });
 
   test("common field drops in with blank price and placeholder", () => {

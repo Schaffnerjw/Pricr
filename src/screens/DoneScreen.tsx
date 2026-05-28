@@ -353,12 +353,13 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
           </TouchableOpacity>
         )}
 
-        {/* Admin-only tertiary — small text links */}
+        {/* Admin-only tertiary — single "Settings" link. The previous separate "Reconfigure with
+            Kit" link was redundant with the Configure Quote Tool bottom sheet above (which already
+            offers "Ask Kit" as its top option), and surfaced the same flow twice in the dashboard
+            footer. Kit is still reachable from inside the configure flow via the bottom-sheet
+            "Ask Kit" option AND the KitIntroBubble that's mounted globally below. */}
         {isAdmin && (
-          <View style={{ flexDirection: "row", justifyContent: "center", gap: 24, marginTop: 4 }}>
-            <TouchableOpacity onPress={onReconfigure}>
-              <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Reconfigure with Kit</Text>
-            </TouchableOpacity>
+          <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 4 }}>
             <TouchableOpacity onPress={onOpenSettings}>
               <Text style={{ color: pal.textMuted, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Settings</Text>
             </TouchableOpacity>

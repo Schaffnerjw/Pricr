@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, BackHandler, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, BackHandler, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import PricrLogo from "../components/PricrLogo";
 import { B } from "../constants/brand";
 import { s } from "../styles";
@@ -21,7 +21,7 @@ const FEATURES = [
 // Both modes now poll for webhook confirmation after Stripe checkout — the user only leaves the gate
 // once the server confirms `trialing` (card captured) or `active`. Closing the Stripe tab without
 // paying leaves the user on this screen.
-export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onSelectPlan, onVeraaApplied, onContinue, onPaid, cancelled }: {
+export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onSelectPlan, onVeraaApplied, onContinue, onPaid, cancelled, onSignOut, onCancelSignup }: {
   businessCode: string;
   primaryColor: string;
   mode?: "signup" | "expired";              // "signup" = first time; "expired" = post-trial. Differs in copy only.
@@ -31,6 +31,11 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
   onContinue?: () => void;                   // continue mid-trial without paying yet
   onPaid?: (status: SubscriptionStatus) => void; // server confirmed checkout completed (trialing/active) → leave the gate
   cancelled?: boolean;                       // returned from Stripe via the cancel URL
+  // Escape paths. CRITICAL: neither admits the user past the paywall — both route to login.
+  // signup mode: discards the pending business (no value — never paid) and signs out.
+  // expired mode: keeps the account intact and signs out (lets them switch accounts on shared device).
+  onSignOut?: () => void;
+  onCancelSignup?: () => Promise<void>;
 }) {
   const [showPromo, setShowPromo] = useState(false);
   const [promo, setPromo] = useState("");
@@ -73,6 +78,31 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
 
   // Veraa codes: validate (read-only), then mark used server-side. Only call onVeraaApplied once the
   // server confirms the code was claimed — otherwise two contractors could share the same code.
+  // Confirmation-gated escape paths so a stray tap doesn't nuke a signup mid-Stripe-redirect or
+  // bounce a user out of a paid-once account. Neither path admits past the paywall.
+  const handleCancelSignup = () => {
+    if (!onCancelSignup) return;
+    Alert.alert(
+      "Cancel signup?",
+      "This will cancel your signup and you'll need to start over. Continue?",
+      [
+        { text: "Keep signing up", style: "cancel" },
+        { text: "Cancel signup", style: "destructive", onPress: () => { onCancelSignup().catch(() => { /* parent surfaces failure */ }); } },
+      ],
+    );
+  };
+  const handleSignOut = () => {
+    if (!onSignOut) return;
+    Alert.alert(
+      "Sign out?",
+      "You'll need to sign back in to access your account. You can resubscribe from the login screen.",
+      [
+        { text: "Stay signed in", style: "cancel" },
+        { text: "Sign out", onPress: onSignOut },
+      ],
+    );
+  };
+
   const applyPromo = async () => {
     const code = promo.trim().toUpperCase();
     if (!code) return;
@@ -203,6 +233,22 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
         {trialDays != null && trialDays > 0 && onContinue && (
           <TouchableOpacity onPress={onContinue} style={{ alignItems: "center", paddingVertical: 6 }}>
             <Text style={{ color: B.gray2, fontSize: 14, fontFamily: "DMSans_600SemiBold" }}>Continue — {trialDays} day{trialDays === 1 ? "" : "s"} left in trial</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Escape paths — kept visually muted so they're not mistaken for the "Continue" upsell.
+            Signup mode: "Cancel signup" → confirmation → discards the pending business + signs
+            out → login. Expired mode: "Sign out" → confirmation → signs out (account intact) →
+            login. Neither admits past the gate; both are the only safe ways out for a user who
+            opened the paywall without intent to pay. */}
+        {mode === "signup" && onCancelSignup && (
+          <TouchableOpacity onPress={handleCancelSignup} style={{ alignItems: "center", paddingVertical: 10, marginTop: 6 }}>
+            <Text style={{ color: B.gray3, fontSize: 13, fontFamily: "DMSans_600SemiBold", textDecorationLine: "underline" }}>Cancel signup</Text>
+          </TouchableOpacity>
+        )}
+        {mode === "expired" && onSignOut && (
+          <TouchableOpacity onPress={handleSignOut} style={{ alignItems: "center", paddingVertical: 10, marginTop: 6 }}>
+            <Text style={{ color: B.gray3, fontSize: 13, fontFamily: "DMSans_600SemiBold", textDecorationLine: "underline" }}>Sign out</Text>
           </TouchableOpacity>
         )}
       </ScrollView>

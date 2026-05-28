@@ -104,9 +104,13 @@ export function buildTheme(brand: BrandConfig): AppTheme {
   };
 }
 
-// Preset brand palettes offered in Settings. [primary, secondary, background].
+// Preset brand palettes offered in Settings. [primary, secondary, background]. "Pricr Light"
+// is the signup default (clean light surface, Pricr-blue accent); "Pricr Dark" is the same
+// palette inverted. Hemma stays available as a selectable preset — it was the old default but
+// it's a real client's brand, so it shouldn't bleed into other accounts that didn't pick it.
 export interface ThemePreset { name: string; primary: string; secondary: string; background: string }
 export const THEME_PRESETS: ThemePreset[] = [
+  { name: "Pricr Light", primary: "#2979FF", secondary: "#00C2D1", background: "#F8FAFC" },
   { name: "Pricr Dark", primary: "#2979FF", secondary: "#00E5FF", background: "#0A0E1A" },
   { name: "Hemma", primary: "#BC6C25", secondary: "#DDA15E", background: "#FFFADF" },
   { name: "Forest", primary: "#2D6A4F", secondary: "#95D5B2", background: "#081C15" },

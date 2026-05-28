@@ -11,13 +11,6 @@ import { CommonField, commonFieldsForTrade, AddType } from "../data/commonFields
 // Generic-engine unit list: covers per-time (day/week/month), per-unit (each/sq ft/linear ft),
 // project-based, hourly, and flat — so the Generic template handles any service shape.
 const UNITS = ["each", "hour", "day", "week", "month", "project", "sq ft", "linear ft", "flat"];
-const FIELD_TEMPLATES: { label: string; type: AddType; rate: number; unit: string }[] = [
-  { label: "Permit", type: "yesno", rate: 200, unit: "flat" },
-  { label: "Demo", type: "yesno", rate: 500, unit: "flat" },
-  { label: "Delivery", type: "yesno", rate: 150, unit: "flat" },
-  { label: "Labor", type: "measure", rate: 75, unit: "hour" },
-  { label: "Stairs", type: "yesno", rate: 800, unit: "flat" },
-];
 
 // Reusable "add a field" bottom sheet — used by the Settings schema editor AND the in-quote editor.
 // Self-contained: it owns the type-card + quick-setup flow, computes the new schema via the tested
@@ -42,7 +35,6 @@ export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply,
 
   const reset = () => { setAddType(null); setFName(""); setFRate(""); setFUnit("sq ft"); setFLinked(""); setFOptions(""); };
   const close = () => { reset(); onClose(); };
-  const applyTemplate = (t: typeof FIELD_TEMPLATES[number]) => { setAddType(t.type); setFName(t.label); setFRate(String(t.rate)); setFUnit(t.unit); };
   // Drop a trade-specific Common Field straight into the schema (blank price + placeholder hint).
   // Goes through the same schemaEditorOps the Quick Setup flow uses → fully first-class.
   const dropCommon = (c: CommonField) => {
@@ -108,20 +100,12 @@ export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply,
                     </ScrollView>
                   </>
                 )}
-                <Text style={{ color: th.textMuted, fontSize: 12, fontWeight: "700", fontFamily: "DMSans_700Bold", marginTop: 4 }}>OR A COMMON FIELD</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                  {FIELD_TEMPLATES.map(t => (
-                    <TouchableOpacity key={t.label} onPress={() => applyTemplate(t)} style={{ borderWidth: 1, borderColor: primaryColor, borderRadius: 20, paddingVertical: 8, paddingHorizontal: 14 }}>
-                      <Text style={{ color: primaryColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{t.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
               </>
             ) : (
               <>
                 <View style={{ gap: 6 }}>
                   <Text style={[s.formLabel, { color: th.textMuted }]}>What&apos;s it called?</Text>
-                  <TextInput style={[s.input, { backgroundColor: th.surface, color: th.text, borderColor: th.border }]} value={fName} onChangeText={setFName} placeholder="e.g. Stairs" placeholderTextColor={th.textMuted} autoFocus />
+                  <TextInput style={[s.input, { backgroundColor: th.surface, color: th.text, borderColor: th.border }]} value={fName} onChangeText={setFName} placeholder="e.g. Travel fee" placeholderTextColor={th.textMuted} autoFocus />
                 </View>
                 {addType === "pickone" ? (
                   <View style={{ gap: 6 }}>
