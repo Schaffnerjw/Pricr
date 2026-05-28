@@ -38,16 +38,19 @@ export interface KitSchemaDiff {
 
 const lower = (s?: string) => (s || "").toLowerCase().trim();
 
-// Deep-enough clone of the parts a diff can touch (mirrors executeKitCommand.cloneSchema).
+// Deep-enough clone of the parts a diff can touch. Preserves input shape (does not fatten
+// absent optional keys into empty arrays / undefined values) so callers comparing schemas
+// see byte-for-byte the same structure they passed in.
 function cloneSchema(s: QuoteSchema): QuoteSchema {
-  return {
+  const out: QuoteSchema = {
     ...s,
-    fields: (s.fields || []).map(f => ({ ...f, options: f.options ? [...f.options] : f.options })),
+    fields: (s.fields || []).map(f => (f.options !== undefined ? { ...f, options: [...f.options] } : { ...f })),
     pricing: { ...(s.pricing || {}) },
     addOns: (s.addOns || []).map(a => ({ ...a })),
     summaryLines: (s.summaryLines || []).map(l => ({ ...l })),
-    sections: (s.sections || []).map(sec => ({ ...sec, options: (sec.options || []).map(o => ({ ...o })) })),
   };
+  if (s.sections !== undefined) out.sections = s.sections.map(sec => ({ ...sec, options: (sec.options || []).map(o => ({ ...o })) }));
+  return out;
 }
 
 // Tiered fuzzy lookup (exact id → exact label → normalized id → normalized label → partial). Returns

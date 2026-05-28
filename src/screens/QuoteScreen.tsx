@@ -24,8 +24,8 @@ import { AddFieldSheet } from "../components/AddFieldSheet";
 import { DragHandle } from "../components/DragHandle";
 import { EditableFieldRow } from "../components/EditableFieldRow";
 import { reorderFields } from "../utils/schemaEditorOps";
-import { applyKitSchemaUpdate } from "../utils/kitSchemaUpdate";
 import { applyKitSchemaDiff, KitSchemaDiff } from "../utils/applyKitSchemaDiff";
+import { KitSchemaUpdate, legacyKitUpdateToDiff } from "../utils/legacyKitUpdateToDiff";
 import { fetchWithTimeout, isTimeout, KIT_TIMEOUT_MS } from "../utils/fetchTimeout";
 import { checkOnline } from "../hooks/useNetworkStatus";
 import { executeKitCommand } from "../utils/executeKitCommand";
@@ -630,15 +630,19 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         const f = region.indexOf("{"), l = region.lastIndexOf("}");
         const jsonStr = (f >= 0 && l > f) ? region.slice(f, l + 1) : "";
         logger.debug("[KitApply] raw block found:", region.substring(0, 200));
-        let update: any = null;
-        try { update = jsonStr ? JSON.parse(jsonStr) : null; }
+        let update: KitSchemaUpdate | null = null;
+        try { update = jsonStr ? (JSON.parse(jsonStr) as KitSchemaUpdate) : null; }
         catch (e) { logger.error("[KitApply] JSON parse failed:", e instanceof Error ? e.message : String(e), "raw:", jsonStr.substring(0, 200)); }
         if (update) {
-          const result = applyKitSchemaUpdate(schema, update);
-          if (result.changed) {
+          // Route the legacy SCHEMA_UPDATE action through the unified kernel (applyKitSchemaDiff),
+          // preserving UNIT_MAP/TYPE_MAP normalization in the adapter so persisted unit/type
+          // strings stay identical to the old path.
+          const diff = legacyKitUpdateToDiff(update);
+          const result = diff ? applyKitSchemaDiff(schema, diff) : { schema, changes: [], errors: [] };
+          if (result.changes.length > 0) {
             logger.debug("[KitApply] calling setSchema with updated schema");
             await applyKitSchema(result.schema, "diff");
-            finish(displayMessage || `✓ ${result.summary}.`);
+            finish(displayMessage || `✓ ${result.changes[0]}.`);
           } else {
             logger.debug("[KitApply] field not found — not applied");
             finish(displayMessage || "I couldn't find that field to change — which one did you mean?");
