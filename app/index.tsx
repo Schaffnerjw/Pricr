@@ -718,8 +718,8 @@ export default function Index() {
       }}
       scrollToTerms={settingsFocusTerms}
       onBack={() => { setSettingsFocusTerms(false); setScreen("done"); }}
-      onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification, quoteExpiryDays }) => {
-        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification, quoteExpiryDays };
+      onSave={async ({ name, brand, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification, quoteExpiryDays, payment }) => {
+        const updated = { ...business!, name, brand, brandConfigured: true, termsAndConditions, docPrefs, paymentMethods, notificationEmail, requireSmsVerification, quoteExpiryDays, payment };
         await saveBusiness(updated); // throws on failure → SettingsScreen surfaces it; local state only updates on success
         setBusiness(updated);
       }}

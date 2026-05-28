@@ -50,7 +50,7 @@ function HexColorRow({ label, helper, initial, valid, onCommit }: { label: strin
 export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, onEditSchema, onApplyVeraa, scrollToTerms }: {
   business: Business;
   currentUser?: User;
-  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number }) => void | Promise<void>;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number; payment?: import("../types").PaymentConfig }) => void | Promise<void>;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
   onSignOut?: () => void;
@@ -72,6 +72,12 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const [notificationEmail, setNotificationEmail] = useState(business.notificationEmail ?? business.brand.email ?? "");
   const [requireSms, setRequireSms] = useState(business.requireSmsVerification !== false); // default ON
   const [expiryDays, setExpiryDays] = useState(business.quoteExpiryDays === undefined ? 30 : business.quoteExpiryDays); // 0 = Never
+  // Optional payment passthrough — fully OFF by default. Pricr never touches the money; the link
+  // opens the contractor's own provider (QuickBooks/Square/PayPal/Stripe/Venmo/…).
+  const [payProvider, setPayProvider] = useState<import("../types").PaymentProvider>((business.payment?.provider as import("../types").PaymentProvider) || "none");
+  const [payLink, setPayLink] = useState(business.payment?.link || "");
+  const [payInstructions, setPayInstructions] = useState(business.payment?.instructions || "");
+  const [payEnabled, setPayEnabled] = useState(!!business.payment?.enabled);
   const [dp, setDp] = useState<DocPrefs>(resolveDocPrefs(business.docPrefs));
   const [kitOpen, setKitOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -149,7 +155,12 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   );
   const save = async () => {
     try {
-      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms, quoteExpiryDays: expiryDays });
+      // Apply the toggle gate (canEnablePayment) one more time at save: enabled can only be true if a link exists.
+      const trimmedLink = payLink.trim();
+      const paymentToSave = (payProvider !== "none" || trimmedLink || payInstructions.trim() || payEnabled)
+        ? { enabled: payEnabled && !!trimmedLink, provider: payProvider, link: trimmedLink || undefined, instructions: payInstructions.trim() || undefined }
+        : undefined;
+      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms, quoteExpiryDays: expiryDays, payment: paymentToSave });
       setEditingTerms(false);
       setToast(true);
       setTimeout(() => setToast(false), 1600);
@@ -472,6 +483,51 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
             </TouchableOpacity>
           )}
         </View>
+
+        {/* PAYMENTS (optional, admin only) — contractor's own provider; OFF by default; Pricr never
+            touches the money. The Pay button on signed quotes opens the contractor's payment link. */}
+        {isAdmin && (
+          <View style={{ gap: 12 }}>
+            <Text style={s.sectionTitle}>PAYMENTS (OPTIONAL)</Text>
+            <View style={{ backgroundColor: B.card, borderWidth: 1, borderColor: B.border, borderRadius: 12, padding: 16, gap: 12 }}>
+              <Text style={{ color: B.white, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Collect payments through your own provider</Text>
+              <Text style={{ color: B.muted, fontSize: 13, lineHeight: 19, fontFamily: "DMSans_400Regular" }}>Already use QuickBooks, Square, PayPal, or another processor? Add your payment link and Pricr will show a Pay button on signed quotes. Money goes straight to your existing account. Totally optional — skip it if you&apos;re not ready.</Text>
+
+              <View style={{ gap: 6 }}>
+                <Text style={s.formLabel}>Provider</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {(["none", "quickbooks", "square", "paypal", "stripe", "venmo", "cashapp", "other"] as const).map(p => {
+                    const active = payProvider === p;
+                    const label = p === "none" ? "None" : p === "quickbooks" ? "QuickBooks" : p === "cashapp" ? "Cash App" : p[0].toUpperCase() + p.slice(1);
+                    return (
+                      <TouchableOpacity key={p} onPress={() => setPayProvider(p)} style={{ borderWidth: 1, borderColor: active ? pc : B.border, backgroundColor: active ? pc : "transparent", borderRadius: 18, paddingVertical: 6, paddingHorizontal: 12 }}>
+                        <Text style={{ color: active ? ON_PRIMARY : B.gray2, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>{label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={{ gap: 6 }}>
+                <Text style={s.formLabel}>Payment link</Text>
+                <TextInput style={s.input} placeholder="Paste your payment or invoice link" placeholderTextColor={B.gray3} value={payLink} onChangeText={setPayLink} autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+              </View>
+
+              <View style={{ gap: 6 }}>
+                <Text style={s.formLabel}>Instructions (shown above the Pay button)</Text>
+                <TextInput style={s.input} placeholder="e.g. Pay 50% deposit to confirm your install date" placeholderTextColor={B.gray3} value={payInstructions} onChangeText={setPayInstructions} multiline />
+              </View>
+
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderTopWidth: 1, borderTopColor: B.border, paddingTop: 12 }}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={{ color: B.white, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>Show Pay button on signed quotes</Text>
+                  <Text style={{ color: B.muted, fontSize: 12, fontFamily: "DMSans_400Regular", marginTop: 2 }}>{payLink.trim() ? "Pricr never touches the money — opens your link." : "Add a payment link above to enable this."}</Text>
+                </View>
+                <Switch value={payEnabled && !!payLink.trim()} disabled={!payLink.trim()} onValueChange={setPayEnabled} trackColor={{ true: pc, false: B.border }} thumbColor={B.white} />
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* SUBSCRIPTION (admin only) */}
         {isAdmin && (

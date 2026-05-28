@@ -198,6 +198,32 @@ export function QuotesHistoryScreen({ businessId, isAdmin, onBack, accentColor, 
               <Text style={[s.btnSecondaryText, { color: accent }]}>Duplicate this quote</Text>
             </TouchableOpacity>
           )}
+          {/* Contractor-only manual payment status (Pricr can't auto-detect external payments). Tracking
+              only — never gates the quote. */}
+          {isAdmin && (() => {
+            const ps = (selected.quote_data?.paymentStatus as "none" | "deposit_paid" | "paid_full" | undefined) || "none";
+            const setPaid = (next: "none" | "deposit_paid" | "paid_full") => updateQuoteData(selected.id, { paymentStatus: next, paymentDate: next === "none" ? null : Date.now() });
+            return (
+              <View style={{ gap: 8 }}>
+                <Text style={[s.sectionTitle, { color: pal.textMuted }]}>PAYMENT STATUS</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {([
+                    { v: "none" as const, label: "Unpaid" },
+                    { v: "deposit_paid" as const, label: "Deposit paid" },
+                    { v: "paid_full" as const, label: "Paid in full" },
+                  ]).map(opt => {
+                    const on = ps === opt.v;
+                    return (
+                      <TouchableOpacity key={opt.v} onPress={() => setPaid(opt.v)} style={{ borderWidth: 1, borderColor: on ? accent : pal.border, backgroundColor: on ? accent : "transparent", borderRadius: 18, paddingVertical: 7, paddingHorizontal: 12 }}>
+                        <Text style={{ color: on ? ON_PRIMARY : pal.textMuted, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={{ color: pal.textMuted, fontSize: 11, fontFamily: "DMSans_400Regular" }}>Internal tracking only — does not affect quote validity.</Text>
+              </View>
+            );
+          })()}
           {isAdmin && (
             <View style={{ gap: 10 }}>
               <Text style={[s.sectionTitle, { color: pal.textMuted }]}>UPDATE STATUS</Text>

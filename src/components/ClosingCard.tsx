@@ -1,4 +1,6 @@
 import { Feather } from "@expo/vector-icons";
+import * as WebBrowser from "expo-web-browser";
+import { shouldShowPayButton } from "../utils/paymentConfig";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Animated, Dimensions, Image, Modal, Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import SignaturePad from "./SignaturePad";
@@ -290,6 +292,21 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
                     <Text style={{ flex: 1, color: theme.valueColor, fontSize: 13, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>🔒 Legally binding e-signature — E-SIGN Act compliant</Text>
                     <Feather name="info" size={15} color={theme.lineColor} />
                   </TouchableOpacity>
+                  {/* Optional Pay Now — only when the business configured payment passthrough. Opens the
+                      contractor's own link (QuickBooks/Square/PayPal/etc.); Pricr never touches money. */}
+                  {(() => {
+                    const link = shouldShowPayButton(business.payment);
+                    if (!link) return null;
+                    return (
+                      <View style={{ gap: 6, marginTop: 4 }}>
+                        {business.payment?.instructions ? <Text style={{ color: theme.lineColor, fontSize: 12, fontFamily: "DMSans_400Regular" }}>{business.payment.instructions}</Text> : null}
+                        <TouchableOpacity style={[s.btn, { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: primaryColor }]} onPress={() => { WebBrowser.openBrowserAsync(link).catch(() => {}); }}>
+                          <Feather name="credit-card" size={18} color={B.white} />
+                          <Text style={s.btnText}>Pay Now</Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })()}
                 </View>
               ) : (
                 <View style={{ gap: 10 }}>

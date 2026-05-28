@@ -25,7 +25,19 @@ export interface Business { code: string; name: string; ownerName: string; owner
   // can have child "location" businesses; a "single" business stands alone.
   locationType?: "single" | "headquarters" | "location"; parentBusinessCode?: string; locationName?: string; childLocationCodes?: string[];
   // Saved quote templates + schema version history (both stored in config jsonb — no migration).
-  quoteTemplates?: QuoteTemplate[]; schemaVersions?: SchemaVersion[]; }
+  quoteTemplates?: QuoteTemplate[]; schemaVersions?: SchemaVersion[];
+  // Optional payment passthrough — contractor's own provider (QuickBooks/Square/PayPal/Stripe/Venmo/…).
+  // FULLY optional: OFF by default; quote tool builds/sends/signs without any payment setup. Pricr never
+  // touches the money — the Pay button just opens the contractor's existing payment link in a browser.
+  payment?: PaymentConfig; }
+
+export type PaymentProvider = "quickbooks" | "square" | "paypal" | "stripe" | "venmo" | "cashapp" | "other" | "none";
+export interface PaymentConfig {
+  enabled: boolean;       // can only be true once `link` is set; defaults to false
+  provider?: PaymentProvider;
+  link?: string;          // contractor's own payment/invoice link
+  instructions?: string;  // e.g. "Pay 50% deposit to confirm your install date"
+}
 
 // A saved quote configuration the rep can start a new quote from.
 export interface QuoteTemplate { id: string; name: string; fieldValues: Record<string, any>; activeSections?: Record<string, boolean>; selectedAddOns?: string[]; createdAt: number; }
@@ -78,6 +90,9 @@ export type QuoteOutcome = "won" | "lost" | "expired" | "cancelled";
 export type LostReason = "too_expensive" | "competitor" | "project_cancelled" | "no_response" | "other";
 export interface SavedQuote { id: string; timestamp: number; customerName: string; trade: string; total: number; deposit: number; fieldValues: Record<string,any>; userId: string; repName: string; isSample?: boolean; status?: QuoteStatus; signatureData?: string; signedAt?: number; presentation?: QuotePresentation; discount?: QuoteDiscount; expiresAt?: number; firstViewedAt?: number; viewCount?: number; notes?: string;
   // Win/loss tracking — `outcome` is set automatically on sign (won) or recorded by the contractor.
-  outcome?: QuoteOutcome; lostReason?: LostReason; lostNote?: string; }
+  outcome?: QuoteOutcome; lostReason?: LostReason; lostNote?: string;
+  // Contractor-only manual payment status (Pricr can't auto-detect external payments). Tracking only —
+  // NEVER gates anything (quote validity is independent of payment state).
+  paymentStatus?: "none" | "deposit_paid" | "paid_full"; paymentAmount?: number; paymentDate?: number; }
 export interface DemoBusiness { name: string; trade: string; color: string; emoji: string; tagline: string; phone: string; schema: QuoteSchema; }
 export interface CardTheme { cardBg: string; cardBorder: string; bizColor: string; customerColor: string; lineColor: string; valueColor: string; dividerColor: string; totalColor: string; depositBg: string; depositBorder: string; depositLabelColor: string; depositAmountColor: string; }

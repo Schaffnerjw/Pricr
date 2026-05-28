@@ -63,14 +63,15 @@ export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply 
             </View>
             {!addType ? (
               <>
+                {/* Canonical icon set (Feather) — no emoji in UI chrome. */}
                 {([
-                  { t: "measure", icon: "📐", title: "I measure something", hint: "sq feet, linear feet" },
-                  { t: "yesno", icon: "☑️", title: "Include it or not", hint: "permit, delivery" },
-                  { t: "pickone", icon: "🔘", title: "Pick from a list", hint: "material type" },
-                  { t: "calculated", icon: "🔗", title: "Calculates from another", hint: "protection × sq footage" },
+                  { t: "measure", icon: "maximize-2", title: "I measure something", hint: "sq feet, linear feet" },
+                  { t: "yesno", icon: "check-square", title: "Include it or not", hint: "permit, delivery" },
+                  { t: "pickone", icon: "list", title: "Pick from a list", hint: "material type" },
+                  { t: "calculated", icon: "link", title: "Calculates from another", hint: "protection × sq footage" },
                 ] as const).map(c => (
                   <TouchableOpacity key={c.t} onPress={() => setAddType(c.t)} style={{ minHeight: 64, backgroundColor: th.surface, borderColor: th.border, borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 14 }}>
-                    <Text style={{ fontSize: 26 }}>{c.icon}</Text>
+                    <Feather name={c.icon} size={22} color={primaryColor} />
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: th.text, fontSize: 15, fontWeight: "800", fontFamily: "DMSans_700Bold" }}>{c.title}</Text>
                       <Text style={{ color: th.textMuted, fontSize: 12, fontFamily: "DMSans_400Regular" }}>{c.hint}</Text>
