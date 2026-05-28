@@ -53,18 +53,3 @@ export interface SchemaSection {
   allowMultiSelect: boolean; // explicit — set at import/wizard time, never inferred from the name
 }
 
-// The strict schema. `sections` drives the pricing engine; the legacy fields are optional and only
-// present on demo / pre-migration schemas so they keep calculating via the deprecated formula path.
-export interface StrictQuoteSchema {
-  trade: string;
-  businessName?: string;
-  sections: SchemaSection[];
-  addOns: AddOnDefinition[];
-  depositPercent: number;
-  taxRate?: number;
-  minimumCharge?: number;
-  // Legacy fields kept for demo compatibility:
-  pricing?: Record<string, number>;
-  calculation?: string;
-  fields?: LegacyField[];
-}

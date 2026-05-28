@@ -116,7 +116,6 @@ export async function saveKitChatHistory(code: string, messages: KitChatMessage[
   }
   try { await AsyncStorage.setItem(KIT_CHAT_KEY(code), JSON.stringify(trimmed)); } catch { }
 }
-export async function clearKitChatHistory(code: string): Promise<void> { try { await AsyncStorage.removeItem(KIT_CHAT_KEY(code)); } catch { } }
 
 // ── businesses ────────────────────────────────────────────────────────────────
 export async function getBusiness(code: string): Promise<Business|null> {

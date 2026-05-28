@@ -189,14 +189,6 @@ export function computeTotals(schema: any, fieldValues: Record<string, any>, add
   return { subtotal, discountAmount, taxRate, tax, rawTotal, minimum, belowMin, total, depositPct, deposit, ctx, lineItems: [], hasErrors: false, valid: !error, error };
 }
 
-export function monthlyQuoteTotal(quotes: SavedQuote[]): number {
-  const now = new Date();
-  return (quotes || [])
-    .filter(q => !q.isSample)
-    .filter(q => { const d = new Date(q.timestamp); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
-    .reduce((sum, q) => sum + (q.total || 0), 0);
-}
-
 // Average ± 1 std dev of real (non-sample) quote totals. Null if fewer than 3 exist.
 export function typicalRange(quotes: SavedQuote[]): { low: number; high: number; avg: number; std: number } | null {
   const totals = (quotes || []).filter(q => !q.isSample).map(q => q.total).filter(n => typeof n === "number" && n > 0);
@@ -258,25 +250,3 @@ export function sampleQuotes(schema: any): SavedQuote[] {
   });
 }
 
-// Hardcoded sensible quick replies based on the pattern of Kit's last question.
-export function quickReplies(lastKitMessage: string): string[] {
-  const t = (lastKitMessage || "").toLowerCase();
-  if (/how often|frequenc|recurring|per visit|per week|per month|per cut/.test(t)) return ["One-time", "Weekly", "Monthly"];
-  if (/load size|how much (junk|stuff)|truck size|how full|by the load/.test(t)) return ["Quarter load", "Half load", "Full load"];
-  if (/crew|how many (movers|men|guys|people)|\bmovers\b/.test(t)) return ["2 movers", "3 movers", "4 movers"];
-  if (/bulb|type of light|c9|mini light|\brgb\b|\bled\b/.test(t)) return ["C9 warm white", "Mini lights", "Custom RGB"];
-  if (/material|grade|tier|wood or composite|\bboard\b|species|\bbrand\b|product line|package/.test(t)) return ["Just one option", "Good / Better / Best", "Several options"];
-  if (/\bsystem\b|\bunit\b|equipment|furnace|heat pump|tonnage/.test(t)) return ["Central AC", "Furnace", "Heat pump"];
-  if (/service type|what (kind|type) of (work|service|job)|repair or install|repair, install/.test(t)) return ["Repair", "Installation", "Maintenance"];
-  if (/emergency|after ?hours|24\/7|nights|weekends/.test(t)) return ["Standard hours only", "Offer emergency", "24/7 service"];
-  if (/hourly|flat rate|by the hour|per hour|charge by|how do you bill/.test(t)) return ["Hourly", "Flat rate", "Both"];
-  if (/stor(y|ies)|how many floors|single or two/.test(t)) return ["1 story", "2 stories", "3 stories"];
-  if (/lot size|square (foot|feet)|sq ?ft|how do you (measure|size)|by the (square|foot|linear)|footage|linear (foot|feet)/.test(t)) return ["By square foot", "Flat rate", "By the hour"];
-  if (/deposit|upfront|down payment/.test(t)) return ["No deposit", "25% upfront", "50% upfront"];
-  if (/add[- ]?on|extra|upsell|upgrade/.test(t)) return ["Yes, a few", "No add-ons", "Let me think"];
-  if (/minimum|min charge|smallest job/.test(t)) return ["No minimum", "$200 minimum", "$500 minimum"];
-  if (/\btax\b|sales tax/.test(t)) return ["No tax", "Add sales tax"];
-  if (/travel|trip charge|distance|mileage|how far/.test(t)) return ["No travel fee", "Flat travel fee", "By the mile"];
-  if (t.trim().endsWith("?")) return ["Yes", "No", "Tell me more"];
-  return [];
-}

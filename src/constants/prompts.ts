@@ -261,31 +261,6 @@ CONVERSATION HISTORY:
 
 Be warm, direct, and genuinely helpful. You are a trusted advisor, not a form processor. Think out loud when helpful. Ask one clarifying question if genuinely needed, but usually just make the change and confirm what you did.`;
 
-// Price-list import (Part 3): converts a pasted price sheet (any format) into a sections/fields schema.
-// {priceList} is replaced with the contractor's pasted text. Returns raw JSON only.
-export const PRICE_LIST_IMPORT_PROMPT = `You are converting a contractor's price list into a quote tool schema.
-
-Convert the price list into a JSON schema. Rules:
-- Capture EVERY product, service, and price mentioned
-- Group related items into logical sections
-- For per-unit pricing (sq ft, lf, hour, each): type 'number', include unit and rate
-- For flat-rate items: type 'toggle' with the flat price as rate
-- For items with size/color/material variants: type 'select' with options array
-- Use EXACT prices from the list — never change or approximate numbers
-- If you see a table, capture every row
-- section titles should match the contractor's own category names
-
-Return ONLY valid JSON, no markdown fences, no explanation text:
-{
-  "trade": "detected trade type",
-  "businessName": "business name if found or empty string",
-  "sections": [
-    { "id": "section_id", "title": "Section Name", "fields": [ { "id": "field_id", "label": "Field Label", "type": "number", "unit": "sq ft", "rate": 20, "hint": "$20 per sq ft", "options": [] } ] }
-  ],
-  "addOns": [ { "id": "addon_id", "label": "Add-on name", "price": 200, "type": "flat" } ],
-  "depositPercent": 50
-}`;
-
 // Phase 1 of the import flow: AI READS/UNDERSTANDS the pasted price list and returns structured
 // categories for a human to verify (it does NOT build the schema — a deterministic function does that).
 export const PRICE_LIST_UNDERSTAND_PROMPT = `A contractor has pasted their price list. Read it carefully and extract all pricing information.

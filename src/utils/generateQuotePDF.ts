@@ -1,8 +1,6 @@
 import { QuotePresentation } from "../types";
 import { formatLongDate, formatMoney, resolveDocPrefs } from "./helpers";
 
-export interface QuotePDFLine { label: string; amount: number; }
-
 // The renderable quote snapshot, plus optional signature / signing link / terms.
 export interface QuotePDFData extends QuotePresentation {
   signatureData?: string;       // base64 PNG of the customer signature, if signed

@@ -215,46 +215,6 @@ export function quoteSchemaFromWizard(data: WizardData): QuoteSchema {
   });
 }
 
-// ── Imported price-list schema → QuoteSchema (Part 3) ───────────────────────────
-const IMPORT_UNIT_MAP: Record<string, FieldUnit> = {
-  "sq ft": "sqft", "sqft": "sqft", "square foot": "sqft", "square feet": "sqft", "sf": "sqft",
-  "lf": "lf", "linear foot": "lf", "linear feet": "lf", "ln ft": "lf",
-  "hour": "hr", "hr": "hr", "hourly": "hr", "each": "each", "item": "each", "unit": "each",
-  "room": "room", "load": "load", "ton": "ton", "vehicle": "vehicle",
-};
-function coerceImportUnit(u: any): FieldUnit { const k = String(u || "").toLowerCase().trim(); return IMPORT_UNIT_MAP[k] || coerceUnit(k); }
-
-// Converts the AI's {trade, sections, addOns, depositPercent} into the app's flat QuoteSchema.
-// Section titles are flattened into the app's fixed field groups (the app renders by group).
-export function quoteSchemaFromImport(raw: any): QuoteSchema | null {
-  if (!raw || !Array.isArray(raw.sections)) return null;
-  const schema: QuoteSchema = { trade: String(raw.trade || "").trim(), fields: [], pricing: { depositPercent: Number(raw.depositPercent) || 0, taxRate: 0, minimumCharge: 0 }, addOns: [], calculation: "", summaryLines: [] };
-  const ids = new Set<string>();
-  for (const sec of raw.sections) {
-    for (const f of (sec.fields || [])) {
-      if (!f || !f.label) continue;
-      const rawType = String(f.type || "number").toLowerCase();
-      const type: SchemaField["type"] = rawType === "toggle" || rawType === "flat" ? "toggle" : rawType === "select" || rawType === "selector" ? "selector" : "number";
-      const unit = coerceImportUnit(f.unit);
-      const id = slugId(f.label, ids);
-      const field: SchemaField = { id, label: f.label, type, unit, group: type === "toggle" ? "fees" : type === "selector" ? "materials" : (GROUP_FOR_UNIT[unit] || "dimensions") };
-      if (type === "selector" && Array.isArray(f.options) && f.options.length) field.options = f.options.map((o: any) => String(o));
-      if (type === "number") field.placeholder = `Enter ${f.label.toLowerCase()}`;
-      schema.fields.push(field);
-      if ((type === "number" || type === "toggle") && typeof f.rate === "number") schema.pricing[`${id}Rate`] = f.rate;
-    }
-  }
-  const addOnIds = new Set<string>();
-  for (const a of (raw.addOns || [])) {
-    if (!a || !a.label) continue;
-    schema.addOns.push({ id: slugId(a.label, addOnIds), label: a.label, price: Number(a.price) || 0 });
-  }
-  // Validate: must have at least one section with at least one field.
-  if (schema.fields.length === 0) return null;
-  rebuildCalculation(schema);
-  return schema;
-}
-
 // Short human confirmations for the chat, e.g. ["Added Pressure Treated — $20/sq ft", "Deposit set to 50%"].
 export function summarizeUpdate(u: SchemaUpdate): string[] {
   const out: string[] = [];

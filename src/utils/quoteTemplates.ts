@@ -21,10 +21,6 @@ export function addTemplate(
   return [entry, ...without];
 }
 
-export function removeTemplate(list: QuoteTemplate[] | undefined, id: string): QuoteTemplate[] {
-  return (list || []).filter(t => t.id !== id);
-}
-
 // What a new quote should be pre-filled with when starting from a template.
 export function templateToInitialValues(t: QuoteTemplate): { fieldValues: Record<string, any>; activeSections?: Record<string, boolean>; selectedAddOns?: string[] } {
   return { fieldValues: { ...(t.fieldValues || {}) }, activeSections: t.activeSections ? { ...t.activeSections } : undefined, selectedAddOns: t.selectedAddOns ? [...t.selectedAddOns] : undefined };

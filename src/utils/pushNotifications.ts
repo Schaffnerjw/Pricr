@@ -46,7 +46,3 @@ export async function getPushPermissionStatus(): Promise<"granted" | "denied" | 
   } catch { return "unknown"; }
 }
 
-export async function sendLocalNotification(title: string, body: string): Promise<void> {
-  try { await Notifications.scheduleNotificationAsync({ content: { title, body, sound: true }, trigger: null }); }
-  catch (e) { logger.error("[push] local notification failed", e instanceof Error ? e.message : String(e)); }
-}

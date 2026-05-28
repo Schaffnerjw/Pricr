@@ -29,7 +29,6 @@ export function setSyncStatus(list: OfflineSignedQuote[], quoteId: string, statu
   return (list || []).map(s => s.quoteId === quoteId ? { ...s, syncStatus: status, attempts: (s.attempts || 0) + (status === "failed" ? 1 : 0) } : s);
 }
 export const countPending = (list: OfflineSignedQuote[]): number => (list || []).filter(s => s.syncStatus === "pending" || s.syncStatus === "failed").length;
-export const pendingSignatures = (list: OfflineSignedQuote[]): OfflineSignedQuote[] => (list || []).filter(s => s.syncStatus !== "synced");
 
 // ── AsyncStorage I/O ──
 export async function getOfflineSignatures(): Promise<OfflineSignedQuote[]> {

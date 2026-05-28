@@ -13,8 +13,6 @@ export function getMasterToken(): string | null {
   return token;
 }
 
-export function clearMasterToken(): void { token = null; expiresAt = 0; }
-
 // Exchange the entered code for a session token. Returns true on success. Logs nothing sensitive.
 export async function authenticateMaster(code: string): Promise<boolean> {
   try {

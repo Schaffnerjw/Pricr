@@ -46,11 +46,6 @@ export function getContrastColor(backgroundColor: string): "#000000" | "#FFFFFF"
   return contrastRatio("#FFFFFF", backgroundColor) >= contrastRatio("#000000", backgroundColor) ? "#FFFFFF" : "#000000";
 }
 
-// The appropriate text color for any surface.
-export function getTextColor(background: string): string {
-  return getContrastColor(background);
-}
-
 // True if foreground/background meet WCAG AA (>= 4.5:1).
 export function isReadable(foreground: string, background: string): boolean {
   return contrastRatio(foreground, background) >= 4.5;
