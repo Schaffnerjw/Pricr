@@ -32,6 +32,9 @@ export interface Business { code: string; name: string; ownerName: string; owner
   // The contractor's saved tool templates (the SHAPE of the tool, not a quote draft).
   // Distinct from quoteTemplates (which stores fieldValues for a starting-point quote).
   savedToolTemplates?: SavedToolTemplate[];
+  // Optional Google-reviews URL. When set, the signing page's existing 5-star "Trusted contractor"
+  // row becomes a tappable link. When empty, the row renders exactly as before (not tappable).
+  googleReviewUrl?: string;
   // Optional payment passthrough — contractor's own provider (QuickBooks/Square/PayPal/Stripe/Venmo/…).
   // FULLY optional: OFF by default; quote tool builds/sends/signs without any payment setup. Pricr never
   // touches the money — the Pay button just opens the contractor's existing payment link in a browser.

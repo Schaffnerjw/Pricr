@@ -50,7 +50,7 @@ function HexColorRow({ label, helper, initial, valid, onCommit }: { label: strin
 export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, onEditSchema, onApplyVeraa, onSaveCurrentTool, onRestoreSavedTool, onDuplicateSavedTool, onRemoveSavedTool, scrollToTerms }: {
   business: Business;
   currentUser?: User;
-  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number; payment?: import("../types").PaymentConfig }) => void | Promise<void>;
+  onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number; payment?: import("../types").PaymentConfig; googleReviewUrl?: string }) => void | Promise<void>;
   onBack: () => void;
   onPickLogo: () => Promise<string | null>;
   onSignOut?: () => void;
@@ -86,6 +86,8 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   // Save-current-tool prompt (Saved Tool Templates section).
   const [saveToolOpen, setSaveToolOpen] = useState(false);
   const [saveToolName, setSaveToolName] = useState("");
+  // Optional Google-reviews URL — when set, the signing page's existing stars become tappable.
+  const [googleReviewUrl, setGoogleReviewUrl] = useState(business.googleReviewUrl || "");
   const [dp, setDp] = useState<DocPrefs>(resolveDocPrefs(business.docPrefs));
   const [kitOpen, setKitOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -168,7 +170,7 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
       const paymentToSave = (payProvider !== "none" || trimmedLink || payInstructions.trim() || payEnabled)
         ? { enabled: payEnabled && !!trimmedLink, provider: payProvider, link: trimmedLink || undefined, instructions: payInstructions.trim() || undefined }
         : undefined;
-      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms, quoteExpiryDays: expiryDays, payment: paymentToSave });
+      await onSave({ name: name.trim() || business.name, brand: { ...business.brand, logoUri, primaryColor: pc, secondaryColor: sc, backgroundColor: bg }, termsAndConditions: terms.trim() || undefined, docPrefs: dp, paymentMethods: { methods: payMethods, other: payOther.trim() || undefined }, notificationEmail: notificationEmail.trim() || undefined, requireSmsVerification: requireSms, quoteExpiryDays: expiryDays, payment: paymentToSave, googleReviewUrl: googleReviewUrl.trim() || undefined });
       setEditingTerms(false);
       setToast(true);
       setTimeout(() => setToast(false), 1600);
@@ -473,6 +475,11 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
             <Text style={s.formLabel}>Email for signing notifications</Text>
             <Text style={s.formHint}>Where we send a notification when a client signs a quote.</Text>
             <TextInput style={s.input} value={notificationEmail} onChangeText={setNotificationEmail} placeholder="you@yourbusiness.com" placeholderTextColor={B.gray3} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} />
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={s.formLabel}>Google review link</Text>
+            <Text style={s.formHint}>Optional. When set, the 5-star &quot;Trusted contractor&quot; row on signed quotes becomes a tappable link to your reviews.</Text>
+            <TextInput style={s.input} value={googleReviewUrl} onChangeText={setGoogleReviewUrl} placeholder="Paste your Google reviews URL" placeholderTextColor={B.gray3} keyboardType="url" autoCapitalize="none" autoCorrect={false} />
           </View>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 2, gap: 12 }}>
             <View style={{ flex: 1 }}>

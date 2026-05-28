@@ -324,10 +324,10 @@ function signingPage(token, quote, business, signedCount = 0) {
   const brandCfg = cfg.brand || {};
   const logo = pres.logoUri || brandCfg.logoUri || '';
   const tagline = (brandCfg.tagline || '').toString().trim();
-  const ownerName = (cfg.ownerName || '').toString().trim();
-  const customerName = pres.customerName || quote.customer_name || '';
+  // (Intro is now delivered in the SMS/email body — see ClosingCard.onShare; no longer rendered here.)
   const notes = (pres.notes || '').toString().trim();
   const terms = (business && business.terms_and_conditions) || '';
+  const googleReviewUrl = (cfg.googleReviewUrl || '').toString().trim();
   const lineItems = Array.isArray(pres.lineItems) ? pres.lineItems : [];
   const total = pres.total != null ? pres.total : (quote.total || 0);
   const requireSms = smsRequiredFor(business);
@@ -346,14 +346,18 @@ function signingPage(token, quote, business, signedCount = 0) {
   const logoBlock = logo
     ? `<div class="business-logo"><img src="${esc(logo)}" alt="${esc(bizName)}"/></div>`
     : `<div class="business-logo-fallback" style="background:${esc(accent)};">${initial}</div>`;
+  // Star row is tappable ONLY when a Google-reviews URL is set; otherwise it renders unchanged.
+  // Mirrors src/utils/signingRenderHelpers.ts/buildRatingHTML — the tests there cover both cases.
+  const ratingInner = '<div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733; <span>Trusted contractor</span></div>';
+  const ratingBlock = googleReviewUrl
+    ? `<a class="rating-link" href="${esc(googleReviewUrl)}" target="_blank" rel="noopener noreferrer">${ratingInner}</a>`
+    : ratingInner;
   const header = logoBlock
     + `<div class="biz">${esc(bizName)}</div>`
     + (tagline ? `<div class="tagline">${esc(tagline)}</div>` : '')
-    + `<div class="rating">&#9733;&#9733;&#9733;&#9733;&#9733; <span>Trusted contractor</span></div>`;
-  // Warm personal intro before the quote details.
-  const greetName = customerName || 'there';
-  const signOff = ownerName ? `\n\nLooking forward to working with you,\n${ownerName}` : '\n\nLooking forward to working with you.';
-  const personalMsg = `<div class="pmsg">Hi ${esc(greetName)},\n\nThank you for considering ${esc(bizName)} for your project. I've put together this quote based on our conversation. Please review everything below and sign when you're ready.${esc(signOff)}</div>`;
+    + ratingBlock;
+  // Note: the contractor's personal intro now travels in the SMS/email DELIVERY body (see
+  // ClosingCard.tsx onShare), not on the signing page. The page opens clean at the quote.
   // Notes from the contractor (only if present).
   const notesSec = notes ? `<div class="notes-sec"><div class="nl">Notes from ${esc(bizName)}</div><div class="nb">${esc(notes)}</div></div>` : '';
   // Trust signals bar + optional social proof (>= 5 completed projects).
@@ -392,7 +396,6 @@ function signingPage(token, quote, business, signedCount = 0) {
   const reviewStep = `
   <div class="bd" id="step3" style="--accent:${esc(accent)};${requireSms ? 'display:none;' : ''}">
     <div class="step-ind">Step ${reviewStepNo} of ${totalSteps} — Review and Sign</div>
-    ${personalMsg}
     <div class="ttl" style="margin-top:18px;">Fixed price estimate</div>
     <div class="cust">${esc(pres.customerName || quote.customer_name || 'Your Quote')}</div>
     ${rows}

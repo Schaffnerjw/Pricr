@@ -21,7 +21,7 @@ export function BrandHeader({ business, right }: { business: Business; right?: R
         ) : (
           <Text style={[wl.bizName, { color: nameColor }]}>{business.name}</Text>
         )}
-        {brand.tagline ? <Text style={wl.tagline}>{brand.tagline}</Text> : null}
+        {brand.tagline ? <Text style={[wl.tagline, { color: pal.textMuted }]}>{brand.tagline}</Text> : null}
       </View>
       {right && <View style={wl.headerRight}>{right}</View>}
     </View>

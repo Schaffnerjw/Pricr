@@ -6,7 +6,7 @@ import { API_URL, B } from "../constants/brand";
 import { PRICE_LIST_UNDERSTAND_PROMPT } from "../constants/prompts";
 import { clearImportProgress, getImportProgress, saveImportProgress } from "../storage";
 import { QuoteSchema } from "../types";
-import { ON_PRIMARY } from "../utils/colorUtils";
+import { getContrastColor, ON_PRIMARY } from "../utils/colorUtils";
 import { logger } from "../utils/logger";
 import { buildSchemaFromVerified, groupImportCategories, VerifiedAddOn, VerifiedCategory, VerifiedItem, VerifiedUnit, verifiedItemCount } from "../utils/buildSchemaFromVerified";
 
@@ -99,7 +99,7 @@ function ImportLoadingScreen({ primaryColor, backgroundColor }: { primaryColor: 
         <PricrLogo />
         {/* Spinning ring in the brand color */}
         <Animated.View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 4, borderColor: primaryColor + "30", borderTopColor: primaryColor, marginTop: 36, transform: [{ rotate }] }} />
-        <Text style={{ color: B.white, fontSize: 22, fontWeight: "800", fontFamily: "Syne_800ExtraBold", marginTop: 28, textAlign: "center" }}>Building your quote tool...</Text>
+        <Text style={{ color: getContrastColor(backgroundColor || B.midnight), fontSize: 22, fontWeight: "800", fontFamily: "Syne_800ExtraBold", marginTop: 28, textAlign: "center" }}>Building your quote tool…</Text>
 
         {/* Progress bar */}
         <View style={{ width: 240, height: 6, borderRadius: 3, backgroundColor: B.border, overflow: "hidden", marginTop: 18 }}>
@@ -282,12 +282,14 @@ export function PriceListImportScreen({ primaryColor, backgroundColor, initialTe
     return <ImportLoadingScreen primaryColor={primaryColor} backgroundColor={backgroundColor} />;
   }
 
+  // Contrast-aware title: dark text on light brand backgrounds, light text on dark — never light-on-light.
+  const navTitleColor = getContrastColor(backgroundColor || B.midnight);
   const nav = (title: string, onBackPress: () => void) => (
     <View style={styles.navBar}>
       <TouchableOpacity onPress={onBackPress} style={{ flexDirection: "row", alignItems: "center", gap: 2, width: 70 }}>
         <Feather name="chevron-left" size={18} color={primaryColor} /><Text style={{ color: primaryColor, fontSize: 16, fontFamily: "DMSans_600SemiBold" }}>Back</Text>
       </TouchableOpacity>
-      <Text style={styles.navTitle}>{title}</Text>
+      <Text style={[styles.navTitle, { color: navTitleColor }]}>{title}</Text>
       <View style={{ width: 70 }} />
     </View>
   );

@@ -125,9 +125,14 @@ export function ClosingCard({ schema, business, primaryColor, customerName, note
     try {
       const presentation = buildPresentation();
       const { signingLink } = (await prepareShare?.(presentation)) ?? { signingLink: null };
+      // The contractor's intro now travels in the SMS/email delivery body (the signing page opens
+      // clean at the quote). Personalize when we have a customer name; otherwise lead with the biz.
+      const greet = customerName.trim() ? `Hi ${customerName.trim()},` : "Hi there,";
+      const intro = `${greet}\n\nThanks for considering ${business.name}. Here's your quote for ${formatMoney(t.total)}.`;
+      const deliveryMessage = signingLink ? `${intro}\n\nReview and sign: ${signingLink}` : undefined;
       await shareQuotePDF(
         { ...presentation, signatureData: signature ?? undefined, signedAt: signedAt ?? undefined, signingLink: signingLink ?? undefined, termsAndConditions },
-        signingLink ? { message: `${business.name} sent you a quote for ${formatMoney(t.total)}. Review and sign: ${signingLink}` } : undefined,
+        deliveryMessage ? { message: deliveryMessage } : undefined,
       );
     } catch {
       Alert.alert("Couldn't share quote", "We couldn't prepare this quote to share. Check your connection and try again.");
