@@ -228,7 +228,11 @@ export function SchemaWizard({ primaryColor, backgroundColor, initialTrade, onCo
               {/* Summary */}
               <View style={{ backgroundColor: B.card, borderRadius: 16, borderWidth: 1, borderColor: B.border, padding: 16, gap: 8, marginTop: 8 }}>
                 <Text style={{ color: B.gray1, fontSize: 15, fontWeight: "800", fontFamily: "Syne_700Bold" }}>{effectiveTrade || "Your tool"}</Text>
-                {buildData().methods.length === 0 && <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Add at least one price on the previous step.</Text>}
+                {/* Blank prices are a first-class state across Pricr (Import + edit mode both allow them
+                    with placeholder hints) — no warning here, no gate on the Build button below. */}
+                {buildData().methods.length === 0 && (
+                  <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular" }}>You can leave prices blank and fill them in the editor — placeholder hints will guide you.</Text>
+                )}
                 {(() => { const d = buildData(); return (<>
                   {d.sqft && <SummaryLine label="Per sq ft" value={d.sqft.variants.length ? d.sqft.variants.map(v => `${v.name} $${v.rate}`).join(", ") : `$${d.sqft.primary}/sq ft`} primaryColor={primaryColor} />}
                   {d.lf && <SummaryLine label="Per linear ft" value={d.lf.variants.length ? d.lf.variants.map(v => `${v.name} $${v.rate}`).join(", ") : `$${d.lf.primary}/lf`} primaryColor={primaryColor} />}
@@ -249,7 +253,9 @@ export function SchemaWizard({ primaryColor, backgroundColor, initialTrade, onCo
               <Text style={[s.btnText, { color: onPrimary }]}>Next</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity disabled={buildData().methods.length === 0} style={[s.btn, { backgroundColor: primaryColor }, buildData().methods.length === 0 && { opacity: 0.4 }]} onPress={() => onComplete(buildData())}>
+            // Always enabled on Step 3 — the tool can be built with zero prices entered. Blank prices
+            // render as placeholder hints in the editor (same as the Import path).
+            <TouchableOpacity style={[s.btn, { backgroundColor: primaryColor }]} onPress={() => onComplete(buildData())}>
               <Text style={[s.btnText, { color: onPrimary }]}>Build My Tool →</Text>
             </TouchableOpacity>
           )}
