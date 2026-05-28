@@ -15,15 +15,28 @@ const UNITS = ["each", "hour", "day", "week", "month", "project", "sq ft", "line
 // Reusable "add a field" bottom sheet — used by the Settings schema editor AND the in-quote editor.
 // Self-contained: it owns the type-card + quick-setup flow, computes the new schema via the tested
 // pure ops, and hands it back via onApply (the caller persists / auto-saves).
+// Empty-schema seed used when the parent passes null (post-signup, before the first tool exists).
+// Reading .trade off `null` was the production crash captured by Sentry — guarding here lets the
+// sheet still render the agnostic chip set so the contractor can build from scratch.
+const EMPTY_SCHEMA: QuoteSchema = { trade: "", fields: [], pricing: {}, addOns: [], calculation: "", summaryLines: [] };
+
 export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply, trade }: {
   visible: boolean;
   onClose: () => void;
   primaryColor: string;
-  schema: QuoteSchema;
+  // QuoteSchema | null: Business.schema is nullable (a brand-new business has no tool yet) and
+  // QuoteScreen types its `schema` prop as `any`, so the null slips through TS and lands here.
+  // The component now handles null/undefined gracefully — falling back to EMPTY_SCHEMA + the
+  // agnostic common-field set so it can't crash on .trade.
+  schema: QuoteSchema | null | undefined;
   onApply: (next: QuoteSchema) => void;
   trade?: string;          // resolves trade-specific Common Fields; falls back to schema.trade
 }) {
-  const tradeKey = trade ?? schema.trade;
+  // Defensively normalize the schema FIRST so downstream reads (.trade, dropCommon, commit) can't
+  // explode on null. Sentry caught a production "Cannot read properties of null (reading 'trade')"
+  // here when AddFieldSheet was opened against a fresh business with no tool built yet.
+  const safeSchema: QuoteSchema = schema ?? EMPTY_SCHEMA;
+  const tradeKey = trade ?? safeSchema.trade ?? null;
   const commonFields = commonFieldsForTrade(tradeKey);
   const th = useTheme();
   const [addType, setAddType] = useState<AddType | null>(null);
@@ -38,11 +51,11 @@ export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply,
   // Drop a trade-specific Common Field straight into the schema (blank price + placeholder hint).
   // Goes through the same schemaEditorOps the Quick Setup flow uses → fully first-class.
   const dropCommon = (c: CommonField) => {
-    let next = schema;
-    if (c.type === "measure") next = addMeasurementField(schema, c.label, c.rate, c.unit);
-    else if (c.type === "yesno") next = addToggleField(schema, c.label, c.rate);
-    else if (c.type === "calculated") next = addCalculatedField(schema, c.label, "", c.rate);
-    else if (c.type === "pickone") next = addSelectField(schema, c.label, c.options || [{ label: "Option 1", rate: c.rate, unit: c.unit }]);
+    let next = safeSchema;
+    if (c.type === "measure") next = addMeasurementField(safeSchema, c.label, c.rate, c.unit);
+    else if (c.type === "yesno") next = addToggleField(safeSchema, c.label, c.rate);
+    else if (c.type === "calculated") next = addCalculatedField(safeSchema, c.label, "", c.rate);
+    else if (c.type === "pickone") next = addSelectField(safeSchema, c.label, c.options || [{ label: "Option 1", rate: c.rate, unit: c.unit }]);
     // Attach the placeholder hint ("e.g. $75") to the just-added field so the rep sees it in the quote.
     if (c.placeholder) next = { ...next, fields: (next.fields || []).map(f => f.label === c.label ? { ...f, placeholder: c.placeholder } : f) };
     onApply(next); close();
@@ -50,13 +63,13 @@ export function AddFieldSheet({ visible, onClose, primaryColor, schema, onApply,
   const commit = () => {
     const name = fName.trim(); if (!name) return;
     const rate = Number(fRate) || 0;
-    let next = schema;
-    if (addType === "measure") next = addMeasurementField(schema, name, rate, fUnit);
-    else if (addType === "yesno") next = addToggleField(schema, name, rate);
-    else if (addType === "calculated") next = addCalculatedField(schema, name, fLinked.trim(), rate);
+    let next = safeSchema;
+    if (addType === "measure") next = addMeasurementField(safeSchema, name, rate, fUnit);
+    else if (addType === "yesno") next = addToggleField(safeSchema, name, rate);
+    else if (addType === "calculated") next = addCalculatedField(safeSchema, name, fLinked.trim(), rate);
     else if (addType === "pickone") {
       const opts = fOptions.split(",").map(o => o.trim()).filter(Boolean).map(o => { const m = o.match(/^(.*?)[\s:$]*([\d.]+)?$/); return { label: (m?.[1] || o).trim(), rate: Number(m?.[2]) || 0, unit: fUnit }; });
-      next = addSelectField(schema, name, opts.length ? opts : [{ label: "Option 1", rate, unit: fUnit }]);
+      next = addSelectField(safeSchema, name, opts.length ? opts : [{ label: "Option 1", rate, unit: fUnit }]);
     }
     onApply(next); close();
   };

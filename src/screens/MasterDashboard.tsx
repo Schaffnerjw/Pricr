@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Animated, Image, Platform, SafeAreaView, ScrollView, Share, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, Image, Modal, Platform, Pressable, SafeAreaView, ScrollView, Share, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { DemoPickerModal } from "../components/DemoPickerModal";
 import { B, SIGN_BASE } from "../constants/brand";
 import { masterAuthHeaders } from "../utils/masterAuth";
@@ -10,6 +10,7 @@ import { s } from "../styles";
 import { Business, DemoBusiness } from "../types";
 import { formatDate } from "../utils/helpers";
 import { logger } from "../utils/logger";
+import { DELETE_SENTINEL, isDeleteConfirmed } from "../utils/deleteConfirm";
 
 // Cross-platform monospace stack for displaying generated codes.
 const MONO = Platform.OS === "ios" ? "Courier" : Platform.OS === "android" ? "monospace" : "ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -64,7 +65,12 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
   const [notifyMsg, setNotifyMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [deleteName, setDeleteName] = useState(""); // typed confirmation before delete
+  // Delete-confirmation state. Previously the gate was `deleteName === d.name` (strict name
+  // match) which silently failed on businesses whose names had trailing whitespace, smart quotes
+  // from copy/paste, autocorrect-capitalized first letters, or null names — admin would type the
+  // visible name correctly and the button would stay greyed. Now uses a fixed sentinel ("DELETE")
+  // so the gate can't drift on dirty business data.
+  const [deleteTyped, setDeleteTyped] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [veraaName, setVeraaName] = useState("");
   const [veraaCodes, setVeraaCodes] = useState<{ code: string; client_name?: string; created_at?: string; used_by?: string; revoked?: boolean }[]>([]);
@@ -92,7 +98,7 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
   };
 
   const openBusiness = async (code: string) => {
-    setBusy(true); setErr(""); setConfirmingDelete(false); setDeleteName("");
+    setBusy(true); setErr(""); setConfirmingDelete(false); setDeleteTyped("");
     try { setDetail(await adminFetch("business", { code })); setSchemaOpen(false); }
     catch (e) { setErr(e instanceof Error ? e.message : "load failed"); }
     setBusy(false);
@@ -287,23 +293,46 @@ export function MasterDashboard({ onSignOut, onStartDemo, onOpenAnalytics, onVie
             <TouchableOpacity style={[s.btnSecondary, { marginTop: 10 }]} onPress={() => businessAction(d.code, d.suspended ? "unsuspend" : "suspend", () => openBusiness(d.code))}>
               <Text style={s.btnSecondaryText}>{d.suspended ? "Unsuspend Business" : "Suspend Business"}</Text>
             </TouchableOpacity>
-            {!confirmingDelete ? (
-              <TouchableOpacity style={[s.btnSecondary, { marginTop: 10, borderColor: B.red }]} onPress={() => { setConfirmingDelete(true); setDeleteName(""); }}>
-                <Text style={[s.btnSecondaryText, { color: B.red }]}>Delete Business</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={{ marginTop: 10, gap: 8, borderWidth: 1, borderColor: B.red, borderRadius: 12, padding: 12 }}>
-                <Text style={{ color: B.red, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>Permanently deletes the business and ALL its quotes, team, and brand config. This cannot be undone.</Text>
-                <Text style={{ color: B.gray2, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Type the business name (<Text style={{ fontFamily: "DMSans_700Bold", color: B.gray1 }}>{d.name}</Text>) to confirm:</Text>
-                <TextInput style={s.input} value={deleteName} onChangeText={setDeleteName} placeholder={d.name} placeholderTextColor={B.gray3} autoCapitalize="none" autoCorrect={false} />
-                <View style={{ flexDirection: "row", gap: 10 }}>
-                  <TouchableOpacity style={[s.btnSecondary, { flex: 1 }]} onPress={() => { setConfirmingDelete(false); setDeleteName(""); }}><Text style={s.btnSecondaryText}>Cancel</Text></TouchableOpacity>
-                  <TouchableOpacity disabled={deleteName.trim() !== d.name} style={[s.btn, { flex: 1, backgroundColor: B.red }, deleteName.trim() !== d.name && { opacity: 0.4 }]} onPress={() => businessAction(d.code, "delete", () => { setConfirmingDelete(false); setDetail(null); setResults(rs => rs.filter(r => r.code !== d.code)); })}>
-                    <Text style={s.btnText}>Delete forever</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+            <TouchableOpacity style={[s.btnSecondary, { marginTop: 10, borderColor: B.red }]} onPress={() => { setConfirmingDelete(true); setDeleteTyped(""); }}>
+              <Text style={[s.btnSecondaryText, { color: B.red }]}>Delete Business</Text>
+            </TouchableOpacity>
+            {/* Delete confirmation — Modal (not Alert.alert; native Alert is a no-op on web). Shows
+                the business name + code prominently so the admin verifies WHO they're nuking, then
+                gates the destructive button on a fixed "DELETE" sentinel (case-sensitive). The old
+                name-match gate failed silently on businesses whose names had whitespace / special
+                characters / null — the sentinel can't drift on dirty business data. */}
+            <Modal visible={confirmingDelete} transparent animationType="fade" onRequestClose={() => { setConfirmingDelete(false); setDeleteTyped(""); }}>
+              <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", padding: 24 }} onPress={() => { setConfirmingDelete(false); setDeleteTyped(""); }}>
+                <Pressable style={{ backgroundColor: B.card, borderRadius: 18, borderWidth: 1, borderColor: B.red, padding: 22, gap: 14 }} onPress={() => { /* swallow taps inside */ }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <Feather name="alert-triangle" size={22} color={B.red} />
+                    <Text style={{ color: B.white, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold", flex: 1 }}>Delete this business?</Text>
+                  </View>
+                  <View style={{ backgroundColor: B.midnight, borderRadius: 10, borderWidth: 1, borderColor: B.border, padding: 12, gap: 4 }}>
+                    <Text style={{ color: B.gray3, fontSize: 11, fontWeight: "700", letterSpacing: 0.5, fontFamily: "DMSans_700Bold" }}>BUSINESS</Text>
+                    <Text style={{ color: B.white, fontSize: 16, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{d.name || <Text style={{ color: B.gray3 }}>(no name)</Text>}</Text>
+                    <Text style={{ color: B.gray2, fontSize: 13, fontFamily: MONO, marginTop: 2 }}>Code: {d.code}</Text>
+                  </View>
+                  <Text style={{ color: B.red, fontSize: 13, fontFamily: "DMSans_600SemiBold" }}>This permanently deletes ALL quotes, team members, and brand config. It cannot be undone.</Text>
+                  <View style={{ gap: 6 }}>
+                    <Text style={{ color: B.gray2, fontSize: 13, fontFamily: "DMSans_400Regular" }}>Type <Text style={{ fontFamily: MONO, color: B.white, fontWeight: "800" }}>{DELETE_SENTINEL}</Text> (all caps) to confirm:</Text>
+                    <TextInput style={[s.input, { fontFamily: MONO }]} value={deleteTyped} onChangeText={setDeleteTyped} placeholder={DELETE_SENTINEL} placeholderTextColor={B.gray3} autoCapitalize="characters" autoCorrect={false} autoFocus />
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 10 }}>
+                    <TouchableOpacity style={[s.btnSecondary, { flex: 1 }]} onPress={() => { setConfirmingDelete(false); setDeleteTyped(""); }}>
+                      <Text style={s.btnSecondaryText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      disabled={!isDeleteConfirmed(deleteTyped)}
+                      style={[s.btn, { flex: 1, backgroundColor: B.red }, !isDeleteConfirmed(deleteTyped) && { opacity: 0.4 }]}
+                      onPress={() => businessAction(d.code, "delete", () => { setConfirmingDelete(false); setDeleteTyped(""); setDetail(null); setResults(rs => rs.filter(r => r.code !== d.code)); })}
+                    >
+                      <Text style={s.btnText}>Delete forever</Text>
+                    </TouchableOpacity>
+                  </View>
+                </Pressable>
+              </Pressable>
+            </Modal>
             <View style={{ marginTop: 14, gap: 8 }}>
               <Text style={s.formLabel}>Send notification</Text>
               <TextInput style={[s.input, { minHeight: 60, textAlignVertical: "top" }]} value={notifyMsg} onChangeText={setNotifyMsg} placeholder="Message to send to this business…" placeholderTextColor={B.gray3} multiline />
