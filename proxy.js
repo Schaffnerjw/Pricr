@@ -1299,10 +1299,13 @@ function getStripe() {
 const VERAA_CODE_RE = /^VERAA-[A-Z]+-\d{4}$/;
 function envVeraaCodes() { try { const a = JSON.parse(process.env.VERAA_CODES || '[]'); return Array.isArray(a) ? a.map(String) : []; } catch (_) { return []; } }
 async function veraaCodeValid(code) {
-  if (envVeraaCodes().includes(code)) return true; // env-array fast path (works before the table exists)
+  if (envVeraaCodes().includes(code)) return true; // env-array fast path (works before the table exists; not single-use)
   try {
-    const r = await supabaseRequest('GET', `/rest/v1/veraa_codes?select=code,revoked&code=eq.${encodeURIComponent(code)}`);
-    if (Array.isArray(r.json) && r.json.length) return !r.json[0].revoked;
+    const r = await supabaseRequest('GET', `/rest/v1/veraa_codes?select=code,revoked,used_by&code=eq.${encodeURIComponent(code)}`);
+    if (Array.isArray(r.json) && r.json.length) {
+      const row = r.json[0];
+      return !row.revoked && !row.used_by; // single-use: a claimed code is no longer "valid" for new applications
+    }
   } catch (_) { /* table may not exist yet */ }
   return false;
 }
@@ -1313,6 +1316,33 @@ async function handleValidatePromo(res, buf) {
     return sendJson(res, 200, { valid, type: 'veraa', message: valid ? 'Veraa client code accepted' : 'Invalid code' });
   }
   return sendJson(res, 200, { valid: false, type: 'unknown', message: 'Invalid promo code' });
+}
+// Atomically claim a (DB-stored) Veraa code for a business. Marks used_by/used_at so a code can't be
+// re-applied by anyone else. The env-array fast path (VERAA_CODES) is NOT single-use — those are
+// shared/seed codes and the function accepts them without DB marking. Returns 409 if already claimed.
+async function handleApplyPromo(res, buf) {
+  const body = parseJsonBody(buf);
+  const code = String(body.code || '').toUpperCase().trim();
+  const businessCode = String(body.businessCode || '').trim();
+  if (!VERAA_CODE_RE.test(code)) return sendJson(res, 400, { ok: false, error: 'invalid format' });
+  if (!businessCode) return sendJson(res, 400, { ok: false, error: 'businessCode required' });
+  // Env-array codes: accept without marking (no DB row to mark).
+  if (envVeraaCodes().includes(code)) return sendJson(res, 200, { ok: true });
+  let row = null;
+  try {
+    const r = await supabaseRequest('GET', `/rest/v1/veraa_codes?select=code,revoked,used_by&code=eq.${encodeURIComponent(code)}`);
+    row = Array.isArray(r.json) && r.json[0] ? r.json[0] : null;
+  } catch (_) { return sendJson(res, 500, { ok: false, error: 'lookup failed' }); }
+  if (!row) return sendJson(res, 404, { ok: false, error: 'code not found' });
+  if (row.revoked) return sendJson(res, 400, { ok: false, error: 'code revoked' });
+  if (row.used_by) return sendJson(res, 409, { ok: false, error: 'code already used' });
+  // Conditional update: only PATCH rows where used_by IS NULL — guards against two simultaneous claims.
+  // (PostgREST: ?used_by=is.null forces the server-side check.)
+  try {
+    const r = await supabaseRequest('PATCH', `/rest/v1/veraa_codes?code=eq.${encodeURIComponent(code)}&used_by=is.null`, { used_by: businessCode, used_at: new Date().toISOString() });
+    if (r.status < 200 || r.status >= 300) { console.error('[Veraa] apply error:', r.status, r.text); return sendJson(res, 500, { ok: false, error: 'mark used failed' }); }
+  } catch (_) { return sendJson(res, 500, { ok: false, error: 'mark used failed' }); }
+  return sendJson(res, 200, { ok: true });
 }
 async function handleGenerateVeraaCode(res, buf) {
   const clientName = String(parseJsonBody(buf).clientName || '').trim();
@@ -1367,6 +1397,10 @@ async function updateBusinessSubscription(businessCode, fields) {
   if (fields.subscriptionStatus) colPatch.subscription_status = fields.subscriptionStatus;
   if (fields.stripeCustomerId) colPatch.stripe_customer_id = fields.stripeCustomerId;
   if (fields.partnerCodeUsed) colPatch.partner_code = fields.partnerCodeUsed;
+  // Mirror trialStartedAt to the dedicated column so handleBillingStatus's trialDaysLeft math has a
+  // real anchor (the column was previously read but never written — defaulted to Date.now() on every
+  // poll, which silently gave every business a fresh 3 days).
+  if (fields.trialStartedAt) colPatch.trial_started_at = new Date(fields.trialStartedAt).toISOString();
   await supabaseRequest('PATCH', `/rest/v1/businesses?code=eq.${encodeURIComponent(businessCode)}`, { config: { ...config, ...fields }, ...colPatch });
 }
 async function handleCreateCheckoutSession(res, buf) {
@@ -1442,9 +1476,11 @@ async function handleStripeWebhook(req, res, rawBuf) {
     const obj = event.data && event.data.object;
     switch (event.type) {
       case 'checkout.session.completed': {
-        // Card collected + trial started → trialing (NOT active yet; auto-charges on day 3).
+        // Card collected + trial started → trialing (NOT active yet; auto-charges on day 3). Also
+        // stamps trialStartedAt server-side so the 3-day countdown anchors here and not on a later
+        // poll (the column is the source of truth; the client mirrors it locally).
         const code = obj.metadata && obj.metadata.businessCode;
-        if (code) await updateBusinessSubscription(code, { subscriptionStatus: 'trialing', stripeCustomerId: obj.customer, stripeSubscriptionId: obj.subscription || undefined, paymentFailed: false });
+        if (code) await updateBusinessSubscription(code, { subscriptionStatus: 'trialing', stripeCustomerId: obj.customer, stripeSubscriptionId: obj.subscription || undefined, paymentFailed: false, trialStartedAt: Date.now() });
         break;
       }
       case 'customer.subscription.trial_will_end': {
@@ -1704,6 +1740,7 @@ const server = http.createServer((req, res) => {
 
   // ── Billing (public — pre-signup / boot checks) ──
   if (path === '/billing/validate-promo' && req.method === 'POST') { readBody((buf) => handleValidatePromo(res, buf).catch(() => sendJson(res, 500, { error: 'validate failed' }))); return; }
+  if (path === '/billing/apply-promo' && req.method === 'POST') { readBody((buf) => handleApplyPromo(res, buf).catch(() => sendJson(res, 500, { ok: false, error: 'apply failed' }))); return; }
   if (path === '/billing/create-checkout-session' && req.method === 'POST') { readBody((buf) => handleCreateCheckoutSession(res, buf).catch(() => sendJson(res, 500, { error: 'checkout failed' }))); return; }
   if (path === '/billing/customer-portal' && req.method === 'POST') { readBody((buf) => handleCustomerPortal(res, buf).catch(() => sendJson(res, 500, { error: 'portal failed' }))); return; }
   if (path === '/billing/webhook' && req.method === 'POST') { readBody((buf) => handleStripeWebhook(req, res, buf).catch(() => sendJson(res, 500, { error: 'webhook failed' }))); return; }

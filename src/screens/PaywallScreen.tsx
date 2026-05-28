@@ -5,7 +5,8 @@ import PricrLogo from "../components/PricrLogo";
 import { B } from "../constants/brand";
 import { s } from "../styles";
 import { ON_PRIMARY } from "../utils/colorUtils";
-import { getBillingStatus, openCheckout, PlanId, validatePromoCode } from "../utils/billing";
+import { applyPromoCode, getBillingStatus, openCheckout, PlanId, validatePromoCode } from "../utils/billing";
+import { SubscriptionStatus } from "../types";
 
 const FEATURES = [
   "Unlimited quotes & instant PDFs",
@@ -17,16 +18,18 @@ const FEATURES = [
 
 // Shown between signup_brand and choose_setup (and on trial expiry / from the dashboard banner). A
 // valid Veraa partner code skips the paywall entirely (Pricr is included in the client's Veraa plan).
-export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onStartTrial, onSelectPlan, onVeraaApplied, onContinue, onPaid, cancelled }: {
+// Both modes now poll for webhook confirmation after Stripe checkout — the user only leaves the gate
+// once the server confirms `trialing` (card captured) or `active`. Closing the Stripe tab without
+// paying leaves the user on this screen.
+export function PaywallScreen({ businessCode, primaryColor, mode = "signup", trialDays, onSelectPlan, onVeraaApplied, onContinue, onPaid, cancelled }: {
   businessCode: string;
   primaryColor: string;
-  mode?: "signup" | "expired";              // "signup" continues into setup; "expired" requires subscribe/Veraa
+  mode?: "signup" | "expired";              // "signup" = first time; "expired" = post-trial. Differs in copy only.
   trialDays?: number;                        // when set (>0) the user is mid-trial → offer "Continue"
-  onStartTrial: (plan: PlanId) => void;      // begin the 3-day trial and continue into the app
   onSelectPlan?: (plan: PlanId) => void;     // persist the chosen plan to the business config
-  onVeraaApplied: (code: string) => void;    // valid Veraa code → mark veraa + continue
+  onVeraaApplied: (code: string) => void;    // server confirmed the Veraa code was claimed → mark veraa + continue
   onContinue?: () => void;                   // continue mid-trial without paying yet
-  onPaid?: () => void;                       // status flipped to active (payment confirmed) → leave the gate
+  onPaid?: (status: SubscriptionStatus) => void; // server confirmed checkout completed (trialing/active) → leave the gate
   cancelled?: boolean;                       // returned from Stripe via the cancel URL
 }) {
   const [showPromo, setShowPromo] = useState(false);
@@ -51,46 +54,53 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
     return () => sub.remove();
   }, []);
 
-  // Option B: after Stripe Checkout returns (in-app browser closes), the webhook flips the subscription
-  // to active server-side. Poll for that for ~30s; on success leave the gate, else show a wait message.
+  // After Stripe Checkout returns (the in-app browser closes), the webhook flips the subscription
+  // server-side. Poll for ~30s; on success leave the gate, else show a wait message. The gate is
+  // never lifted without a confirmed `trialing`/`active`/`veraa` from the server — closing the
+  // Stripe tab without paying leaves the user here.
   const pollForActivation = async () => {
     setPolling(true); setProcessing(false); setPromoError("");
     for (let i = 0; i < 10; i++) {
       await new Promise(r => setTimeout(r, 3000));
       try {
         const st = await getBillingStatus(businessCode);
-        if (st.status === "active" || st.status === "veraa" || st.status === "trialing") { setPolling(false); onPaid?.(); return; }
+        if (st.status === "active" || st.status === "trialing") { setPolling(false); onPaid?.(st.status); return; }
+        if (st.status === "veraa") { setPolling(false); onPaid?.("veraa"); return; }
       } catch { /* keep polling */ }
     }
     setPolling(false); setProcessing(true);
   };
 
+  // Veraa codes: validate (read-only), then mark used server-side. Only call onVeraaApplied once the
+  // server confirms the code was claimed — otherwise two contractors could share the same code.
   const applyPromo = async () => {
     const code = promo.trim().toUpperCase();
     if (!code) return;
     setChecking(true); setPromoError("");
     const r = await validatePromoCode(code);
+    if (!r.valid || r.type !== "veraa") {
+      setChecking(false);
+      setPromoError(r.message || "That code isn't valid.");
+      return;
+    }
+    const claim = await applyPromoCode(code, businessCode);
     setChecking(false);
-    if (r.valid && r.type === "veraa") { onVeraaApplied(code); return; }
-    setPromoError(r.message || "That code isn't valid.");
+    if (!claim.ok) { setPromoError(claim.error === "code already used" ? "That code has already been used." : (claim.error || "Couldn't apply that code.")); return; }
+    onVeraaApplied(code);
   };
 
-  // Pick a plan: record it, open Stripe Checkout (3-day trial collected there). In signup mode we then
-  // continue into the app (the webhook flips the subscription to active on payment). In expired mode we
-  // stay put — the user must complete payment before regaining access.
+  // Pick a plan: record it, open Stripe Checkout (3-day trial collected there). Both modes now poll
+  // for webhook confirmation — closing the Stripe tab without paying never advances past the gate.
   const choosePlan = async (plan: PlanId) => {
     setPromoError("");
     onSelectPlan?.(plan);
     setLaunching(plan);
     const opened = await openCheckout(businessCode, plan);
     setLaunching(null);
-    if (mode === "expired") {
-      if (!opened) { setPromoError("Billing isn't available right now. Try again shortly or use a partner code."); return; }
-      // Stripe returned — verify activation (Option B). Web also catches it via the redirect (Option A).
-      pollForActivation();
-      return;
-    }
-    onStartTrial(plan); // signup: continue into setup (trial active)
+    if (!opened) { setPromoError("Billing isn't available right now. Try again shortly or use a partner code."); return; }
+    // Stripe returned (in-app browser closed) — verify activation. Web also catches the redirect
+    // path via the URL query params in app/index.tsx; both end in onPaid.
+    pollForActivation();
   };
 
   const PlanCard = ({ plan, price, per, billed, recommended, badge }: { plan: PlanId; price: string; per: string; billed: string; recommended?: boolean; badge?: string }) => (

@@ -3,13 +3,18 @@
 import { Alert } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import { SIGN_BASE } from "../constants/brand";
+import { SubscriptionStatus } from "../types";
 import { logger } from "./logger";
+// Pure decisions live in billingGate so tests can run them in a node-only jest env.
+import { TRIAL_DAYS } from "./billingGate";
+export { isBillingGated, TRIAL_DAYS, trialDaysLeft } from "./billingGate";
 
 export type PlanId = "monthly" | "annual";
 export interface PromoResult { valid: boolean; type: "veraa" | "unknown"; message: string }
-export interface BillingStatus { status: "active" | "veraa" | "trial" | "trialing" | "expired"; trialDaysLeft: number; isVeraaClient: boolean; annualAvailable?: boolean; monthlyAvailable?: boolean }
+export interface BillingStatus { status: SubscriptionStatus; trialDaysLeft: number; isVeraaClient: boolean; annualAvailable?: boolean; monthlyAvailable?: boolean }
+const ALLOWED_STATUSES: readonly SubscriptionStatus[] = ["active", "veraa", "trial", "trialing", "expired", "pending"];
 
-// Validate a promo / Veraa partner code. Never throws — returns invalid on any failure.
+// Validate a promo / Veraa partner code (read-only; does not mark it used). Never throws.
 export async function validatePromoCode(code: string): Promise<PromoResult> {
   try {
     const res = await fetch(`${SIGN_BASE}/billing/validate-promo`, {
@@ -18,6 +23,19 @@ export async function validatePromoCode(code: string): Promise<PromoResult> {
     const data = await res.json();
     return { valid: !!data?.valid, type: data?.type === "veraa" ? "veraa" : "unknown", message: data?.message || "" };
   } catch { logger.error("[billing] validate failed"); return { valid: false, type: "unknown", message: "Couldn't reach the server" }; }
+}
+
+// Mark a (previously-validated) Veraa code as used by this business. Returns true if the server
+// confirmed the code was claimed — false if it was already taken or the request failed.
+export async function applyPromoCode(code: string, businessCode: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${SIGN_BASE}/billing/apply-promo`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, businessCode }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data?.ok) return { ok: true };
+    return { ok: false, error: typeof data?.error === "string" ? data.error : "Could not apply code" };
+  } catch { logger.error("[billing] apply-promo failed"); return { ok: false, error: "Couldn't reach the server" }; }
 }
 
 // Open Stripe Checkout in the browser for the given business + plan. Returns false if billing isn't configured.
@@ -53,24 +71,21 @@ export async function openCustomerPortal(businessCode: string): Promise<boolean>
   }
 }
 
-// Boot-time subscription check. Falls back to a safe default (trial) if the server is unreachable.
+// Boot-time subscription check. Falls back to a safe default if the server is unreachable. Unreachable
+// fallback is "pending" (NOT "trial") so a connectivity blip can never silently grant trial access —
+// the gate stays closed until the server can be reached and confirms the real status.
 export async function getBillingStatus(businessCode: string): Promise<BillingStatus> {
   try {
     const res = await fetch(`${SIGN_BASE}/billing/status?businessCode=${encodeURIComponent(businessCode)}`);
     const data = await res.json();
+    const rawStatus = data?.status;
+    const status: SubscriptionStatus = (ALLOWED_STATUSES as readonly string[]).includes(rawStatus) ? (rawStatus as SubscriptionStatus) : "pending";
     return {
-      status: ["active", "veraa", "trial", "trialing", "expired"].includes(data?.status) ? data.status : "trial",
+      status,
       trialDaysLeft: typeof data?.trialDaysLeft === "number" ? data.trialDaysLeft : TRIAL_DAYS,
       isVeraaClient: !!data?.isVeraaClient,
       annualAvailable: data?.annualAvailable !== false,
       monthlyAvailable: data?.monthlyAvailable !== false,
     };
-  } catch { return { status: "trial", trialDaysLeft: TRIAL_DAYS, isVeraaClient: false }; }
-}
-
-// Days remaining in the 3-day trial from a start timestamp.
-export const TRIAL_DAYS = 3;
-export function trialDaysLeft(trialStartedAt?: number): number {
-  if (!trialStartedAt) return TRIAL_DAYS;
-  return Math.max(0, TRIAL_DAYS - Math.floor((Date.now() - trialStartedAt) / 86400000));
+  } catch { return { status: "pending", trialDaysLeft: 0, isVeraaClient: false }; }
 }

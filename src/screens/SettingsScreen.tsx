@@ -10,7 +10,7 @@ import { isValidHex } from "../utils/color";
 import { getContrastColor, isReadable, ON_PRIMARY } from "../utils/colorUtils";
 import { PAYMENT_OPTIONS, resolveDocPrefs } from "../utils/helpers";
 import { fieldRate } from "../utils/quote";
-import { openCheckout, openCustomerPortal, PlanId, trialDaysLeft, validatePromoCode } from "../utils/billing";
+import { applyPromoCode, openCheckout, openCustomerPortal, PlanId, trialDaysLeft, validatePromoCode } from "../utils/billing";
 import { buildTheme, THEME_PRESETS } from "../utils/theme";
 
 const BG_PRESETS = [
@@ -154,9 +154,14 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
     if (!code) { setPromoError("Enter your code first."); return; }
     setPromoChecking(true); setPromoError("");
     const r = await validatePromoCode(code);
+    if (!r.valid || r.type !== "veraa") { setPromoChecking(false); setPromoError("Invalid code — check with your Veraa account manager"); return; }
+    // Single-use: claim it server-side before flipping the local business. If two contractors race for
+    // the same code, only the first claim wins; the second sees "already used".
+    const claim = await applyPromoCode(code, business.code);
     setPromoChecking(false);
-    if (r.valid && r.type === "veraa") { setPromoError(""); await onApplyVeraa?.(code); return; }
-    setPromoError("Invalid code — check with your Veraa account manager");
+    if (!claim.ok) { setPromoError(claim.error === "code already used" ? "That code has already been used." : "Couldn't apply that code — try again."); return; }
+    setPromoError("");
+    await onApplyVeraa?.(code);
   };
   const confirmCancel = () => Alert.alert(
     "Cancel Subscription?",

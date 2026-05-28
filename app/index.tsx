@@ -45,7 +45,7 @@ import { isValidHex } from "../src/utils/color";
 import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "../src/utils/helpers";
 import { logger } from "../src/utils/logger";
 import { authenticateMaster } from "../src/utils/masterAuth";
-import { getBillingStatus, trialDaysLeft } from "../src/utils/billing";
+import { getBillingStatus, isBillingGated, trialDaysLeft } from "../src/utils/billing";
 import { fetchWithTimeout } from "../src/utils/fetchTimeout";
 import { getPushPermissionStatus, registerForPushNotifications } from "../src/utils/pushNotifications";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
@@ -288,12 +288,13 @@ export default function Index() {
             setBusiness(bizWithSub);
             try { await saveBusiness(bizWithSub); } catch { /* best-effort; gate treats undefined as active anyway */ }
           }
-          // Billing gate (admins only; demo + grandfathered + active/veraa bypass). A business with
-          // undefined subscriptionStatus predates billing → grandfathered (treated as active).
+          // Billing gate (single source of truth lives in isBillingGated). Demo + non-admins +
+          // grandfathered (undefined status) + active/veraa/trialing bypass. "pending" = mid-signup
+          // (never paid) → re-route to the signup-mode paywall so abandoned signups land on the
+          // friendly "start your trial" copy instead of the post-trial "expired" copy.
           const sub = bizWithSub.subscriptionStatus;
-          const billingGated = biz.code !== "DEMO" && user.role === "admin"
-            && (sub === "expired" || (sub === "trial" && trialDaysLeft(biz.trialStartedAt) <= 0));
-          if (billingGated) { setPaywallMode("expired"); setTimeout(() => setScreen("paywall"), 600); return; }
+          const billingGated = isBillingGated({ subscriptionStatus: sub, trialStartedAt: biz.trialStartedAt, isDemoMode: biz.code === "DEMO", isAdmin: user.role === "admin" });
+          if (billingGated) { setPaywallMode(sub === "pending" ? "signup" : "expired"); setTimeout(() => setScreen("paywall"), 600); return; }
           // Part 8: a business with a blank schema (no trade, no fields) should never land on an empty
           // quote tool — route straight into onboarding to build it.
           if (isBlankSchema(biz.schema)) {
@@ -366,7 +367,9 @@ export default function Index() {
         adminPin: "", username, adminPinHash,
         brand: { ...signupBrand, primaryColor: finalColor, email: authEmail.trim() || signupBrand.email },
         schema: null, createdAt: Date.now(), brandConfigured,
-        subscriptionStatus: "trial", trialStartedAt: Date.now(), // 14-day trial; paywall gates after
+        // "pending" gates access until Stripe checkout fires the webhook (or a Veraa code is applied).
+        // The trial clock is started by the webhook, not here — abandoning checkout grants nothing.
+        subscriptionStatus: "pending",
       };
       await saveBusiness(biz);
       await saveUsers(code, [user]);
@@ -840,11 +843,15 @@ export default function Index() {
         setBusiness(updated);
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] plan save failed", e instanceof Error ? e.message : String(e)); }
       }}
-      onStartTrial={() => setScreen(business.schema ? "done" : "choose_setup")}
       onContinue={() => setScreen(business.schema ? "done" : "choose_setup")}
-      onPaid={async () => {
-        // Payment confirmed (poll/redirect) → flip to active + leave the gate.
-        const updated: Business = { ...business, subscriptionStatus: "active" };
+      onPaid={async (confirmedStatus) => {
+        // Webhook confirmed the subscription state (trialing/active). Mirror it locally + leave the gate.
+        // trialStartedAt is set to now since checkout just completed (server's column is the SoT going forward).
+        const updated: Business = {
+          ...business,
+          subscriptionStatus: confirmedStatus,
+          ...(confirmedStatus === "trialing" && !business.trialStartedAt ? { trialStartedAt: Date.now() } : {}),
+        };
         setBusiness(updated);
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] activate save failed", e instanceof Error ? e.message : String(e)); }
         setScreen(updated.schema ? "done" : "choose_setup");
