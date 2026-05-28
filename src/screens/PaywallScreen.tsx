@@ -5,7 +5,7 @@ import PricrLogo from "../components/PricrLogo";
 import { B } from "../constants/brand";
 import { s } from "../styles";
 import { ON_PRIMARY } from "../utils/colorUtils";
-import { applyPromoCode, getBillingStatus, openCheckout, PlanId, validatePromoCode } from "../utils/billing";
+import { applyPromoCode, getBillingStatus, openCheckout, PlanId, postCheckoutAction, validatePromoCode } from "../utils/billing";
 import { SubscriptionStatus } from "../types";
 
 const FEATURES = [
@@ -89,18 +89,20 @@ export function PaywallScreen({ businessCode, primaryColor, mode = "signup", tri
     onVeraaApplied(code);
   };
 
-  // Pick a plan: record it, open Stripe Checkout (3-day trial collected there). Both modes now poll
-  // for webhook confirmation — closing the Stripe tab without paying never advances past the gate.
+  // Pick a plan: record it, open Stripe Checkout (3-day trial collected there). WEB redirects the
+  // current tab away to Stripe — no poll here (the page is leaving in microseconds; the boot effect
+  // on return catches `?billing-success=1` / `?billing-cancel=1` and re-checks status). NATIVE
+  // opens an in-app browser and the JS keeps running, so we poll for webhook activation.
   const choosePlan = async (plan: PlanId) => {
     setPromoError("");
     onSelectPlan?.(plan);
     setLaunching(plan);
-    const opened = await openCheckout(businessCode, plan);
+    const result = await openCheckout(businessCode, plan);
     setLaunching(null);
-    if (!opened) { setPromoError("Billing isn't available right now. Try again shortly or use a partner code."); return; }
-    // Stripe returned (in-app browser closed) — verify activation. Web also catches the redirect
-    // path via the URL query params in app/index.tsx; both end in onPaid.
-    pollForActivation();
+    const action = postCheckoutAction(result);
+    if (action === "show-error") { setPromoError("Billing isn't available right now. Try again shortly or use a partner code."); return; }
+    if (action === "skip-poll") return; // web: redirecting; the page is about to navigate away
+    pollForActivation(); // native: SafariVC / Custom Tabs returned; wait for the webhook
   };
 
   const PlanCard = ({ plan, price, per, billed, recommended, badge }: { plan: PlanId; price: string; per: string; billed: string; recommended?: boolean; badge?: string }) => (

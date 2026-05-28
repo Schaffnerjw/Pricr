@@ -139,8 +139,10 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const trialFill = Math.max(0, Math.min(1, (3 - trialLeft) / 3));
   const planLabel = business.selectedPlan === "annual" ? "Pricr Annual · $490/year" : business.selectedPlan === "monthly" ? "Pricr Monthly · $49/month" : "Pricr · Active";
   const startCheckout = async (plan: PlanId) => {
-    const ok = await openCheckout(business.code, plan);
-    if (!ok) Alert.alert("Billing", "Billing isn't available yet — please try again shortly.");
+    const result = await openCheckout(business.code, plan);
+    if (result === "failed") Alert.alert("Billing", "Billing isn't available yet — please try again shortly.");
+    // "redirecting" (web) → page is leaving; the boot effect re-checks status on return.
+    // "opened" (native) → in-app browser closed; the parent's onApplyVeraa / paywall polling handles re-sync.
   };
   // Partner-code entry for a contractor who signed up without one. Validates via the proxy, then
   // (on a valid Veraa code) hands off to the parent to mark veraa + persist; the business prop

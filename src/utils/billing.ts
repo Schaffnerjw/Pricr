@@ -1,13 +1,14 @@
 // Client billing helpers. Stripe Checkout opens in the browser (expo-web-browser) — no native SDK.
 // All secret-key work happens on the proxy; the client only calls these public proxy endpoints.
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import { SIGN_BASE } from "../constants/brand";
 import { SubscriptionStatus } from "../types";
 import { logger } from "./logger";
 // Pure decisions live in billingGate so tests can run them in a node-only jest env.
-import { TRIAL_DAYS } from "./billingGate";
-export { isBillingGated, TRIAL_DAYS, trialDaysLeft } from "./billingGate";
+import { CheckoutOpenResult, shouldRedirectInSameTab, TRIAL_DAYS } from "./billingGate";
+export type { CheckoutOpenResult } from "./billingGate";
+export { isBillingGated, postCheckoutAction, TRIAL_DAYS, trialDaysLeft } from "./billingGate";
 
 export type PlanId = "monthly" | "annual";
 export interface PromoResult { valid: boolean; type: "veraa" | "unknown"; message: string }
@@ -38,36 +39,53 @@ export async function applyPromoCode(code: string, businessCode: string): Promis
   } catch { logger.error("[billing] apply-promo failed"); return { ok: false, error: "Couldn't reach the server" }; }
 }
 
-// Open Stripe Checkout in the browser for the given business + plan. Returns false if billing isn't configured.
-export async function openCheckout(businessCode: string, plan: PlanId = "monthly"): Promise<boolean> {
+// Open Stripe Checkout. WEB: same-tab redirect (mobile browsers block popups opened after our
+// async fetch, and the popup window features in expo-web-browser's web shim make it worse on
+// iOS Safari). Stripe's success_url/cancel_url redirect back to APP_URL with query params the
+// boot effect catches. NATIVE: SafariViewController / Custom Tabs via expo-web-browser — JS keeps
+// running and the caller polls for activation.
+export async function openCheckout(businessCode: string, plan: PlanId = "monthly"): Promise<CheckoutOpenResult> {
   try {
     const res = await fetch(`${SIGN_BASE}/billing/create-checkout-session`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ businessCode, plan }),
     });
-    if (!res.ok) return false;
+    if (!res.ok) return "failed";
     const data = await res.json();
-    if (data?.url) { await WebBrowser.openBrowserAsync(data.url); return true; }
-    return false;
-  } catch { logger.error("[billing] checkout open failed"); return false; }
+    if (!data?.url) return "failed";
+    if (shouldRedirectInSameTab(Platform.OS)) {
+      if (typeof window !== "undefined") window.location.href = data.url;
+      return "redirecting";
+    }
+    await WebBrowser.openBrowserAsync(data.url);
+    return "opened";
+  } catch { logger.error("[billing] checkout open failed"); return "failed"; }
 }
 
-// Open the Stripe Customer Portal (manage payment / invoices / cancel) for a business. Returns false
-// (and alerts) if billing isn't configured or there's no Stripe customer yet.
-export async function openCustomerPortal(businessCode: string): Promise<boolean> {
+// Open the Stripe Customer Portal (manage payment / invoices / cancel) for a business. WEB uses
+// same-tab redirect; native uses the in-app browser. Surfaces an alert when the open fails (the
+// portal is a back-of-house flow — alerts are fine here, unlike the checkout path which is gated).
+export async function openCustomerPortal(businessCode: string): Promise<CheckoutOpenResult> {
   try {
     const res = await fetch(`${SIGN_BASE}/billing/customer-portal`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ businessCode }),
     });
     if (res.ok) {
       const data = await res.json();
-      if (data?.url) { await WebBrowser.openBrowserAsync(data.url); return true; }
+      if (data?.url) {
+        if (shouldRedirectInSameTab(Platform.OS)) {
+          if (typeof window !== "undefined") window.location.href = data.url;
+          return "redirecting";
+        }
+        await WebBrowser.openBrowserAsync(data.url);
+        return "opened";
+      }
     }
     Alert.alert("Billing", "Couldn't open billing portal. Try again.");
-    return false;
+    return "failed";
   } catch {
     logger.error("[billing] portal open failed");
     Alert.alert("Billing", "Couldn't open billing portal. Try again.");
-    return false;
+    return "failed";
   }
 }
 

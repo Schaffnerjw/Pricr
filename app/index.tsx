@@ -46,6 +46,7 @@ import { generateCode, parseSchemaFromResponse, parseSuggestedReplies } from "..
 import { logger } from "../src/utils/logger";
 import { authenticateMaster } from "../src/utils/masterAuth";
 import { getBillingStatus, isBillingGated, trialDaysLeft } from "../src/utils/billing";
+import { decideBillingReturn } from "../src/utils/billingGate";
 import { fetchWithTimeout } from "../src/utils/fetchTimeout";
 import { getPushPermissionStatus, registerForPushNotifications } from "../src/utils/pushNotifications";
 import { buildSchemaSummary, sampleFieldValues, sampleQuotes } from "../src/utils/quote";
@@ -229,28 +230,42 @@ export default function Index() {
     fetch(`${SIGN_BASE}/health`, { method: "GET" }).catch(() => { });
   }, []);
 
-  // Option A (web/PWA): Stripe redirects back to APP_URL with ?billing-success=1&session_id=… (paid)
-  // or ?billing-cancel=1 (backed out). Once the business loads, verify activation and leave the gate,
-  // or show the friendly cancel notice. Query params are cleared so this doesn't re-trigger.
+  // Stripe redirects back to APP_URL with ?billing-success=1&session_id=… (paid) or
+  // ?billing-cancel=1 (backed out). On the success return we briefly poll for the webhook-confirmed
+  // status (Stripe's webhook can lag the redirect by a couple of seconds; without polling the user
+  // lands on the paywall right after paying and has no idea why). On cancel we keep the paywall up
+  // but pick mode based on what the user actually has — "pending" (mid-signup) stays in signup
+  // copy, "expired" gets the post-trial copy. Query params are cleared so this doesn't re-trigger.
   useEffect(() => {
     if (typeof window === "undefined" || !business?.code || business.code === "DEMO") return;
-    const params = new URLSearchParams(window.location.search);
-    const success = params.get("billing-success") === "1" || params.has("session_id");
-    const cancel = params.get("billing-cancel") === "1";
-    if (!success && !cancel) return;
+    const decision = decideBillingReturn(window.location.search);
+    if (decision === "ignore") return;
     (async () => {
-      if (success) {
-        try {
-          const st = await getBillingStatus(business.code);
-          if (st.status === "active" || st.status === "veraa" || st.status === "trialing") {
-            const updated: Business = { ...business, subscriptionStatus: st.status as Business["subscriptionStatus"] };
-            setBusiness(updated);
-            try { await saveBusiness(updated); } catch { /* best-effort */ }
-            setScreen(updated.schema ? "done" : "choose_setup");
-          }
-        } catch { /* webhook is source of truth; next load will reflect it */ }
-      } else if (cancel) {
-        setPaywallCancelled(true); setPaywallMode("expired"); setScreen("paywall");
+      if (decision === "success-check") {
+        // Brief poll — webhook (proxy.js:checkout.session.completed) usually fires within ~1s of
+        // the redirect, but Stripe's docs warn it can take longer under load. 8 tries × 2s = 16s.
+        for (let i = 0; i < 8; i++) {
+          try {
+            const st = await getBillingStatus(business.code);
+            if (st.status === "active" || st.status === "veraa" || st.status === "trialing") {
+              const updated: Business = {
+                ...business,
+                subscriptionStatus: st.status as Business["subscriptionStatus"],
+                ...(st.status === "trialing" && !business.trialStartedAt ? { trialStartedAt: Date.now() } : {}),
+              };
+              setBusiness(updated);
+              try { await saveBusiness(updated); } catch { /* best-effort */ }
+              setScreen(updated.schema ? "done" : "choose_setup");
+              break;
+            }
+          } catch { /* keep polling */ }
+          if (i < 7) await new Promise(r => setTimeout(r, 2000));
+        }
+      } else {
+        // cancel — leave the user on the paywall in whichever mode matches their actual state.
+        setPaywallCancelled(true);
+        setPaywallMode(business.subscriptionStatus === "pending" ? "signup" : "expired");
+        setScreen("paywall");
       }
       try { window.history.replaceState({}, "", window.location.pathname); } catch { /* ignore */ }
     })();

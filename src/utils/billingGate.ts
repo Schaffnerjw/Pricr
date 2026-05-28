@@ -2,6 +2,38 @@
 // directly. The network-y / UI bits live in billing.ts and re-export from here.
 import { SubscriptionStatus } from "../types";
 
+// Result of attempting to open Stripe Checkout / Customer Portal. On WEB we redirect the current
+// tab (popup blockers fire after our async fetch on mobile, so a popup is unsafe) — the page is
+// leaving and the caller must NOT start a polling loop. On NATIVE we open SafariVC / Custom Tabs
+// via expo-web-browser — the JS keeps running, polling for activation is correct.
+export type CheckoutOpenResult = "redirecting" | "opened" | "failed";
+
+// Web (any browser, including mobile web) needs a same-tab redirect. Native iOS/Android uses an
+// in-app browser. Pure so tests cover both branches without mocking react-native's Platform.
+export function shouldRedirectInSameTab(platformOS: string): boolean {
+  return platformOS === "web";
+}
+
+// What the caller should do after openCheckout returns. "failed" → surface an error; "redirecting"
+// → do nothing (the page is leaving in microseconds); "opened" → poll for webhook activation.
+export type PostCheckoutAction = "show-error" | "skip-poll" | "poll";
+export function postCheckoutAction(result: CheckoutOpenResult): PostCheckoutAction {
+  if (result === "failed") return "show-error";
+  if (result === "redirecting") return "skip-poll";
+  return "poll";
+}
+
+// What `app/index.tsx`'s billing-return effect should do based on the URL query string Stripe
+// redirected back with. `success-check` triggers a (brief) poll for the webhook-confirmed status;
+// `cancel-gated` keeps the user on the paywall; `ignore` is the no-op for normal page loads.
+export type BillingReturnDecision = "success-check" | "cancel-gated" | "ignore";
+export function decideBillingReturn(search: string): BillingReturnDecision {
+  const params = new URLSearchParams(search);
+  if (params.get("billing-success") === "1" || params.has("session_id")) return "success-check";
+  if (params.get("billing-cancel") === "1") return "cancel-gated";
+  return "ignore";
+}
+
 // Days remaining in the 3-day Stripe-managed trial from the recorded start timestamp.
 export const TRIAL_DAYS = 3;
 export function trialDaysLeft(trialStartedAt?: number): number {
