@@ -16,6 +16,7 @@ import { useEffect } from "react";
 import { InstallPrompt } from "../src/components/InstallPrompt";
 import { UpdateBanner } from "../src/components/UpdateBanner";
 import { OfflineBanner } from "../src/components/OfflineBanner";
+import { VersionPoller } from "../src/components/VersionPoller";
 import * as Sentry from '@sentry/react-native';
 
 Sentry.init({
@@ -67,6 +68,7 @@ export default Sentry.wrap(function RootLayout() {
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#0A0E1A" } }} />
       <InstallPrompt />
       <UpdateBanner />
+      <VersionPoller />
       <OfflineBanner />
     </>
   );
