@@ -25,6 +25,8 @@ import { DragHandle } from "../components/DragHandle";
 import { EditableFieldRow } from "../components/EditableFieldRow";
 import { reorderFields } from "../utils/schemaEditorOps";
 import { applyKitSchemaDiff, KitSchemaDiff } from "../utils/applyKitSchemaDiff";
+import { decideKitDiffResponse } from "../utils/kitResponseRenderer";
+import { sendQuoteLink } from "../utils/sendQuoteLink";
 import { KitSchemaUpdate, legacyKitUpdateToDiff } from "../utils/legacyKitUpdateToDiff";
 import { fetchWithTimeout, isTimeout, KIT_TIMEOUT_MS } from "../utils/fetchTimeout";
 import { checkOnline } from "../hooks/useNetworkStatus";
@@ -464,25 +466,46 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   };
 
   // Sharing the proposal: persist it (if not already), stash the rendered presentation so the
-  // remote page / signed PDF can render it, flip status to "sent", and return the signing link.
-  const prepareShare = async (presentation: QuotePresentation): Promise<{ signingLink: string | null }> => {
+  // remote page / signed PDF can render it, flip status to "sent", and return BOTH the signing
+  // link (for OS-share / clipboard fallback) AND the bare token (so the proxy-delivery path
+  // /quote/send-link can audit-log the send without re-parsing the URL).
+  const prepareShare = async (presentation: QuotePresentation): Promise<{ signingLink: string | null; signingToken: string | null }> => {
     let id = lastSavedId;
     if (!id) id = await saveQuote();
-    if (!id) return { signingLink: null };
+    if (!id) return { signingLink: null, signingToken: null };
     await attachQuotePresentation(business.code, id, presentation);
     await markQuoteSent(business.code, id);
     const token = await getQuoteSigningToken(business.code, id);
-    return { signingLink: token ? `${SIGN_BASE}/sign/${token}` : null };
+    return { signingLink: token ? `${SIGN_BASE}/sign/${token}` : null, signingToken: token || null };
   };
 
-  // In-person signature: persist the quote (if needed) + its presentation, then record the
-  // signature (status -> accepted in cloud, won locally). Works offline too.
-  const handleSign = async (signatureData: string, presentation: QuotePresentation) => {
+  // In-person signature: persist the quote (if needed) + its presentation with the captured
+  // customer contact, then record the signature (status -> accepted in cloud, won locally). After
+  // the save, POST to /quote/send-link so the customer receives a hosted-link email/SMS with
+  // their signed copy — never an attachment. Returns the delivery outcome so the ClosingCard
+  // success screen can show "We've sent a copy to <email>" (or report a delivery failure honestly
+  // — the signature itself still stuck, the contractor just needs to retry the send).
+  const handleSign = async (
+    signatureData: string,
+    presentation: QuotePresentation,
+    contact: { email?: string; phone?: string },
+  ): Promise<{ signed: boolean; sentEmail: boolean; sentSms: boolean; sendError?: string }> => {
     let id = lastSavedId;
     if (!id) id = await saveQuote();
-    if (!id) return;
-    await attachQuotePresentation(business.code, id, presentation);
+    if (!id) return { signed: false, sentEmail: false, sentSms: false, sendError: "Couldn't save the quote." };
+    const pres: QuotePresentation = {
+      ...presentation,
+      customerEmail: contact.email?.trim() || undefined,
+      customerPhone: contact.phone?.trim() || undefined,
+    };
+    await attachQuotePresentation(business.code, id, pres);
     await saveSignature(business.code, id, signatureData, customerName || undefined);
+    const token = await getQuoteSigningToken(business.code, id);
+    if (token && (contact.email?.trim() || contact.phone?.trim())) {
+      const r = await sendQuoteLink({ token, email: contact.email?.trim(), phone: contact.phone?.trim(), signed: true });
+      return { signed: true, sentEmail: r.sentEmail, sentSms: r.sentSms, sendError: r.ok ? undefined : r.error };
+    }
+    return { signed: true, sentEmail: false, sentSms: false };
   };
 
   // Persist the in-quote Kit conversation per business so it survives reopen/restart.
@@ -562,27 +585,26 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       }
 
       // 0) PREFERRED (conversational agent): a SCHEMA_DIFF block applied by applyKitSchemaDiff.
+      // Response rendering is delegated to decideKitDiffResponse (pure, testable) so the
+      // false-success drift that motivated this code can't sneak back in.
       logger.debug("[KitDiff] response contains diff:", reply.includes("SCHEMA_DIFF_START"));
       if (/SCHEMA_DIFF_START/i.test(reply)) {
         const diff = parseKitDiff(reply);
         logger.debug("[KitDiff] parsed diff:", JSON.stringify(diff)?.substring(0, 200));
+        let appliedChanges: string[] = [];
+        let appliedErrors: string[] = [];
+        let nextSchemaToApply: typeof schema | null = null;
         if (diff) {
-          const { schema: nextSchema, changes, errors } = applyKitSchemaDiff(schema, diff);
-          logger.debug("[KitDiff] apply result — changes:", changes);
-          logger.debug("[KitDiff] apply result — errors:", errors);
-          const errLine = errors.length ? `${changes.length ? "\n" : ""}⚠️ Couldn't apply: ${errors.join(", ")}` : "";
-          if (changes.length > 0) {
-            await applyKitSchema(nextSchema, "diff");
-            const changeLines = changes.map(c => `✓ ${c}`).join("\n");
-            finish(`${displayMessage ? displayMessage + "\n\n" : ""}${changeLines}${errLine}`);
-          } else if (errors.length > 0) {
-            finish(`${displayMessage ? displayMessage + "\n\n" : ""}⚠️ Couldn't apply: ${errors.join(", ")}`);
-          } else {
-            finish(displayMessage || "Done.");
-          }
-        } else {
-          finish(displayMessage || "I tried to make that change but couldn't read it — tell me again and I'll retry.");
+          const result = applyKitSchemaDiff(schema, diff);
+          appliedChanges = result.changes;
+          appliedErrors = result.errors;
+          if (result.changes.length > 0) nextSchemaToApply = result.schema;
+          logger.debug("[KitDiff] apply result — changes:", appliedChanges);
+          logger.debug("[KitDiff] apply result — errors:", appliedErrors);
         }
+        const decision = decideKitDiffResponse({ diffParsed: !!diff, changes: appliedChanges, errors: appliedErrors, displayMessage });
+        if (decision.kind === "applied" && nextSchemaToApply) await applyKitSchema(nextSchemaToApply, "diff");
+        finish(decision.text);
         setAgentLoading(false);
         return;
       }

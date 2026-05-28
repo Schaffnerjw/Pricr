@@ -91,7 +91,11 @@ export type QuoteStatus = "open"|"won"|"lost";
 export interface QuotePresentation {
   businessName: string; brandColor: string; logoUri?: string|null;
   phone?: string; email?: string; address?: string;
-  customerName: string; trade?: string; date: number; validThrough: number;
+  customerName: string;
+  // Captured during in-person signing (or upstream) so we can send a signed copy + show history.
+  // Distinct from the business's `phone` / `email` above — those identify the contractor.
+  customerEmail?: string; customerPhone?: string;
+  trade?: string; date: number; validThrough: number;
   notes?: string; // free-text job notes, shown on the proposal/PDF/signing page
   lineItems: { label: string; amount: number }[];
   taxRate: number; tax: number; total: number; depositPct: number; deposit: number; balanceDue: number;

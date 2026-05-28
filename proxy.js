@@ -864,13 +864,15 @@ async function handleSignSubmit(req, res, token, rawBody) {
         // Use the clean signing base for the certificate link in emails (falls back to the Railway URL).
         const certificateUrl = `${SIGNING_BASE}/sign/${encodeURIComponent(token)}/certificate`;
         const tokenShort = String(token).slice(0, 8).toUpperCase();
-        // EMAIL 1 — customer confirmation (only if they provided an address) with the signed agreement attached.
+        // EMAIL 1 — customer confirmation (only if they provided an address). Body links to the
+        // hosted certificate page; no HTML attachment (customers were receiving a "signed-quote.html"
+        // file blob alongside the link, which was confusing on iOS Mail / Gmail — the link in the
+        // body always renders the signed document in the browser).
         if (signer_email) {
           sendEmail({
             to: signer_email,
             subject: `Your signed quote from ${(ctx.business && ctx.business.name) || 'your contractor'} — Document ID: ${tokenShort}`,
             html: customerEmailHtml(signedQuote, ctx.business, accent, { token, certificateUrl, signedAt }),
-            attachments: [{ filename: 'signed-quote.html', content: Buffer.from(signedAgreementHtml(signedQuote, ctx.business, accent)).toString('base64') }],
           });
         }
         // EMAIL 2 — contractor notification (always, if we have their email).
@@ -1536,6 +1538,64 @@ async function handleBillingStatus(res, businessCode) {
   } catch (_) { return sendJson(res, 200, { status: 'trial', trialDaysLeft: 3, isVeraaClient: false, monthlyAvailable: !!process.env.STRIPE_PRICE_ID, annualAvailable: !!process.env.STRIPE_ANNUAL_PRICE_ID }); }
 }
 
+// ── Quote delivery — link only, never a file attachment ─────────────────────────
+// Sends a hosted-quote LINK to the customer via email and/or SMS. Two scenarios:
+//   signed=false → "Review and sign: <link to /sign/:token>"   (initial quote share)
+//   signed=true  → "Your signed quote: <link to /sign/:token/certificate>"   (post-sign delivery)
+// Never attaches a file. Carriers and iMessage auto-render the URL into a tap-to-open preview;
+// the customer always lands on the hosted page, never downloads "Pricr-Quote.html".
+function quoteLinkSmsBody({ bizName, total, link, signed, customerName }) {
+  const greet = (customerName && String(customerName).trim()) ? `Hi ${String(customerName).trim()},\n\n` : '';
+  if (signed) return `${greet}Your signed quote from ${bizName}: ${link}`;
+  return `${greet}Thanks for considering ${bizName}. Here's your quote for ${money(total)}.\n\nReview and sign: ${link}`;
+}
+function quoteLinkEmailHtml({ bizName, total, link, signed, accent }) {
+  const accentColor = accent || '#2979FF';
+  const headline = signed ? 'Your signed quote is ready' : 'Your quote is ready';
+  const ctaLabel = signed ? 'View signed quote &rarr;' : 'Review &amp; sign &rarr;';
+  const blurb = signed
+    ? `<p style="margin:0 0 14px;font-size:14px;line-height:1.55;">Thanks for signing with ${esc(bizName)}. Your signed copy is hosted at the link below — open it any time.</p>`
+    : `<p style="margin:0 0 14px;font-size:14px;line-height:1.55;">Thanks for considering ${esc(bizName)}. Tap below to review your quote (${money(total)}) and sign when you're ready.</p>`;
+  return emailShell(`<h1 style="margin:0 0 12px;font-size:20px;">${esc(headline)}</h1>${blurb}${ctaButton(ctaLabel, link, accentColor)}<p style="margin:18px 0 0;font-size:12px;color:#94A3B8;">Or paste this into your browser: ${esc(link)}</p>`, accentColor);
+}
+async function handleSendQuoteLink(req, res, rawBody) {
+  let body;
+  try { body = JSON.parse(rawBody.toString() || '{}'); }
+  catch (_) { return sendJson(res, 400, { ok: false, error: 'invalid body' }); }
+  const token = String(body.token || '').trim();
+  const email = String(body.email || '').trim();
+  const phone = String(body.phone || '').trim();
+  const signed = !!body.signed;
+  if (!token) return sendJson(res, 400, { ok: false, error: 'token required' });
+  if (!email && !phone) return sendJson(res, 400, { ok: false, error: 'email or phone required' });
+  const ctx = await loadSigningContext(token);
+  if (!ctx) return sendJson(res, 404, { ok: false, error: 'quote not found' });
+  const pres = (ctx.quote.quote_data && ctx.quote.quote_data.presentation) || {};
+  const bizName = pres.businessName || (ctx.business && ctx.business.name) || 'your contractor';
+  const total = pres.total != null ? pres.total : (ctx.quote.total || 0);
+  const accent = pres.brandColor || (ctx.business && ctx.business.config && ctx.business.config.brand && ctx.business.config.brand.primaryColor) || '#2979FF';
+  const customerName = pres.customerName || ctx.quote.customer_name || '';
+  const link = signed
+    ? `${SIGNING_BASE}/sign/${encodeURIComponent(token)}/certificate`
+    : `${SIGNING_BASE}/sign/${encodeURIComponent(token)}`;
+  // Fire-and-forget delivery — never block the response on email/SMS providers.
+  if (email) {
+    sendEmail({
+      to: email,
+      subject: signed ? `Your signed quote from ${bizName}` : `Your quote from ${bizName}`,
+      html: quoteLinkEmailHtml({ bizName, total, link, signed, accent }),
+    });
+  }
+  if (phone) sendSms(phone, quoteLinkSmsBody({ bizName, total, link, signed, customerName }));
+  // Audit log the send so the contractor can see where the link went.
+  try {
+    const log = Array.isArray(ctx.quote.audit_log) ? ctx.quote.audit_log.slice() : [];
+    log.push({ event: signed ? 'signed_copy_sent' : 'quote_link_sent', timestamp: new Date().toISOString(), email: email || null, phone_last4: phone ? phoneLast4(phone) : null });
+    await supabaseRequest('PATCH', `/rest/v1/quotes?signing_token=eq.${encodeURIComponent(token)}`, { audit_log: log });
+  } catch (_) { /* audit best-effort */ }
+  return sendJson(res, 200, { ok: true, sentEmail: !!email, sentSms: !!phone });
+}
+
 // ── FEATURE 3: onboarding email sequence (Resend, fire-and-forget) ──────────────
 // Three lifecycle emails, sent at most once each, tracked in config.onboardingEmails. The app
 // calls POST /onboarding/check on login/open; this decides which (if any) are now due and sends.
@@ -1744,6 +1804,7 @@ const server = http.createServer((req, res) => {
   if (path === '/billing/create-checkout-session' && req.method === 'POST') { readBody((buf) => handleCreateCheckoutSession(res, buf).catch(() => sendJson(res, 500, { error: 'checkout failed' }))); return; }
   if (path === '/billing/customer-portal' && req.method === 'POST') { readBody((buf) => handleCustomerPortal(res, buf).catch(() => sendJson(res, 500, { error: 'portal failed' }))); return; }
   if (path === '/billing/webhook' && req.method === 'POST') { readBody((buf) => handleStripeWebhook(req, res, buf).catch(() => sendJson(res, 500, { error: 'webhook failed' }))); return; }
+  if (path === '/quote/send-link' && req.method === 'POST') { readBody((buf) => handleSendQuoteLink(req, res, buf).catch(() => sendJson(res, 500, { ok: false, error: 'send failed' }))); return; }
   if (path === '/billing/status' && req.method === 'GET') {
     const code = new URLSearchParams((req.url || '').split('?')[1] || '').get('businessCode') || '';
     handleBillingStatus(res, code).catch(() => sendJson(res, 200, { status: 'trial', trialDaysLeft: 3, isVeraaClient: false }));

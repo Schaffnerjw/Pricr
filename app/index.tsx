@@ -37,7 +37,6 @@ import { isSupabaseConfigured } from "../src/lib/supabase";
 import { addQuote, clearCurrentUser, clearImportProgress, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
 import { BrandConfig, Business, DemoBusiness, QuoteSchema, QuoteTemplate, SavedQuote, Screen, User } from "../src/types";
 import { addTemplate, templateToInitialValues } from "../src/utils/quoteTemplates";
-import { buildGenericTemplate } from "../src/data/tradeTemplates";
 import { addSavedToolTemplate, duplicateSavedToolTemplate, getSavedToolTemplate, removeSavedToolTemplate } from "../src/utils/savedToolTemplates";
 import { isValidEmail, isValidPhone } from "../src/utils/contactValidation";
 import { hashPin } from "../src/utils/auth";
@@ -885,15 +884,6 @@ export default function Index() {
       primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor}
       onChooseWizard={() => setScreen("wizard")}
       onChooseImport={() => { clearImportProgress(); setImportText(""); setImportResume(false); setScreen("import"); }}
-      onChooseGeneric={async (tradeName) => {
-        if (!business) return;
-        const schema = buildGenericTemplate(tradeName);
-        const updated: Business = { ...business, schema, tradeName, brandConfigured: business.brandConfigured ?? false, kitUpdates: (business.kitUpdates || 0) + 1 };
-        setBusiness(updated);
-        try { await saveBusiness(updated); } catch (e) { logger.warn("[generic] save failed", e instanceof Error ? e.message : String(e)); }
-        setIsReconfiguring(false); setJustBuilt(true);
-        setTimeout(() => setScreen("confirm_schema"), 200);
-      }}
       onResume={() => { setImportResume(true); setScreen("import"); }}
       isReconfiguring={isReconfiguring}
       onCancel={() => { setIsReconfiguring(false); setScreen("done"); }}

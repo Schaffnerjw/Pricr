@@ -1,24 +1,23 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { Modal, Pressable, SafeAreaView, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { SafeAreaView, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { B } from "../constants/brand";
 import { getImportProgress } from "../storage";
 import { s } from "../styles";
 import { getContrastColor, ON_PRIMARY } from "../utils/colorUtils";
 
-// First onboarding/rebuild screen: route the contractor to the right setup path for their pricing.
-export function SetupChoiceScreen({ primaryColor, backgroundColor, onChooseWizard, onChooseImport, onChooseGeneric, onResume, isReconfiguring, onCancel }: {
+// First onboarding/rebuild screen: route the contractor to either Kit (chat-built schema) or Import
+// (paste an existing price sheet). A contractor with a custom trade ("property management",
+// "photography", "pool service") handles it inside Kit — they tell Kit what they do and Kit builds
+// the tool from scratch via the same SCHEMA_DIFF pipeline that powers all other edits.
+export function SetupChoiceScreen({ primaryColor, backgroundColor, onChooseWizard, onChooseImport, onResume, isReconfiguring, onCancel }: {
   primaryColor: string; backgroundColor?: string;
   onChooseWizard: () => void; onChooseImport: () => void; onResume?: () => void;
-  // ADDITIVE: a free-text "Other / Generic" entry — loads the agnostic Generic engine with the typed trade name.
-  onChooseGeneric?: (tradeName: string) => void;
   isReconfiguring?: boolean; onCancel?: () => void;
 }) {
   const txt = getContrastColor(backgroundColor || "#0A0E1A");
   const onPrimary = ON_PRIMARY;
   const [hasProgress, setHasProgress] = useState(false);
-  const [genericOpen, setGenericOpen] = useState(false);
-  const [genericName, setGenericName] = useState("");
 
   // Surface a "Resume setup" option if a half-finished import exists.
   useEffect(() => {
@@ -67,43 +66,12 @@ export function SetupChoiceScreen({ primaryColor, backgroundColor, onChooseWizar
         <View style={{ gap: 14 }}>
           <Card icon="message-circle" title="Chat with Kit" subtitle="Answer a few quick questions and I'll build it for you" tag="~2 min" onPress={onChooseWizard} />
           <Card icon="upload-cloud" title="Import My Price Sheet" subtitle="Paste or upload your existing price list and I'll do the rest" tag="Recommended for detailed pricing" onPress={onChooseImport} />
-          {onChooseGeneric && (
-            <Card icon="grid" title="Other — set up a generic tool" subtitle="Tell me what you do and I'll start you with a flexible blank tool you can shape." tag="Fastest" onPress={() => { setGenericName(""); setGenericOpen(true); }} />
-          )}
         </View>
 
         <Text style={{ color: txt, opacity: 0.6, fontSize: 13, textAlign: "center", fontFamily: "DMSans_400Regular" }}>
           You can always update your pricing later in Settings
         </Text>
       </ScrollView>
-
-      {/* Custom-trade entry modal — feeds the agnostic Generic engine. */}
-      <Modal visible={genericOpen} transparent animationType="fade" onRequestClose={() => setGenericOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 }} onPress={() => setGenericOpen(false)}>
-          <Pressable style={{ backgroundColor: B.card, borderColor: B.border, borderWidth: 1, borderRadius: 18, padding: 22, gap: 14 }} onPress={() => {}}>
-            <Text style={{ color: B.white, fontSize: 18, fontWeight: "800", fontFamily: "Syne_700Bold" }}>What kind of work do you do?</Text>
-            <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular", lineHeight: 19 }}>I&apos;ll start you with a blank tool you can shape — add line items, set rates, save your setup as a template anytime.</Text>
-            <TextInput
-              value={genericName} onChangeText={setGenericName} autoFocus
-              placeholder="e.g. Property Management, Photography, Pool Service"
-              placeholderTextColor={B.gray3}
-              style={[s.input, { backgroundColor: B.midnight, color: B.white, borderColor: B.border }]}
-            />
-            <View style={{ flexDirection: "row", gap: 10 }}>
-              <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: B.border }]} onPress={() => setGenericOpen(false)}>
-                <Text style={[s.btnSecondaryText, { color: B.muted }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[s.btn, { flex: 2, backgroundColor: primaryColor, opacity: genericName.trim() ? 1 : 0.4 }]}
-                disabled={!genericName.trim()}
-                onPress={() => { const v = genericName.trim(); setGenericOpen(false); onChooseGeneric?.(v); }}
-              >
-                <Text style={[s.btnText, { color: onPrimary }]}>Continue →</Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </SafeAreaView>
   );
 }
