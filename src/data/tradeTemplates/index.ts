@@ -3,6 +3,7 @@
 // here as placeholders so a future TradePickerScreen can fold them in without touching call sites.
 import { QuoteSchema } from "../../types";
 import { roadsideTemplate, ROADSIDE_META } from "./roadside";
+import { buildGenericTemplate, GENERIC_META } from "./generic";
 
 export type TradeId = "handyman" | "construction" | "decks" | "roadside" | "generic";
 
@@ -19,11 +20,13 @@ export interface TradeTemplate { meta: TradeMeta; build: () => QuoteSchema }
 
 export const TRADE_TEMPLATES: Record<TradeId, TradeTemplate | null> = {
   roadside: { meta: ROADSIDE_META, build: () => roadsideTemplate },
+  // Generic is the agnostic backbone — accepts a free-text trade name and yields an empty,
+  // ready-to-shape schema the contractor builds out via the AddField sheet.
+  generic: { meta: GENERIC_META, build: () => buildGenericTemplate() },
   // Placeholders — Kit/Import still drives these until dedicated templates are added.
   handyman: null,
   construction: null,
   decks: null,
-  generic: null,
 };
 
 export const TRADE_PICKER_ORDER: TradeId[] = ["handyman", "construction", "roadside", "decks", "generic"];
@@ -34,3 +37,4 @@ export function getTradeTemplate(id: TradeId): TradeTemplate | null {
 }
 
 export { roadsideTemplate, ROADSIDE_META };
+export { buildGenericTemplate, GENERIC_META };

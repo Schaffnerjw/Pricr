@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Image, SafeAreaView, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Alert, Image, Modal, Pressable, SafeAreaView, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { KitChatModal } from "../components/KitChatModal";
 import { B, DEFAULT_BRAND } from "../constants/brand";
 import { s } from "../styles";
@@ -47,7 +47,7 @@ function HexColorRow({ label, helper, initial, valid, onCommit }: { label: strin
 }
 
 // Admin-only brand customization. Edits a local copy, previews live, and saves to the business config.
-export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, onEditSchema, onApplyVeraa, scrollToTerms }: {
+export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLogo, onSignOut, onViewSigningActivity, onRebuildQuoteTool, onEditSchema, onApplyVeraa, onSaveCurrentTool, onRestoreSavedTool, onDuplicateSavedTool, onRemoveSavedTool, scrollToTerms }: {
   business: Business;
   currentUser?: User;
   onSave: (update: { name: string; brand: BrandConfig; termsAndConditions?: string; docPrefs?: DocPrefs; paymentMethods?: PaymentMethods; notificationEmail?: string; requireSmsVerification?: boolean; quoteExpiryDays?: number; payment?: import("../types").PaymentConfig }) => void | Promise<void>;
@@ -58,6 +58,11 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   onRebuildQuoteTool?: () => void;
   onEditSchema?: () => void; // open the manual schema editor (Settings-only power feature)
   onApplyVeraa?: (code: string) => void | Promise<void>; // valid Veraa code entered post-signup → mark veraa + persist
+  // Saved tool templates (the tool's SHAPE, not a quote draft).
+  onSaveCurrentTool?: (name: string) => void;
+  onRestoreSavedTool?: (id: string) => void;
+  onDuplicateSavedTool?: (id: string) => void;
+  onRemoveSavedTool?: (id: string) => void;
   scrollToTerms?: boolean;
 }) {
   const [name, setName] = useState(business.name);
@@ -78,6 +83,9 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
   const [payLink, setPayLink] = useState(business.payment?.link || "");
   const [payInstructions, setPayInstructions] = useState(business.payment?.instructions || "");
   const [payEnabled, setPayEnabled] = useState(!!business.payment?.enabled);
+  // Save-current-tool prompt (Saved Tool Templates section).
+  const [saveToolOpen, setSaveToolOpen] = useState(false);
+  const [saveToolName, setSaveToolName] = useState("");
   const [dp, setDp] = useState<DocPrefs>(resolveDocPrefs(business.docPrefs));
   const [kitOpen, setKitOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -484,6 +492,51 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
           )}
         </View>
 
+        {/* SAVED TOOL TEMPLATES (admin only) — the contractor's reusable tool shapes. Distinct from
+            quote templates (those store fieldValues for a starting-point quote). Save / restore /
+            duplicate the whole schema. */}
+        {isAdmin && onSaveCurrentTool && (
+          <View style={{ gap: 12 }}>
+            <Text style={s.sectionTitle}>MY SAVED TOOLS</Text>
+            <View style={{ backgroundColor: B.card, borderWidth: 1, borderColor: B.border, borderRadius: 12, padding: 16, gap: 12 }}>
+              <Text style={{ color: B.muted, fontSize: 13, fontFamily: "DMSans_400Regular", lineHeight: 19 }}>Save your current quote tool — fields, prices, sections, the whole shape — so you can restore or duplicate it anytime.</Text>
+              <TouchableOpacity style={[s.btnSecondary, { borderColor: pc, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }]} onPress={() => { setSaveToolName(business.tradeName || business.schema?.trade || ""); setSaveToolOpen(true); }}>
+                <Feather name="bookmark" size={15} color={pc} />
+                <Text style={[s.btnSecondaryText, { color: pc }]}>Save current tool as my template</Text>
+              </TouchableOpacity>
+              {(business.savedToolTemplates && business.savedToolTemplates.length > 0) ? (
+                business.savedToolTemplates.map(t => (
+                  <View key={t.id} style={{ backgroundColor: B.midnight, borderColor: B.border, borderWidth: 1, borderRadius: 10, padding: 12, gap: 8 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: B.white, fontSize: 14, fontWeight: "700", fontFamily: "DMSans_700Bold" }}>{t.name}</Text>
+                        <Text style={{ color: B.muted, fontSize: 11, fontFamily: "DMSans_400Regular" }}>{new Date(t.timestamp).toLocaleString()} · {t.schema?.fields?.length ?? 0} fields{t.tradeName ? ` · ${t.tradeName}` : ""}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => onRemoveSavedTool?.(t.id)} hitSlop={8} style={{ width: 32, height: 32, alignItems: "center", justifyContent: "center" }}>
+                        <Feather name="trash-2" size={15} color={B.red} />
+                      </TouchableOpacity>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      {onRestoreSavedTool && (
+                        <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: pc, paddingVertical: 8 }]} onPress={() => onRestoreSavedTool(t.id)}>
+                          <Text style={[s.btnSecondaryText, { color: pc, fontSize: 12 }]}>Restore</Text>
+                        </TouchableOpacity>
+                      )}
+                      {onDuplicateSavedTool && (
+                        <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: B.border, paddingVertical: 8 }]} onPress={() => onDuplicateSavedTool(t.id)}>
+                          <Text style={[s.btnSecondaryText, { color: B.muted, fontSize: 12 }]}>Duplicate</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <Text style={{ color: B.gray3, fontSize: 12, fontFamily: "DMSans_400Regular", textAlign: "center" }}>No saved tools yet.</Text>
+              )}
+            </View>
+          </View>
+        )}
+
         {/* PAYMENTS (optional, admin only) — contractor's own provider; OFF by default; Pricr never
             touches the money. The Pay button on signed quotes opens the contractor's payment link. */}
         {isAdmin && (
@@ -649,6 +702,31 @@ export function SettingsScreen({ business, currentUser, onSave, onBack, onPickLo
           <Text style={s.toastText}>Saved</Text>
         </View>
       )}
+
+      {/* Save-current-tool name prompt for the Saved Tool Templates section. */}
+      <Modal visible={saveToolOpen} transparent animationType="fade" onRequestClose={() => setSaveToolOpen(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 28 }} onPress={() => setSaveToolOpen(false)}>
+          <Pressable style={{ backgroundColor: B.card, borderRadius: 18, borderWidth: 1, borderColor: B.border, padding: 22, gap: 12 }} onPress={() => {}}>
+            <Text style={{ color: B.white, fontSize: 17, fontWeight: "800", fontFamily: "Syne_700Bold" }}>Save current tool as my template</Text>
+            <TextInput
+              style={{ backgroundColor: B.midnight, color: B.white, borderColor: B.border, borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontFamily: "DMSans_400Regular", fontSize: 15 }}
+              placeholder="e.g. Standard Deck Setup" placeholderTextColor={B.gray3} value={saveToolName} onChangeText={setSaveToolName} autoFocus
+            />
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity style={[s.btnSecondary, { flex: 1, borderColor: B.border }]} onPress={() => setSaveToolOpen(false)}>
+                <Text style={[s.btnSecondaryText, { color: B.muted }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.btn, { flex: 2, backgroundColor: pc, opacity: saveToolName.trim() ? 1 : 0.4 }]}
+                disabled={!saveToolName.trim()}
+                onPress={() => { onSaveCurrentTool?.(saveToolName.trim()); setSaveToolOpen(false); }}
+              >
+                <Text style={[s.btnText, { color: ON_PRIMARY }]}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }

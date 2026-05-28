@@ -83,6 +83,8 @@ function inferUnit(field: any): FieldUnit {
 const UNIT_SUFFIX: Record<FieldUnit, string> = {
   sqft: "/sqft", lf: "/lf", each: " each", hr: "/hr", room: "/room",
   load: "/load", vehicle: "/vehicle", ton: "/ton", flat: " flat", percent: "%",
+  // Generic-engine time/project units (the AddFieldSheet dropdown).
+  day: "/day", week: "/week", month: "/month", project: "/project",
 };
 
 // Universal/non-rate pricing keys that should never be shown as a per-field rate hint.

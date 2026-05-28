@@ -33,9 +33,14 @@ function computeStats(qs: SavedQuote[]): DashStats {
   return { realCount: real.length, monthCount, weekCount, accepted, pending, lastDaysAgo };
 }
 
-// Greeting subtext that reflects real quote activity (FIX 24).
-function subtextFor(st: DashStats | null): string {
-  if (!st || st.realCount === 0) return "Ready to build your first quote.";
+// Greeting subtext that reflects real quote activity (FIX 24). If the contractor entered a custom
+// trade name via the Generic path, weave it into the first-quote nudge — purely cosmetic, never
+// changes any schema/field behavior.
+function subtextFor(st: DashStats | null, tradeName?: string): string {
+  if (!st || st.realCount === 0) {
+    const t = (tradeName || "").trim();
+    return t ? `Ready to build your first ${t} quote.` : "Ready to build your first quote.";
+  }
   if (st.accepted > 0) return `${st.accepted} quote${st.accepted !== 1 ? "s" : ""} accepted this month. Great work.`;
   if (st.weekCount > 0) return `You've quoted ${st.weekCount} job${st.weekCount !== 1 ? "s" : ""} this week. Keep closing.`;
   if (st.lastDaysAgo !== null && st.lastDaysAgo > 7) return `Last quote was ${st.lastDaysAgo} days ago — time to close some jobs.`;
@@ -214,7 +219,7 @@ export function DoneScreen({ business, currentUser, primaryColor, secondaryColor
         {/* Greeting + dynamic subtext */}
         <View>
           <Text style={[s.h1, { color: pal.text }]}>Hey, {currentUser.name}.</Text>
-          <Text style={[s.body, { marginTop: 4, color: pal.textMuted }]}>{subtextFor(stats)}</Text>
+          <Text style={[s.body, { marginTop: 4, color: pal.textMuted }]}>{subtextFor(stats, business.tradeName)}</Text>
         </View>
 
         {isAdmin && business.brandConfigured === false && (

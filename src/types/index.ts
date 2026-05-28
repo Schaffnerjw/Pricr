@@ -26,6 +26,12 @@ export interface Business { code: string; name: string; ownerName: string; owner
   locationType?: "single" | "headquarters" | "location"; parentBusinessCode?: string; locationName?: string; childLocationCodes?: string[];
   // Saved quote templates + schema version history (both stored in config jsonb — no migration).
   quoteTemplates?: QuoteTemplate[]; schemaVersions?: SchemaVersion[];
+  // Free-text business-type the user entered in the custom-trade flow (e.g. "Property Management").
+  // Purely cosmetic — used to personalize labels. Schema/field behavior never depends on this.
+  tradeName?: string;
+  // The contractor's saved tool templates (the SHAPE of the tool, not a quote draft).
+  // Distinct from quoteTemplates (which stores fieldValues for a starting-point quote).
+  savedToolTemplates?: SavedToolTemplate[];
   // Optional payment passthrough — contractor's own provider (QuickBooks/Square/PayPal/Stripe/Venmo/…).
   // FULLY optional: OFF by default; quote tool builds/sends/signs without any payment setup. Pricr never
   // touches the money — the Pay button just opens the contractor's existing payment link in a browser.
@@ -41,6 +47,8 @@ export interface PaymentConfig {
 
 // A saved quote configuration the rep can start a new quote from.
 export interface QuoteTemplate { id: string; name: string; fieldValues: Record<string, any>; activeSections?: Record<string, boolean>; selectedAddOns?: string[]; createdAt: number; }
+// A saved snapshot of the WHOLE tool shape — restorable / duplicable from Settings.
+export interface SavedToolTemplate { id: string; name: string; timestamp: number; schema: QuoteSchema; tradeName?: string; }
 // One entry in the quote-tool version history (last 5 kept).
 export type SchemaVersionSource = "Kit" | "Import" | "Manual edit";
 export interface SchemaVersion { timestamp: number; source: SchemaVersionSource; schema: QuoteSchema; }
@@ -64,7 +72,7 @@ export interface QuoteSection {
 export interface QuoteSchema { trade: string; fields: SchemaField[]; pricing: Record<string,number>; addOns: AddOn[]; calculation: string; summaryLines: SummaryLine[]; sections?: QuoteSection[];
   // Ids of sections pre-selected on a new quote (set in the schema editor). Stable across re-derivation.
   defaultSectionIds?: string[]; }
-export type FieldUnit = "sqft"|"lf"|"each"|"hr"|"flat"|"percent"|"load"|"room"|"vehicle"|"ton";
+export type FieldUnit = "sqft"|"lf"|"each"|"hr"|"flat"|"percent"|"load"|"room"|"vehicle"|"ton"|"day"|"week"|"month"|"project";
 export type FieldGroup = "dimensions"|"materials"|"railings"|"lighting"|"fencing"|"extras"|"fees"|"details";
 export interface SchemaField { id: string; label: string; type: "number"|"selector"|"toggle"|"area"; options?: string[]; placeholder?: string; unit?: FieldUnit; group?: FieldGroup;
   // Linked/derived pricing: this field's quantity is the linked field's quantity, priced at `multiplier`

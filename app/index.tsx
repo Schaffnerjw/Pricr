@@ -37,6 +37,8 @@ import { isSupabaseConfigured } from "../src/lib/supabase";
 import { addQuote, clearCurrentUser, clearImportProgress, codeToUuid, deleteBusiness, getBusiness, getCurrentUser, getStaySignedIn, getUsers, resolveBusinessCodeByUsername, runStartupMigrations, saveBusiness, saveCurrentUser, saveUsers, setStaySignedIn } from "../src/storage";
 import { BrandConfig, Business, DemoBusiness, QuoteSchema, QuoteTemplate, SavedQuote, Screen, User } from "../src/types";
 import { addTemplate, templateToInitialValues } from "../src/utils/quoteTemplates";
+import { buildGenericTemplate } from "../src/data/tradeTemplates";
+import { addSavedToolTemplate, duplicateSavedToolTemplate, getSavedToolTemplate, removeSavedToolTemplate } from "../src/utils/savedToolTemplates";
 import { isValidEmail, isValidPhone } from "../src/utils/contactValidation";
 import { hashPin } from "../src/utils/auth";
 import { isValidHex } from "../src/utils/color";
@@ -131,6 +133,26 @@ export default function Index() {
     const updated: Business = { ...business, quoteTemplates: addTemplate(business.quoteTemplates, t) };
     setBusiness(updated);
     try { await saveBusiness(updated); } catch (e) { logger.warn("[template] save failed", e instanceof Error ? e.message : String(e)); }
+  };
+  // Saved tool templates (the whole schema shape) — distinct from quote templates above.
+  const persistBusiness = async (next: Business) => { setBusiness(next); try { await saveBusiness(next); } catch (e) { logger.warn("[tool-template] save failed", e instanceof Error ? e.message : String(e)); } };
+  const onSaveCurrentTool = (name: string) => {
+    if (!business?.schema) return;
+    persistBusiness({ ...business, savedToolTemplates: addSavedToolTemplate(business.savedToolTemplates, name, business.schema, business.tradeName) });
+  };
+  const onRestoreSavedTool = (id: string) => {
+    if (!business) return;
+    const t = getSavedToolTemplate(business.savedToolTemplates, id);
+    if (!t) return;
+    persistBusiness({ ...business, schema: t.schema, tradeName: t.tradeName || business.tradeName, kitUpdates: (business.kitUpdates || 0) + 1 });
+  };
+  const onDuplicateSavedTool = (id: string) => {
+    if (!business) return;
+    persistBusiness({ ...business, savedToolTemplates: duplicateSavedToolTemplate(business.savedToolTemplates, id) });
+  };
+  const onRemoveSavedTool = (id: string) => {
+    if (!business) return;
+    persistBusiness({ ...business, savedToolTemplates: removeSavedToolTemplate(business.savedToolTemplates, id) });
   };
   // Auto-save a manual schema edit (no version, no navigation — fires on every change in the editor).
   const onSchemaEditorChange = (nextSchema: QuoteSchema) => {
@@ -711,6 +733,10 @@ export default function Index() {
       onViewSigningActivity={isSupabaseConfigured && !isDemoMode ? () => { setSettingsFocusTerms(false); setScreen("pipeline"); } : undefined}
       onRebuildQuoteTool={() => { setSettingsFocusTerms(false); startSetupChoice(true); }}
       onEditSchema={business.schema ? openSchemaEditor : undefined}
+      onSaveCurrentTool={onSaveCurrentTool}
+      onRestoreSavedTool={onRestoreSavedTool}
+      onDuplicateSavedTool={onDuplicateSavedTool}
+      onRemoveSavedTool={onRemoveSavedTool}
       onApplyVeraa={async (code) => {
         const updated: Business = { ...business!, isVeraaClient: true, subscriptionStatus: "veraa", partnerCodeUsed: code };
         try { await saveBusiness(updated); } catch (e) { logger.warn("[billing] veraa save failed", e instanceof Error ? e.message : String(e)); }
@@ -837,6 +863,15 @@ export default function Index() {
       primaryColor={primaryColor} backgroundColor={business?.brand?.backgroundColor}
       onChooseWizard={() => setScreen("wizard")}
       onChooseImport={() => { clearImportProgress(); setImportText(""); setImportResume(false); setScreen("import"); }}
+      onChooseGeneric={async (tradeName) => {
+        if (!business) return;
+        const schema = buildGenericTemplate(tradeName);
+        const updated: Business = { ...business, schema, tradeName, brandConfigured: business.brandConfigured ?? false, kitUpdates: (business.kitUpdates || 0) + 1 };
+        setBusiness(updated);
+        try { await saveBusiness(updated); } catch (e) { logger.warn("[generic] save failed", e instanceof Error ? e.message : String(e)); }
+        setIsReconfiguring(false); setJustBuilt(true);
+        setTimeout(() => setScreen("confirm_schema"), 200);
+      }}
       onResume={() => { setImportResume(true); setScreen("import"); }}
       isReconfiguring={isReconfiguring}
       onCancel={() => { setIsReconfiguring(false); setScreen("done"); }}

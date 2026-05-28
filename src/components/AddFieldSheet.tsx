@@ -8,7 +8,9 @@ import { ON_PRIMARY } from "../utils/colorUtils";
 import { addCalculatedField, addMeasurementField, addSelectField, addToggleField } from "../utils/schemaEditorOps";
 import { CommonField, commonFieldsForTrade, AddType } from "../data/commonFields";
 
-const UNITS = ["sq ft", "lf", "hour", "each", "flat"];
+// Generic-engine unit list: covers per-time (day/week/month), per-unit (each/sq ft/linear ft),
+// project-based, hourly, and flat — so the Generic template handles any service shape.
+const UNITS = ["each", "hour", "day", "week", "month", "project", "sq ft", "linear ft", "flat"];
 const FIELD_TEMPLATES: { label: string; type: AddType; rate: number; unit: string }[] = [
   { label: "Permit", type: "yesno", rate: 200, unit: "flat" },
   { label: "Demo", type: "yesno", rate: 500, unit: "flat" },
