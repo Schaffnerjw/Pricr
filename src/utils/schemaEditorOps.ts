@@ -53,6 +53,15 @@ export function reorderFields(schema: QuoteSchema, fromIndex: number, toIndex: n
   return { ...schema, fields };
 }
 
+// Toggle a section's allowMultiSelect property. Routes through the same applyKitSchemaDiff kernel
+// path Kit uses so any rule changes (whitelist, persistence semantics) apply uniformly. Returns the
+// input schema unchanged on kernel failure (an unknown section id — defensive, the editor passes
+// real ids derived from the live draft so this branch should never fire in practice).
+export function setSectionAllowMultiSelect(schema: QuoteSchema, sectionId: string, allowMultiSelect: boolean): QuoteSchema {
+  const r = applyKitSchemaDiff(schema, { sectionsToSetProperty: [{ sectionIdentifier: sectionId, property: "allowMultiSelect", value: allowMultiSelect }] });
+  return r.changes.length > 0 ? r.schema : schema;
+}
+
 // Toggle a section's "default on" flag (pre-selected on new quotes). Persists to schema.defaultSectionIds
 // (stable across deriveSections) AND mirrors onto schema.sections[].defaultOn when sections are present.
 export function setSectionDefault(schema: QuoteSchema, sectionId: string, defaultOn: boolean): QuoteSchema {

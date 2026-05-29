@@ -149,16 +149,42 @@ function reconstructOptions(field: SchemaField, pricing: Record<string, number>)
 // number fields as rate × quantity (LABOR), and groups toggles into one FLAT_RATE section. When
 // `optionsByField` is supplied (the build path) options carry EXACT ids+rates; otherwise they are
 // reconstructed from pricing.
+//
+// `priorSections` (Path B persistence fix): the sections array as it existed BEFORE this re-derive.
+// When supplied, this function PRESERVES kernel-set structural state — section.name, allowMultiSelect,
+// pattern, and empty-section survival — that would otherwise be destroyed every time deriveSections
+// ran after a Kit / editor mutation. Without this, sectionsToRename / sectionsToSetProperty /
+// sectionsToAdd / fieldsToMove (for toggles) all looked like they applied but were silently undone
+// during persist + re-render. Legacy schemas (called WITHOUT priorSections) get the original
+// derive-from-scratch behavior unchanged.
 export function deriveSections(
   fields: SchemaField[],
   pricing: Record<string, number>,
   optionsByField?: Record<string, SchemaOption[]>,
   defaultSectionIds?: string[],
+  priorSections?: QuoteSection[],
 ): QuoteSection[] {
   const out: QuoteSection[] = [];
   const isDefault = (id: string) => Array.isArray(defaultSectionIds) && defaultSectionIds.includes(id);
   const usedQty = new Set<string>();
   const opts = (f: SchemaField): SchemaOption[] => optionsByField?.[f.id] || reconstructOptions(f, pricing);
+  // Lookup of prior sections by id, so each freshly-derived section can inherit custom state the
+  // kernel may have written (rename, allowMultiSelect flip, pattern, etc.).
+  const priorById = new Map<string, QuoteSection>();
+  for (const p of priorSections || []) priorById.set(p.id, p);
+  // Merge derived state with prior overrides. Prior wins for `name`, `allowMultiSelect`, `pattern`
+  // when explicitly set on the prior section — these are the four fields the kernel structural ops
+  // can mutate. Everything else comes from the derived shape (which is rebuilt fresh every call).
+  const mergePrior = (derived: QuoteSection): QuoteSection => {
+    const prior = priorById.get(derived.id);
+    if (!prior) return derived;
+    return {
+      ...derived,
+      ...(prior.name ? { name: prior.name } : {}),
+      ...(typeof prior.allowMultiSelect === "boolean" ? { allowMultiSelect: prior.allowMultiSelect } : {}),
+      ...(prior.pattern ? { pattern: prior.pattern } : {}),
+    };
+  };
   for (const sel of fields.filter(f => f.type === "selector")) {
     const qty = fields.find(f => (f.type === "number" || f.type === "area") && f.unit === sel.unit && !usedQty.has(f.id));
     const options = opts(sel);
@@ -166,23 +192,50 @@ export function deriveSections(
       usedQty.add(qty.id);
       // Multi-select unless this looks like a primary MATERIAL choice (same unit + a material keyword
       // in the section name). So "Deck Components & Trim"/"Deck Lighting" = multi; "Decking Materials" = single.
-      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit, options, allowMultiSelect: defaultAllowMultiSelect(sel.label, options), defaultOn: isDefault(sel.id) });
+      out.push(mergePrior({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, quantityFieldId: qty.id, unit: qty.unit, options, allowMultiSelect: defaultAllowMultiSelect(sel.label, options), defaultOn: isDefault(sel.id) }));
     } else {
       // Flat pick-one tier (packages): single-select alternatives.
-      out.push({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit, options, allowMultiSelect: false, defaultOn: isDefault(sel.id) });
+      out.push(mergePrior({ id: sel.id, name: sel.label, pattern: "MATERIAL_MEASUREMENT", materialFieldId: sel.id, unit: sel.unit, options, allowMultiSelect: false, defaultOn: isDefault(sel.id) }));
     }
   }
   for (const num of fields.filter(f => (f.type === "number" || f.type === "area") && !usedQty.has(f.id))) {
-    out.push({ id: num.id, name: num.label, pattern: "LABOR", quantityFieldId: num.id, unit: num.unit, laborRate: pricing[`${num.id}Rate`] ?? 0, options: opts(num), allowMultiSelect: false, defaultOn: isDefault(num.id) });
+    out.push(mergePrior({ id: num.id, name: num.label, pattern: "LABOR", quantityFieldId: num.id, unit: num.unit, laborRate: pricing[`${num.id}Rate`] ?? 0, options: opts(num), allowMultiSelect: false, defaultOn: isDefault(num.id) }));
   }
+  // Toggles. Bucket by `field.group` when the group points at a KNOWN prior section (so a moved
+  // toggle lands in its declared section instead of unconditionally going to _flat_fees). Anything
+  // without a matching prior section falls into the legacy `_flat_fees` bucket.
   const toggles = fields.filter(f => f.type === "toggle");
-  if (toggles.length) {
-    const options: SchemaOption[] = toggles.map(t => {
-      const base = (optionsByField?.[t.id]?.[0]) || { id: t.id, label: t.label, rate: pricing[`${t.id}Rate`] ?? 0, unit: "flat" };
-      // Carry linked/derived pricing from the field onto the option so the engine can price it.
-      return { ...base, ...(t.linkedTo ? { linkedTo: t.linkedTo } : {}), ...(typeof t.multiplier === "number" ? { multiplier: t.multiplier } : {}) };
-    });
-    out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: toggles.map(f => f.id), options, allowMultiSelect: true, defaultOn: isDefault("_flat_fees") });
+  const optionForToggle = (t: SchemaField): SchemaOption => {
+    const base = (optionsByField?.[t.id]?.[0]) || { id: t.id, label: t.label, rate: pricing[`${t.id}Rate`] ?? 0, unit: "flat" };
+    // Carry linked/derived pricing from the field onto the option so the engine can price it.
+    return { ...base, ...(t.linkedTo ? { linkedTo: t.linkedTo } : {}), ...(typeof t.multiplier === "number" ? { multiplier: t.multiplier } : {}) };
+  };
+  const bucketsById = new Map<string, SchemaField[]>();
+  for (const t of toggles) {
+    const targetId = (t.group && priorById.has(t.group)) ? t.group : "_flat_fees";
+    if (!bucketsById.has(targetId)) bucketsById.set(targetId, []);
+    bucketsById.get(targetId)!.push(t);
+  }
+  // Emit a section per bucket. The _flat_fees bucket gets the legacy default ("Fees & Options",
+  // FLAT_RATE, allowMultiSelect:true); user-declared buckets reuse the prior section's metadata
+  // (so the kernel's rename / allowMultiSelect / pattern survive) but get fresh options.
+  for (const [bucketId, list] of bucketsById) {
+    const options = list.map(optionForToggle);
+    const prior = priorById.get(bucketId);
+    if (prior) {
+      out.push({ ...prior, options, itemFieldIds: list.map(f => f.id) });
+    } else {
+      // Default _flat_fees bucket — runs whenever there are toggles without a declared section.
+      out.push({ id: "_flat_fees", name: "Fees & Options", pattern: "FLAT_RATE", itemFieldIds: list.map(f => f.id), options, allowMultiSelect: true, defaultOn: isDefault("_flat_fees") });
+    }
+  }
+  // Empty-section survival: a section added via sectionsToAdd has no backing field yet, so neither
+  // the selector loop nor the toggles bucket emit it. Append any prior section that's not already
+  // represented in `out`, with its existing options carried through.
+  for (const p of priorSections || []) {
+    if (!out.some(o => o.id === p.id)) {
+      out.push({ ...p, options: p.options || [] });
+    }
   }
   return out;
 }

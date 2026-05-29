@@ -11,7 +11,7 @@ import { QuoteSchema, SchemaVersion } from "../types";
 import { deriveSections } from "../utils/buildSchemaFromVerified";
 import { executeKitCommand } from "../utils/executeKitCommand";
 import { ON_PRIMARY } from "../utils/colorUtils";
-import { reorderFields, setSectionDefault } from "../utils/schemaEditorOps";
+import { reorderFields, setSectionAllowMultiSelect, setSectionDefault } from "../utils/schemaEditorOps";
 
 const UNITS = ["sq ft", "lf", "hour", "each", "flat"];
 
@@ -52,7 +52,9 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
     flashTimer.current = setTimeout(() => setSavedFlash(false), 1500);
   };
 
-  const sections = useMemo(() => deriveSections(draft.fields || [], draft.pricing || {}, undefined, draft.defaultSectionIds), [draft]);
+  // priorSections = draft.sections so kernel-set structural state (rename, allowMultiSelect, etc.)
+  // survives this editor's re-derive — same contract as the Kit / QuoteScreen path.
+  const sections = useMemo(() => deriveSections(draft.fields || [], draft.pricing || {}, undefined, draft.defaultSectionIds, draft.sections), [draft]);
 
   const primaryFieldIndex = (sec: any): number => {
     const id = sec.materialFieldId || sec.quantityFieldId || sec.options?.[0]?.id;
@@ -209,6 +211,15 @@ export function SchemaEditorScreen({ schema, primaryColor, versions, onChange, o
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 8 }}>
               <Text style={{ color: th.textMuted, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>Include by default on new quotes</Text>
               <Switch value={!!sec.defaultOn} onValueChange={(v) => apply(setSectionDefault(draft, sec.id, v))} trackColor={{ true: primaryColor, false: th.border }} thumbColor="#FFFFFF" />
+            </View>
+
+            {/* allowMultiSelect toggle — admin can pick whether the customer can select multiple
+                options in this section (e.g. one material vs. several add-on lighting types).
+                Routes through applyKitSchemaDiff so the same kernel rules + persistence semantics
+                Kit uses apply here too. */}
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 8, borderTopWidth: 1, borderTopColor: th.border }}>
+              <Text style={{ color: th.textMuted, fontSize: 12, fontFamily: "DMSans_600SemiBold" }}>Allow picking multiple</Text>
+              <Switch value={!!sec.allowMultiSelect} onValueChange={(v) => apply(setSectionAllowMultiSelect(draft, sec.id, v))} trackColor={{ true: primaryColor, false: th.border }} thumbColor="#FFFFFF" />
             </View>
 
             {/* Fields */}

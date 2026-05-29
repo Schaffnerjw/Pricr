@@ -149,7 +149,10 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   const schemaPricingKey = JSON.stringify(schema?.pricing ?? null);
   const schemaSectionsKey = JSON.stringify(schema?.sections ?? null);
   const quoteSections: any[] = useMemo(
-    () => (useNewLayout && schema?.fields?.length ? deriveSections(schema.fields, schema.pricing || {}, undefined, schema.defaultSectionIds) : (schema?.sections || [])),
+    // Pass schema.sections as priorSections so the kernel's structural mutations (rename,
+    // allowMultiSelect, added empty sections, toggle field.group bucketing) survive the
+    // re-derive. Without this, every applied Kit edit gets visually undone on the next render.
+    () => (useNewLayout && schema?.fields?.length ? deriveSections(schema.fields, schema.pricing || {}, undefined, schema.defaultSectionIds, schema.sections) : (schema?.sections || [])),
     [schemaFieldsKey, schemaPricingKey, schemaSectionsKey, useNewLayout], // eslint-disable-line react-hooks/exhaustive-deps
   );
   // Schema the pricing engine actually sees — carries the upgraded sections (with option ids + rates).
@@ -536,7 +539,11 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
   // Apply a new schema to live state + persist + re-derive sections (so the quote tool re-renders).
   const applyKitSchema = async (next: any, source: string) => {
     if (useNewLayout || (next?.fields && Array.isArray(next.fields))) {
-      try { next.sections = deriveSections(next.fields || [], next.pricing || {}); }
+      // priorSections = the kernel-mutated sections array — without this, every section-level
+      // mutation Kit just applied (rename, allowMultiSelect, added empty sections, fieldsToMove
+      // bucketing for toggles) would be silently undone on the next call. See deriveSections
+      // for the merge contract.
+      try { next.sections = deriveSections(next.fields || [], next.pricing || {}, undefined, next.defaultSectionIds, next.sections); }
       catch (e) { logger.error(`[KitAgent] deriveSections failed (${source})`, e instanceof Error ? e.message : String(e)); }
     }
     logger.debug("[KitApply] schema after update:", JSON.stringify(next).substring(0, 300));
