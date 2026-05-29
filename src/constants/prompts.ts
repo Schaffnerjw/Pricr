@@ -232,6 +232,9 @@ SCHEMA_DIFF_START
     }
   ],
   'fieldsToRemove': ['field name or id'],
+  'fieldsToMove': [
+    { 'fieldIdentifier': 'field to move', 'targetSectionIdentifier': 'destination section name or id' }
+  ],
   'addOnsToAdd': [
     { 'label': 'Add-on name', 'price': 200, 'unit': 'flat' }
   ],
@@ -239,6 +242,21 @@ SCHEMA_DIFF_START
     { 'identifier': 'addon name', 'price': 300, 'label': 'new label' }
   ],
   'addOnsToRemove': ['addon name'],
+  'sectionsToAdd': [
+    { 'label': 'Section Name', 'sectionIdentifier': 'optional explicit id', 'allowMultiSelect': true }
+  ],
+  'sectionsToRename': [
+    { 'sectionIdentifier': 'current name or id', 'newLabel': 'New Display Name' }
+  ],
+  'sectionsToSetProperty': [
+    { 'sectionIdentifier': 'section name or id', 'property': 'allowMultiSelect', 'value': true }
+  ],
+  'sectionsToRestructure': [
+    { 'sectionIdentifier': 'section name or id', 'newShape': 'selector-with-quantity|multi-toggle-with-quantity|single-toggle' }
+  ],
+  'sectionsToRemove': [
+    { 'sectionIdentifier': 'section name or id', 'confirm': true }
+  ],
   'depositPercent': null
 }
 SCHEMA_DIFF_END
@@ -255,6 +273,35 @@ RULES FOR SCHEMA DIFFS:
 - ALWAYS include 'unit' for any field where 'type' is 'number'. Valid units: 'each', 'sq ft', 'lf', 'hour', 'day', 'week', 'month', 'project'. For 'type': 'toggle' the unit is always 'flat'.
 - ALWAYS quote string values. Write '"type": "number"', not '"type": number' (bareword values break parsing).
 - ALWAYS include 'label' for new fields and add-ons — entries missing a label will be rejected.
+
+SECTION-LEVEL OPERATIONS (when the contractor asks to restructure):
+- TO MOVE a field between sections: use 'fieldsToMove'. Example: "move Stairs to Fees" →
+  { 'fieldIdentifier': 'Stairs', 'targetSectionIdentifier': 'Fees' }.
+  Rejected if the target section already has a field with the same name — you'll get an error
+  back and should describe the conflict to the contractor.
+- TO TOGGLE multi-select on a section: use 'sectionsToSetProperty' with property 'allowMultiSelect'.
+  Example: "let me pick more than one railing material" → { 'sectionIdentifier': 'Railings',
+  'property': 'allowMultiSelect', 'value': true }.
+- TO RESTRUCTURE a section's shape (between selector-with-quantity / multi-toggle-with-quantity /
+  single-toggle): use 'sectionsToRestructure'. Only the safe in-pattern flip
+  (selector-with-quantity ↔ multi-toggle-with-quantity) is supported automatically — any other
+  conversion (e.g. multi-toggle → single-toggle) would silently drop pricing data, so the kernel
+  rejects it with an explanation. When that happens, tell the contractor what's blocking and
+  suggest the manual editor.
+- TO ADD a section: use 'sectionsToAdd'. The section starts empty; follow up with fieldsToMove or
+  fieldsToAdd to populate it.
+- TO RENAME a section: use 'sectionsToRename'. The internal id and contents are unchanged.
+- TO REMOVE a section: this is DESTRUCTIVE. You MUST first describe what will be deleted ("This
+  removes the Railings section and N fields inside it") and ask the contractor to confirm. Only
+  AFTER they say yes do you emit 'sectionsToRemove' with 'confirm': true. If you send it without
+  asking, the kernel rejects the entry as an unconfirmed destructive operation.
+
+UNSUPPORTED OPERATIONS:
+The kernel only supports the operations listed above. If a contractor asks for something the
+operations list doesn't cover (renaming the trade itself, splitting a field into multiple, conditional
+display logic, merging two sections' fields, etc.), DO NOT emit a SCHEMA_DIFF — describe what they
+want and recommend the manual editor in Settings. Emitting an unsupported operation gives the
+contractor a false "✓ Updated" while nothing actually changed.
 
 CURRENT SCHEMA:
 [SCHEMA_SUMMARY injected at runtime]

@@ -14,7 +14,7 @@ import { AGENT_PROMPT } from "../constants/prompts";
 import { useReduceMotion } from "../hooks/useReduceMotion";
 import { addQuote, attachQuotePresentation, getKitChatHistory, getQuoteSigningToken, getQuotes, markQuoteSent, saveBusiness, saveKitChatHistory, saveSignature } from "../storage";
 import { s } from "../styles";
-import { Business, QuotePresentation, SavedQuote, User } from "../types";
+import { Business, QuotePresentation, QuoteSchema, SavedQuote, User } from "../types";
 import { getBrandPalette, ON_PRIMARY } from "../utils/colorUtils";
 import { formatMoney, resolvePaymentMethods } from "../utils/helpers";
 import { computeTotals, fieldRate, groupFields, optionPrice, smartDefaults, typicalRange } from "../utils/quote";
@@ -629,6 +629,9 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
       }
 
       // 0b) BACKWARD COMPAT: a structured COMMAND block executed deterministically by executeKitCommand.
+      // Routed through decideKitDiffResponse (same gate as the SCHEMA_DIFF path) so a failed
+      // command can never echo Kit's prose as success — synthesizing changes=[result.description]
+      // on success / errors=[result.error] on failure so the same renderer covers both formats.
       const cmdStart = reply.search(/COMMAND_START/i);
       if (cmdStart >= 0) {
         const afterCmd = reply.slice(cmdStart + "COMMAND_START".length);
@@ -637,25 +640,26 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         const cf = cmdRegion.indexOf("{"), cl = cmdRegion.lastIndexOf("}");
         const cmdJson = (cf >= 0 && cl > cf) ? cmdRegion.slice(cf, cl + 1) : "";
         logger.debug("[KitApply] raw command block:", cmdRegion.substring(0, 200));
-        let command: any = null;
-        try { command = cmdJson ? JSON.parse(cmdJson) : null; }
+        let command: KitCommand | null = null;
+        try { command = cmdJson ? (JSON.parse(cmdJson) as KitCommand) : null; }
         catch (e) { logger.error("[KitApply] command JSON parse failed:", e instanceof Error ? e.message : String(e), "raw:", cmdJson.substring(0, 200)); }
-        if (command && command.type) {
-          logger.debug("[KitApply] parsed command:", command.type);
-          if (command.type === "NO_CHANGE") { finish(displayMessage || "Done."); }
-          else {
-            const { schema: nextSchema, result } = executeKitCommand(schema, command as KitCommand);
-            if (result.success) {
-              logger.debug("[KitApply] command applied — calling setSchema");
-              await applyKitSchema(nextSchema, "command");
-              finish(displayMessage || `✓ ${result.description}.`);
-            } else {
-              logger.debug("[KitApply] command failed:", result.error);
-              finish(`${displayMessage ? displayMessage + " " : ""}⚠️ ${result.error || "Couldn't apply that"}. Try describing it differently.`);
-            }
-          }
+        if (command && command.type === "NO_CHANGE") {
+          // NO_CHANGE is a legitimate "Kit decided not to mutate" — show prose, not a failure.
+          finish(displayMessage || "Done.");
+        } else if (command && command.type) {
+          const { schema: nextSchema, result } = executeKitCommand(schema, command);
+          const decision = decideKitDiffResponse({
+            diffParsed: true,
+            changes: result.success ? [result.description || "Updated"] : [],
+            errors: result.success ? [] : [result.error || "Couldn't apply that"],
+            displayMessage,
+          });
+          if (decision.kind === "applied") await applyKitSchema(nextSchema, "command");
+          finish(decision.text);
         } else {
-          finish(displayMessage || "I tried to make that change but couldn't read it — tell me again and I'll retry.");
+          // Command block present but unparseable / no type → honest unparseable response (the
+          // gate emits "couldn't read it — tell me again", never echoes prose).
+          finish(decideKitDiffResponse({ diffParsed: false, changes: [], errors: [], displayMessage }).text);
         }
         setAgentLoading(false);
         return;
@@ -674,50 +678,42 @@ export function QuoteScreen({ schema, setSchema, business, currentUser, onBack, 
         let update: KitSchemaUpdate | null = null;
         try { update = jsonStr ? (JSON.parse(jsonStr) as KitSchemaUpdate) : null; }
         catch (e) { logger.error("[KitApply] JSON parse failed:", e instanceof Error ? e.message : String(e), "raw:", jsonStr.substring(0, 200)); }
-        if (update) {
-          // Route the legacy SCHEMA_UPDATE action through the unified kernel (applyKitSchemaDiff),
-          // preserving UNIT_MAP/TYPE_MAP normalization in the adapter so persisted unit/type
-          // strings stay identical to the old path.
-          const diff = legacyKitUpdateToDiff(update);
-          const result = diff ? applyKitSchemaDiff(schema, diff) : { schema, changes: [], errors: [] };
-          if (result.changes.length > 0) {
-            logger.debug("[KitApply] calling setSchema with updated schema");
-            await applyKitSchema(result.schema, "diff");
-            finish(displayMessage || `✓ ${result.changes[0]}.`);
-          } else {
-            logger.debug("[KitApply] field not found — not applied");
-            finish(displayMessage || "I couldn't find that field to change — which one did you mean?");
-          }
-        } else {
-          finish(displayMessage || "I tried to make that change but couldn't read it — tell me again and I'll retry.");
-        }
+        // Routed through decideKitDiffResponse (same gate as paths 0/0b) so a legacy update that
+        // applies zero changes can't echo Kit's prose as success.
+        const diff = update ? legacyKitUpdateToDiff(update) : null;
+        const result = diff ? applyKitSchemaDiff(schema, diff) : { schema, changes: [], errors: [] };
+        const decision = decideKitDiffResponse({ diffParsed: !!update, changes: result.changes, errors: result.errors, displayMessage });
+        if (decision.kind === "applied") await applyKitSchema(result.schema, "diff");
+        finish(decision.text);
         setAgentLoading(false);
         return;
       }
 
-      // 2) FALLBACK: a full-schema CONFIG_UPDATED rewrite (large restructures).
+      // 2) FALLBACK: a full-schema CONFIG_UPDATED rewrite (large restructures). Same honesty
+      // gate: parse-fail or no-fields → honest "couldn't read" / "no-op" message instead of
+      // echoing Kit's prose. (Apply-success synthesizes a single "Replaced quote tool" change.)
       if (reply.includes("CONFIG_UPDATED")) {
         const jsonStart = reply.indexOf("{", reply.indexOf("CONFIG_UPDATED"));
+        let parsed = false;
+        let appliedChange: string | null = null;
+        let nextFull: QuoteSchema | null = null;
         if (jsonStart !== -1) {
           try {
             const region = reply.substring(jsonStart).replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
             const lastBrace = region.lastIndexOf("}");
-            const updated = JSON.parse(lastBrace >= 0 ? region.slice(0, lastBrace + 1) : region);
-            logger.debug("[KitApply] full-schema rewrite parsed");
-            if (updated && Array.isArray(updated.fields)) {
-              logger.debug("[KitApply] calling setSchema with updated schema");
-              await applyKitSchema(updated, "full");
-              finish(displayMessage || "✓ Updated.");
-            } else {
-              finish(displayMessage || "That didn't come through as a valid change — tell me again and I'll retry.");
-            }
-          } catch (e) {
-            logger.error("[KitApply] full-schema parse failed:", e instanceof Error ? e.message : String(e));
-            finish(displayMessage || "I couldn't apply that change cleanly — tell me the specific field and value and I'll fix it.");
-          }
-        } else {
-          finish(displayMessage || "I couldn't read that change — tell me the specific field and value and I'll fix it.");
+            const updated = JSON.parse(lastBrace >= 0 ? region.slice(0, lastBrace + 1) : region) as QuoteSchema;
+            parsed = true;
+            if (updated && Array.isArray(updated.fields)) { nextFull = updated; appliedChange = "Replaced quote tool"; }
+          } catch (e) { logger.error("[KitApply] full-schema parse failed:", e instanceof Error ? e.message : String(e)); }
         }
+        const decision = decideKitDiffResponse({
+          diffParsed: parsed,
+          changes: appliedChange ? [appliedChange] : [],
+          errors: parsed && !appliedChange ? ["Rewrite was missing a fields[] array"] : [],
+          displayMessage,
+        });
+        if (decision.kind === "applied" && nextFull) await applyKitSchema(nextFull, "full");
+        finish(decision.text);
         setAgentLoading(false);
         return;
       }

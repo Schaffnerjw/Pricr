@@ -39,7 +39,11 @@ export function decideKitDiffResponse(opts: {
     return { kind: "applied", text: `${displayMessage ? displayMessage + "\n\n" : ""}${changeLines}${footer}` };
   }
   if (errors.length > 0) {
-    return { kind: "errors-only", text: `${displayMessage ? displayMessage + "\n\n" : ""}⚠️ Couldn't apply: ${errors.join(", ")}` };
+    // Path A intent: ANY mutation attempt that produced ZERO changes is a failure, and Kit's
+    // prose ("✓ Moved Permit to Phantom") must be DROPPED — echoing it with a ⚠️ appended is
+    // exactly the false-success drift the Sentry test-7 incident captured (parse-fail caught
+    // honestly; permission-fail through the COMMAND path still echoed Kit's "✓ Updated" lie).
+    return { kind: "errors-only", text: `⚠️ Couldn't apply: ${errors.join(", ")}` };
   }
   // Critical case: diff present + parsed + zero changes + zero errors. Drop Kit's prose so we
   // can't lie about a mutation that didn't happen.
