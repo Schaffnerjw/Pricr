@@ -27,8 +27,16 @@ export function decideKitDiffResponse(opts: {
   if (!diffParsed) return { kind: "unparseable", text: UNPARSEABLE_MESSAGE };
   if (changes.length > 0) {
     const changeLines = changes.map(c => `✓ ${c}`).join("\n");
-    const errLine = errors.length ? `\n⚠️ Couldn't apply: ${errors.join(", ")}` : "";
-    return { kind: "applied", text: `${displayMessage ? displayMessage + "\n\n" : ""}${changeLines}${errLine}` };
+    // Partial-success copy: when some entries applied AND others were rejected (e.g. one
+    // fieldsToAdd entry was missing a label, the others were fine), explicitly tell the user
+    // "Applied N — N skipped: <reason>" so they know one item didn't land instead of assuming
+    // every "✓" they see in the chat happened.
+    let footer = "";
+    if (errors.length > 0) {
+      const total = changes.length + errors.length;
+      footer = `\n\nApplied ${changes.length} of ${total} — skipped ${errors.length}:\n${errors.map(e => `⚠️ ${e}`).join("\n")}`;
+    }
+    return { kind: "applied", text: `${displayMessage ? displayMessage + "\n\n" : ""}${changeLines}${footer}` };
   }
   if (errors.length > 0) {
     return { kind: "errors-only", text: `${displayMessage ? displayMessage + "\n\n" : ""}⚠️ Couldn't apply: ${errors.join(", ")}` };

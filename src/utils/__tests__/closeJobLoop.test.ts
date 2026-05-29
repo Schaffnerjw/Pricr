@@ -132,7 +132,7 @@ describe("Fix B — Kit narration honesty", () => {
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
 describe("Fix C — sent quote contains a link, never an attachment", () => {
-  const link = "https://app.pricr.veraa.io/sign/abc123def456";
+  const link = "https://pricr-production.up.railway.app/sign/abc123def456";
 
   test("sent quote SMS contains hosted link not HTML attachment", () => {
     const body = buildShareSmsMessage({ bizName: "Acme Roofing", total: 4500, link, customerName: "Jamie", signed: false });
@@ -152,7 +152,7 @@ describe("Fix C — sent quote contains a link, never an attachment", () => {
   test("signed-copy SMS uses 'signed quote' wording + the certificate URL", () => {
     // Post-in-person-sign delivery (signed=true) should reference the certificate page, not the
     // pre-sign signing page. Different copy, same no-attachment guarantee.
-    const certLink = "https://app.pricr.veraa.io/sign/abc123/certificate";
+    const certLink = "https://pricr-production.up.railway.app/sign/abc123/certificate";
     const body = buildShareSmsMessage({ bizName: "Acme Roofing", total: 4500, link: certLink, signed: true });
     expect(body).toContain(certLink);
     expect(body).toMatch(/signed quote/i);

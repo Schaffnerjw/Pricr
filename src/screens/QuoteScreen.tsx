@@ -68,6 +68,24 @@ export function parseKitDiff(text: string): KitSchemaDiff | null {
   try {
     const objMatch = block.match(/\{[\s\S]*\}/);
     if (objMatch) return JSON.parse(objMatch[0]) as KitSchemaDiff;
+  } catch { /* try next */ }
+
+  // 4) Loosen common LLM mistakes (trailing commas, bareword type values like
+  //    `type: number` → `"type": "number"`) and try again. The kernel's defaults then handle
+  //    missing optional fields gracefully — this step is just about getting JSON.parse to
+  //    succeed on payloads the LLM almost-but-not-quite formatted as JSON.
+  try {
+    const repaired = block
+      // Quote bareword type / unit values inside change objects (common LLM slip:
+      // `"type": number,` instead of `"type": "number",`).
+      .replace(/("\s*(?:type|unit|linkedTo)\s*"\s*:\s*)([A-Za-z_][A-Za-z0-9_-]*)\s*([,\}])/g, '$1"$2"$3')
+      // Drop trailing commas before closing brace/bracket: `, }` → ` }`, `, ]` → ` ]`.
+      .replace(/,(\s*[}\]])/g, "$1")
+      // Repeat the single-quote repair in case strategy (2) didn't run (e.g., direct parse
+      // failed for a different reason and we hit strategy 3+4 fresh).
+      .replace(/:\s*'([^']*)'/g, ': "$1"');
+    const objMatch = repaired.match(/\{[\s\S]*\}/);
+    if (objMatch) return JSON.parse(objMatch[0]) as KitSchemaDiff;
   } catch { /* fall through */ }
 
   logger.error("[KitDiff] parse failed:", block.substring(0, 300));

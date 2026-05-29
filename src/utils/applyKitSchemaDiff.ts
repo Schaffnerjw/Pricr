@@ -85,7 +85,8 @@ export function applyKitSchemaDiff(
 
   // ── fieldsToUpdate ──
   for (const u of diff.fieldsToUpdate || []) {
-    if (!u || !u.identifier) continue;
+    if (!u) { errors.push("Skipped an update with no body"); continue; }
+    if (!u.identifier) { errors.push("Skipped an update with no identifier"); continue; }
     const f = tieredFind(next.fields || [], u.identifier, x => x.id, x => x.label);
     if (!f) { errors.push(`Couldn't find "${u.identifier}"`); continue; }
     const c = u.changes || {};
@@ -107,8 +108,14 @@ export function applyKitSchemaDiff(
   }
 
   // ── fieldsToAdd ──
+  // Permissive: missing unit / type / rate get sensible defaults (mapType→number, unitFor→each,
+  // Number(rate)||0). Only structurally required fields (label) reject the entry — and we now
+  // PUSH AN ERROR instead of silently skipping so partial-success messaging can surface the
+  // count of skipped entries to the user. (Previous behavior was silent `continue` → 2-of-3
+  // partial successes looked like a clean 2-of-2, hiding the dropped entry.)
   for (const a of diff.fieldsToAdd || []) {
-    if (!a || !a.label) continue;
+    if (!a) { errors.push("Skipped a new-field entry with no body"); continue; }
+    if (!a.label) { errors.push("Skipped a new field — missing label"); continue; }
     const used = new Set((next.fields || []).map(f => f.id));
     const id = slugId(a.label, used);
     const type = mapType(a.type);
@@ -135,8 +142,11 @@ export function applyKitSchemaDiff(
   }
 
   // ── addOnsToAdd ──
+  // Same partial-success contract as fieldsToAdd: missing label rejects the entry with an
+  // explicit error; everything else (price, unit) gets a sensible default.
   for (const a of diff.addOnsToAdd || []) {
-    if (!a || !a.label) continue;
+    if (!a) { errors.push("Skipped an add-on entry with no body"); continue; }
+    if (!a.label) { errors.push("Skipped an add-on — missing label"); continue; }
     const id = slugId(a.label, new Set((next.addOns || []).map(x => x.id)));
     next.addOns = [...(next.addOns || []), { id, label: a.label, price: Number(a.price) || 0 }];
     changes.push(`Added ${a.label} add-on at ${money(Number(a.price) || 0)} ${a.unit || "flat"}`);
@@ -144,7 +154,8 @@ export function applyKitSchemaDiff(
 
   // ── addOnsToUpdate ──
   for (const u of diff.addOnsToUpdate || []) {
-    if (!u || !u.identifier) continue;
+    if (!u) { errors.push("Skipped an add-on update with no body"); continue; }
+    if (!u.identifier) { errors.push("Skipped an add-on update with no identifier"); continue; }
     const a = tieredFind<AddOn>(next.addOns || [], u.identifier, x => x.id, x => x.label);
     if (!a) { errors.push(`Couldn't find add-on "${u.identifier}"`); continue; }
     const parts: string[] = [];

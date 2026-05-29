@@ -97,8 +97,13 @@ function appendAuditEvent(token, existingLog, event) {
 // ── Resend transactional email (fire-and-forget) ───────────────────────────────
 const FROM_EMAIL = process.env.FROM_EMAIL || 'quotes@pricr.veraa.io';
 const APP_URL = 'https://app.pricr.veraa.io';
-// Clean public base for signing-page self-references (OG image, certificate links, email links).
-// Override with SIGN_BASE_URL (e.g. https://sign.pricr.veraa.io); falls back to the Railway URL.
+// Public base for the signing page self-references (OG image, certificate links, email links).
+// The default is the Railway URL because THAT IS the host that actually serves the /sign/:token
+// routes — proxy.js IS the signing-page server. Setting SIGN_BASE_URL to a vanity domain only
+// works if that domain has DNS pointing at Railway AND Railway is configured to accept it; if
+// neither is true, customer-facing emails ship a dead link and every signing flow breaks.
+// (Real-world incident: SIGN_BASE_URL was set to https://sign.pricr.veraa.io — that subdomain
+// has no DNS, every signed-quote email link returned "server can't be found.")
 const SIGNING_BASE = process.env.SIGN_BASE_URL || 'https://pricr-production.up.railway.app';
 // Sends an email via Resend. Never throws into the caller — errors are logged only, so a mail
 // failure can never block or fail the signing response. No-ops cleanly if RESEND_API_KEY is unset.

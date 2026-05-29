@@ -252,6 +252,9 @@ RULES FOR SCHEMA DIFFS:
   { 'identifier': 'Frame Protection', 'changes': { 'linkedTo': 'Frame Materials', 'multiplier': 0.50, 'type': 'toggle' } }
 - Never include the diff block for informational responses
 - The diff is stripped before showing to the user
+- ALWAYS include 'unit' for any field where 'type' is 'number'. Valid units: 'each', 'sq ft', 'lf', 'hour', 'day', 'week', 'month', 'project'. For 'type': 'toggle' the unit is always 'flat'.
+- ALWAYS quote string values. Write '"type": "number"', not '"type": number' (bareword values break parsing).
+- ALWAYS include 'label' for new fields and add-ons — entries missing a label will be rejected.
 
 CURRENT SCHEMA:
 [SCHEMA_SUMMARY injected at runtime]
